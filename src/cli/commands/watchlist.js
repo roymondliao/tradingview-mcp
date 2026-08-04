@@ -6,7 +6,7 @@ register('watchlist', {
   subcommands: new Map([
     ['get', {
       description: 'Get watchlist symbols',
-      handler: () => core.get(),
+      handler: () => core.getWatchlist(),
     }],
     ['add', {
       description: 'Add a symbol to the watchlist',

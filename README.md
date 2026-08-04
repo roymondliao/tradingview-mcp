@@ -15,6 +15,7 @@ Personal AI assistant for your TradingView Desktop charts. Connects Claude Code 
 
 > [!CAUTION]
 > This tool accesses undocumented internal TradingView APIs via the Electron debug interface. These can change or break without notice in any TradingView update. Pin your TradingView Desktop version if stability matters to you.
+> The chart UI is loaded from TradingView's website, so its DOM can also change independently of the installed Desktop version. UI integrations therefore detect the currently available DOM capabilities at runtime instead of selecting behavior solely by Desktop version.
 
 ## How It Works (and why it's safe to run)
 
