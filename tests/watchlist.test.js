@@ -5,7 +5,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
-import { getWatchlist, addBulk } from '../src/core/watchlist.js';
+import { getWatchlist, addBulk, remove } from '../src/core/watchlist.js';
 import { openPanel } from '../src/core/ui.js';
 
 function getEvaluate({ ready = [true], symbols = [], listInfo = null } = {}) {
@@ -174,5 +174,33 @@ describe('watchlist addBulk() dependency forwarding', () => {
     assert.equal(result.failed, 1);
     assert.equal(result.results[0].added_as, 'NASDAQ:AAPL');
     assert.match(result.results[1].error, /mock client failure/);
+  });
+});
+
+describe('watchlist remove() request origin', () => {
+  it('uses a same-origin relative URL so localized TradingView domains work', async () => {
+    const evaluate = getEvaluate({
+      ready: [true],
+      listInfo: { id: 'list-123', name: 'Main', symbols: ['NASDAQ:AAPL'] },
+    });
+    let requestExpression = '';
+
+    const result = await remove({
+      symbols: ['NASDAQ:AAPL'],
+      _deps: {
+        evaluate,
+        evaluateAsync: async (expr) => {
+          requestExpression = expr;
+          return { status: 200, ok: true, body: '' };
+        },
+        openPanel: async () => ({ success: true }),
+        sleep: async () => {},
+      },
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.verified, true);
+    assert.match(requestExpression, /fetch\('\/api\/v1\/symbols_list\/custom\/'/);
+    assert.doesNotMatch(requestExpression, /https:\/\/www\.tradingview\.com/);
   });
 });

@@ -204,9 +204,11 @@ export async function remove({ symbols, _deps }) {
     return { success: false, removed: [], skipped, error: 'No matching symbols in the active watchlist' };
   }
 
-  // Page-context fetch — browser attaches session cookies automatically.
+  // Page-context same-origin fetch — TradingView uses localized chart origins
+  // such as tw.tradingview.com, so a hard-coded www host would trigger CORS.
+  // A relative URL follows the active page origin and its session cookies.
   const resp = await evaluateAsync(`
-    fetch('https://www.tradingview.com/api/v1/symbols_list/custom/' + ${JSON.stringify(listInfo.id)} + '/remove/', {
+    fetch('/api/v1/symbols_list/custom/' + ${JSON.stringify(listInfo.id)} + '/remove/', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
