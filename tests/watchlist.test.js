@@ -5,7 +5,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
-import { getWatchlist, addBulk, remove } from '../src/core/watchlist.js';
+import { getWatchlist, listWatchlists, addBulk, remove } from '../src/core/watchlist.js';
 import { openPanel } from '../src/core/ui.js';
 
 function getEvaluate({ ready = [true], symbols = [], listInfo = null } = {}) {
@@ -202,5 +202,77 @@ describe('watchlist remove() request origin', () => {
     assert.equal(result.verified, true);
     assert.match(requestExpression, /fetch\('\/api\/v1\/symbols_list\/custom\/'/);
     assert.doesNotMatch(requestExpression, /https:\/\/www\.tradingview\.com/);
+  });
+});
+
+describe('listWatchlists()', () => {
+  it('lists watchlists through the same-origin custom-list endpoint', async () => {
+    let requestExpression = '';
+    const result = await listWatchlists({ _deps: {
+      evaluateAsync: async (expr) => {
+        requestExpression = expr;
+        return {
+          status: 200,
+          ok: true,
+          data: [
+            { id: 1, name: 'Main', symbols: ['NASDAQ:AAPL', 'NASDAQ:MSFT'] },
+            { id: 2, name: 'Taiwan', symbol_count: 3 },
+          ],
+        };
+      },
+    } });
+
+    assert.equal(result.success, true);
+    assert.equal(result.count, 2);
+    assert.deepEqual(result.lists, [
+      { id: 1, name: 'Main', symbol_count: 2 },
+      { id: 2, name: 'Taiwan', symbol_count: 3 },
+    ]);
+    assert.match(requestExpression, /fetch\(["']\/api\/v1\/symbols_list\/custom\/["']/);
+    assert.doesNotMatch(requestExpression, /https:\/\/www\.tradingview\.com/);
+    assert.equal(result.transport, 'evaluateAsync');
+  });
+
+  it('accepts a paginated results response', async () => {
+    const result = await listWatchlists({ _deps: {
+      evaluateAsync: async () => ({
+        status: 200, ok: true,
+        data: { results: [{ id: 3, title: 'Swing', symbols_count: 4 }] },
+      }),
+    } });
+
+    assert.deepEqual(result.lists, [{ id: 3, name: 'Swing', symbol_count: 4 }]);
+  });
+
+  it('reports HTTP failures without treating HTTP 0 as a real response', async () => {
+    await assert.rejects(
+      () => listWatchlists({ _deps: {
+        evaluateAsync: async () => ({ status: 403, ok: false, body: 'Forbidden' }),
+      } }),
+      /HTTP 403.*Forbidden/,
+    );
+  });
+
+  it('uses callFunctionOn when requested and passes the path as an argument', async () => {
+    let calledFunction;
+    let calledArgs;
+    const result = await listWatchlists({
+      use_function: true,
+      _deps: {
+        evaluateAsync: async () => {
+          throw new Error('evaluateAsync should not be used');
+        },
+        callPageFunction: async (fn, args) => {
+          calledFunction = fn;
+          calledArgs = args;
+          return { status: 200, ok: true, data: [{ id: 4, name: 'Function path', symbols: [] }] };
+        },
+      },
+    });
+
+    assert.equal(typeof calledFunction, 'function');
+    assert.deepEqual(calledArgs, ['/api/v1/symbols_list/custom/']);
+    assert.equal(result.transport, 'callFunctionOn');
+    assert.equal(result.lists[0].name, 'Function path');
   });
 });

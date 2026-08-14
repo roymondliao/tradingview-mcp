@@ -5,7 +5,12 @@
  * mirroring the proven alerts REST pattern. Add drives the Add-symbol
  * search UI so bare tickers resolve the same way they do for a human.
  */
-import { evaluate as _evaluate, evaluateAsync as _evaluateAsync, getClient as _getClient } from '../connection.js';
+import {
+  evaluate as _evaluate,
+  evaluateAsync as _evaluateAsync,
+  callPageFunction as _callPageFunction,
+  getClient as _getClient,
+} from '../connection.js';
 import { openPanel as _openPanel } from './ui.js';
 
 const _sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -14,10 +19,27 @@ function _resolve(deps) {
   return {
     evaluate: deps?.evaluate || _evaluate,
     evaluateAsync: deps?.evaluateAsync || _evaluateAsync,
+    callPageFunction: deps?.callPageFunction || _callPageFunction,
     getClient: deps?.getClient || _getClient,
     openPanel: deps?.openPanel || _openPanel,
     sleep: deps?.sleep || _sleep,
   };
+}
+
+async function fetchWatchlistsInPage(path) {
+  try {
+    const response = await fetch(path, {
+      method: 'GET',
+      credentials: 'include',
+      headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+    });
+    const body = await response.text();
+    let data = null;
+    try { data = JSON.parse(body); } catch {}
+    return { status: response.status, ok: response.ok, data, body: body.substring(0, 300) };
+  } catch (error) {
+    return { status: 0, ok: false, data: null, body: String(error) };
+  }
 }
 
 const WATCHLIST_READY_JS = `
@@ -119,6 +141,57 @@ export async function getWatchlist({ _deps } = {}) {
     source: data?.source || 'unknown',
     ...(listInfo && { list_id: listInfo.id, list_name: listInfo.name }),
     symbols: data?.symbols || [],
+  };
+}
+
+export async function listWatchlists({ use_function = false, _deps } = {}) {
+  const { evaluateAsync, callPageFunction } = _resolve(_deps);
+  const path = '/api/v1/symbols_list/custom/';
+  const resp = use_function
+    ? await callPageFunction(fetchWatchlistsInPage, [path])
+    : await evaluateAsync(`
+      fetch(${JSON.stringify(path)}, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      })
+        .then(function(r) {
+          return r.text().then(function(t) {
+            var data = null;
+            try { data = JSON.parse(t); } catch (e) {}
+            return { status: r.status, ok: r.ok, data: data, body: t.substring(0, 300) };
+          });
+        })
+        .catch(function(e) { return { status: 0, ok: false, data: null, body: String(e) }; })
+    `);
+
+  if (!resp?.ok) {
+    throw new Error(`Watchlist list REST call failed (HTTP ${resp?.status}): ${resp?.body}`);
+  }
+
+  const data = resp.data;
+  const rawLists = Array.isArray(data)
+    ? data
+    : Array.isArray(data?.results)
+      ? data.results
+      : Array.isArray(data?.data)
+        ? data.data
+        : null;
+  if (!rawLists) {
+    throw new Error('Unexpected watchlist list response: expected an array');
+  }
+
+  const lists = rawLists.map(list => ({
+    id: list.id,
+    name: list.name || list.title || null,
+    symbol_count: Array.isArray(list.symbols)
+      ? list.symbols.length
+      : (list.symbol_count ?? list.symbols_count ?? null),
+  }));
+
+  return {
+    success: true, count: lists.length, lists, api: 'rest',
+    transport: use_function ? 'callFunctionOn' : 'evaluateAsync',
   };
 }
 
