@@ -240,7 +240,7 @@ strategy.entry("Long", strategy.long)`);
   });
 });
 
-describe('pine_check — server compile', () => {
+describe('pine_check — server compile', { skip: process.env.TV_RUN_NETWORK_TESTS !== '1' }, () => {
   it('should compile valid Pine Script via TradingView API', async () => {
     const source = `//@version=6
 indicator("API Test", overlay=true)

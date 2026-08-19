@@ -10,12 +10,14 @@ import assert from 'node:assert/strict';
 import { execFileSync, execSync } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { writeFileSync, unlinkSync } from 'fs';
+import { readFileSync, writeFileSync, unlinkSync } from 'fs';
 
 function require_fs() { return { writeFileSync, unlinkSync }; }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLI = join(__dirname, '..', 'src', 'cli', 'index.js');
+const PACKAGE_VERSION = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf8')).version;
+const RUN_NETWORK_TESTS = process.env.TV_RUN_NETWORK_TESTS === '1';
 
 function run(args, opts = {}) {
   try {
@@ -54,6 +56,12 @@ describe('CLI — help and routing', () => {
     const { stdout, exitCode } = run([]);
     assert.equal(exitCode, 0);
     assert.ok(stdout.includes('Usage: tv'));
+  });
+
+  it('--version matches package.json', () => {
+    const { stdout, exitCode } = run(['--version']);
+    assert.equal(exitCode, 0);
+    assert.equal(stdout.trim(), PACKAGE_VERSION);
   });
 
   it('unknown command exits 1', () => {
@@ -129,7 +137,7 @@ describe('CLI — pine analyze (offline)', () => {
   });
 });
 
-describe('CLI — pine check (server compile)', () => {
+describe('CLI — pine check (server compile)', { skip: !RUN_NETWORK_TESTS }, () => {
   it('compiles valid Pine Script', () => {
     const source = '//@version=6\nindicator("test")\nplot(close)';
     const { stdout, exitCode } = run(['pine', 'check'], { input: source });

@@ -14,11 +14,12 @@ import { registerWatchlistTools } from './tools/watchlist.js';
 import { registerUiTools } from './tools/ui.js';
 import { registerPaneTools } from './tools/pane.js';
 import { registerTabTools } from './tools/tab.js';
+import { VERSION } from './version.js';
 
 const server = new McpServer(
   {
     name: 'tradingview',
-    version: '2.0.0',
+    version: VERSION,
     description: 'AI-assisted TradingView chart analysis and Pine Script development via Chrome DevTools Protocol',
   },
   {
