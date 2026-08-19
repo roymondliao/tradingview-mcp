@@ -1,22 +1,33 @@
 name: CI
 
-on:
+"on":
   push:
-    branches: [main]
+    branches:
+      - fork-main
   pull_request:
-    branches: [main]
+    branches:
+      - fork-main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       matrix:
-        node-version: [20.x, 22.x]
+        node-version: [22.x, 24.x]
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@v6
 
       - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
@@ -28,9 +39,15 @@ jobs:
         run: npm run lint
 
       - name: Unit tests
-        # test:unit excludes e2e.test.js, which needs a live TradingView Desktop + CDP.
+        # Network-backed Pine compilation and live Desktop E2E tests are excluded by default.
         run: npm run test:unit
 
+      - name: Verify package contents
+        run: npm pack --dry-run
+
+      - name: Check release version sync
+        run: npm run release:check-version
+
       - name: Audit (high severity)
-        run: npm audit --audit-level=high
+        run: npm audit --omit=dev --audit-level=high
         continue-on-error: true

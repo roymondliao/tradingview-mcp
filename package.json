@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "MCP bridge for TradingView Desktop via Chrome DevTools Protocol",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "main": "src/server.js",
   "bin": {
     "tv": "src/cli/index.js"
@@ -21,7 +24,9 @@
     "test:cli": "node --test tests/cli.test.js",
     "test:all": "node --test tests/e2e.test.js tests/pine_analyze.test.js tests/cli.test.js tests/sanitization.test.js tests/replay.test.js tests/launch.test.js tests/chart_indicator.test.js tests/chart_history.test.js tests/update.test.js tests/watchlist.test.js",
     "test:verbose": "node --test --test-reporter=spec tests/e2e.test.js tests/pine_analyze.test.js",
-    "test:count": "node --test --test-reporter=spec tests/e2e.test.js 2>&1 | tail -5"
+    "test:count": "node --test --test-reporter=spec tests/e2e.test.js 2>&1 | tail -5",
+    "release:check-version": "node scripts/release.js check-version",
+    "release:print-tag": "node scripts/release.js print-tag"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",

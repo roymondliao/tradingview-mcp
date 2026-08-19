@@ -3,6 +3,7 @@
  * Zero dependencies — uses only Node.js built-ins.
  */
 import { parseArgs } from 'node:util';
+import { VERSION } from '../version.js';
 
 /** @type {Map<string, { description: string, options?: object, handler: Function, subcommands?: Map<string, object> }>} */
 const commands = new Map();
@@ -55,6 +56,11 @@ export async function run(argv) {
 
   if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {
     printHelp();
+    process.exit(0);
+  }
+
+  if (args[0] === '--version' || args[0] === '-v') {
+    console.log(VERSION);
     process.exit(0);
   }
 
