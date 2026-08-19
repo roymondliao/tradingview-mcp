@@ -13,7 +13,7 @@
  * - UI Automation (12 tools)
  * - Replay Mode (6 tools)
  * - Alerts (3 tools)
- * - Watchlist (2 tools)
+ * - Watchlist (4 tools)
  * - Indicators (2 tools)
  * - Batch (1 tool)
  * - Capture (1 tool)
@@ -22,6 +22,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import CDP from 'chrome-remote-interface';
+import { getWatchlist } from '../src/core/watchlist.js';
 
 let client;
 let Runtime;
@@ -1288,29 +1289,12 @@ val = array.get(a, 5)`;
 
   describe('Watchlist', () => {
 
-    it('watchlist_get — read watchlist symbols', async () => {
-      // Open watchlist panel
-      await evaluate(`
-        (function() {
-          var btn = document.querySelector('[data-name="base-watchlist-widget-button"]')
-            || document.querySelector('[aria-label="Watchlist"]');
-          if (btn) btn.click();
-        })()
-      `);
-      await sleep(500);
-
-      const symbols = await evaluate(`
-        (function() {
-          var results = [];
-          var symbolEls = document.querySelectorAll('[data-symbol-full]');
-          for (var i = 0; i < Math.min(symbolEls.length, 10); i++) {
-            var sym = symbolEls[i].getAttribute('data-symbol-full');
-            if (sym) results.push(sym);
-          }
-          return results;
-        })()
-      `);
-      assert.ok(Array.isArray(symbols), 'Symbols returned');
+    it('watchlist_get — execute the production watchlist path', async () => {
+      const result = await getWatchlist({ _deps: { evaluate, sleep } });
+      assert.equal(result.success, true);
+      assert.ok(Array.isArray(result.symbols), 'Symbols returned');
+      assert.equal(result.count, result.symbols.length);
+      assert.ok(['dom_rows', 'empty'].includes(result.source), 'Watchlist DOM source returned');
     });
 
     it('watchlist_add — find add button', async () => {

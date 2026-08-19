@@ -2,11 +2,18 @@ import { register } from '../router.js';
 import * as core from '../../core/watchlist.js';
 
 register('watchlist', {
-  description: 'Watchlist tools (get, add, add-bulk, remove)',
+  description: 'Watchlist tools (list, get, add, add-bulk, remove)',
   subcommands: new Map([
+    ['list', {
+      description: 'List available watchlists',
+      options: {
+        func: { type: 'boolean', description: 'Use CDP Runtime.callFunctionOn instead of Runtime.evaluate' },
+      },
+      handler: (opts) => core.listWatchlists({ use_function: opts.func }),
+    }],
     ['get', {
       description: 'Get watchlist symbols',
-      handler: () => core.get(),
+      handler: () => core.getWatchlist(),
     }],
     ['add', {
       description: 'Add a symbol to the watchlist',

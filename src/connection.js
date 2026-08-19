@@ -150,6 +150,51 @@ export async function evaluateAsync(expression) {
   return evaluate(expression, { awaitPromise: true });
 }
 
+/**
+ * Execute a self-contained function in the TradingView page context.
+ * Arguments are passed through CDP CallArgument values instead of being
+ * interpolated into source code. The function must not close over Node-side
+ * module variables because only its source is available in the page.
+ */
+export async function callPageFunction(fn, args = []) {
+  if (typeof fn !== 'function') throw new TypeError('callPageFunction requires a function');
+  if (!Array.isArray(args)) throw new TypeError('callPageFunction args must be an array');
+
+  const c = await getClient();
+  const globalResult = await c.Runtime.evaluate({
+    expression: 'globalThis',
+    returnByValue: false,
+  });
+  if (globalResult.exceptionDetails) {
+    const msg = globalResult.exceptionDetails.exception?.description
+      || globalResult.exceptionDetails.text
+      || 'Cannot resolve page global object';
+    throw new Error(`JS evaluation error: ${msg}`);
+  }
+
+  const objectId = globalResult.result?.objectId;
+  if (!objectId) throw new Error('CDP did not return a page global object ID');
+
+  try {
+    const result = await c.Runtime.callFunctionOn({
+      objectId,
+      functionDeclaration: fn.toString(),
+      arguments: args.map(value => ({ value })),
+      returnByValue: true,
+      awaitPromise: true,
+    });
+    if (result.exceptionDetails) {
+      const msg = result.exceptionDetails.exception?.description
+        || result.exceptionDetails.text
+        || 'Unknown function execution error';
+      throw new Error(`JS function execution error: ${msg}`);
+    }
+    return result.result?.value;
+  } finally {
+    try { await c.Runtime.releaseObject({ objectId }); } catch {}
+  }
+}
+
 export async function disconnect() {
   if (client) {
     try { await client.close(); } catch {}

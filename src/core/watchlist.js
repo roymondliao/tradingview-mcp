@@ -5,47 +5,74 @@
  * mirroring the proven alerts REST pattern. Add drives the Add-symbol
  * search UI so bare tickers resolve the same way they do for a human.
  */
-import { evaluate, evaluateAsync, getClient } from '../connection.js';
+import {
+  evaluate as _evaluate,
+  evaluateAsync as _evaluateAsync,
+  callPageFunction as _callPageFunction,
+  getClient as _getClient,
+} from '../connection.js';
+import { openPanel as _openPanel } from './ui.js';
 
-// TV renamed the right-rail button: current builds use data-name="base" with
-// aria-label "Watchlist, details, and news"; older builds used
-// data-name="base-watchlist-widget-button" / aria-label "Watchlist".
-const WL_BUTTON_JS = `(document.querySelector('[data-name="base-watchlist-widget-button"]')
-  || document.querySelector('[aria-label="Watchlist, details, and news"]')
-  || document.querySelector('[aria-label^="Watchlist"]'))`;
+const _sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+function _resolve(deps) {
+  return {
+    evaluate: deps?.evaluate || _evaluate,
+    evaluateAsync: deps?.evaluateAsync || _evaluateAsync,
+    callPageFunction: deps?.callPageFunction || _callPageFunction,
+    getClient: deps?.getClient || _getClient,
+    openPanel: deps?.openPanel || _openPanel,
+    sleep: deps?.sleep || _sleep,
+  };
+}
+
+async function fetchWatchlistsInPage(path) {
+  try {
+    const response = await fetch(path, {
+      method: 'GET',
+      credentials: 'include',
+      headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+    });
+    const body = await response.text();
+    let data = null;
+    try { data = JSON.parse(body); } catch {}
+    return { status: response.status, ok: response.ok, data, body: body.substring(0, 300) };
+  } catch (error) {
+    return { status: 0, ok: false, data: null, body: String(error) };
+  }
+}
+
+const WATCHLIST_READY_JS = `
+  (function() {
+    var panel = document.querySelector('[class*="layout__area--right"]');
+    if (!panel) return false;
+    return !!(panel.querySelector('[data-name="add-symbol-button"]')
+      || panel.querySelector('[data-symbol-full]'));
+  })()
+`;
 
 // The watchlist widget lazy-loads after the panel opens; a fixed 500ms wait
 // raced it (issue #164). Poll until its Add-symbol button or rows exist.
-async function ensureWatchlistOpen(maxWaitMs = 5000) {
-  const state = await evaluate(`
-    (function() {
-      var btn = ${WL_BUTTON_JS};
-      if (!btn) return { error: 'Watchlist button not found' };
-      var pressed = btn.getAttribute('aria-pressed') === 'true';
-      var widgetReady = !!(document.querySelector('[data-name="add-symbol-button"]')
-        || document.querySelector('[class*="layout__area--right"] [data-symbol-full]'));
-      if (!pressed || !widgetReady) { if (!pressed) btn.click(); return { opened: !pressed }; }
-      return { opened: false, ready: true };
-    })()
-  `);
-  if (state?.error) throw new Error(state.error);
-  if (state?.ready) return { opened: false };
+async function ensureWatchlistOpen({ evaluate, openPanel, sleep, maxWaitMs = 5000 }) {
+  // State first: if the widget is already usable, toolbar selector changes
+  // must not prevent read/write operations.
+  if (await evaluate(WATCHLIST_READY_JS)) return { opened: false };
 
-  const deadline = Date.now() + maxWaitMs;
-  while (Date.now() < deadline) {
-    const ready = await evaluate(`
-      !!(document.querySelector('[data-name="add-symbol-button"]')
-        || document.querySelector('[class*="layout__area--right"] [data-symbol-full]'))
-    `);
-    if (ready) return { opened: !!state?.opened };
-    await new Promise(r => setTimeout(r, 250));
+  const panelState = await openPanel({
+    panel: 'watchlist', action: 'open', _deps: { evaluate },
+  });
+
+  for (let waited = 0; waited < maxWaitMs; waited += 250) {
+    await sleep(250);
+    const ready = await evaluate(WATCHLIST_READY_JS);
+    if (ready) return { opened: panelState?.performed === 'opened' };
   }
   throw new Error('Watchlist panel did not become ready. Is a watchlist widget configured in the right panel?');
 }
 
 // Active watchlist metadata (id, name, symbols) read from the React fiber
 // tree — needed for the REST endpoints. Approach from PR #65.
-async function getActiveListInfo() {
+async function getActiveListInfo(evaluate) {
   return evaluate(`
     (function() {
       var panel = document.querySelector('[class*="layout__area--right"]');
@@ -70,8 +97,10 @@ async function getActiveListInfo() {
   `);
 }
 
-export async function get() {
-  await ensureWatchlistOpen();
+export async function getWatchlist({ _deps } = {}) {
+  const deps = _resolve(_deps);
+  const { evaluate } = deps;
+  await ensureWatchlistOpen(deps);
 
   // Positional cell mapping (name, last, change, change%, volume) with
   // Unicode-minus normalization. The old regex classifier dropped every
@@ -105,7 +134,7 @@ export async function get() {
     })()
   `);
 
-  const listInfo = await getActiveListInfo();
+  const listInfo = await getActiveListInfo(evaluate);
   return {
     success: true,
     count: data?.symbols?.length || 0,
@@ -115,9 +144,62 @@ export async function get() {
   };
 }
 
-export async function add({ symbol }) {
+export async function listWatchlists({ use_function = false, _deps } = {}) {
+  const { evaluateAsync, callPageFunction } = _resolve(_deps);
+  const path = '/api/v1/symbols_list/custom/';
+  const resp = use_function
+    ? await callPageFunction(fetchWatchlistsInPage, [path])
+    : await evaluateAsync(`
+      fetch(${JSON.stringify(path)}, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      })
+        .then(function(r) {
+          return r.text().then(function(t) {
+            var data = null;
+            try { data = JSON.parse(t); } catch (e) {}
+            return { status: r.status, ok: r.ok, data: data, body: t.substring(0, 300) };
+          });
+        })
+        .catch(function(e) { return { status: 0, ok: false, data: null, body: String(e) }; })
+    `);
+
+  if (!resp?.ok) {
+    throw new Error(`Watchlist list REST call failed (HTTP ${resp?.status}): ${resp?.body}`);
+  }
+
+  const data = resp.data;
+  const rawLists = Array.isArray(data)
+    ? data
+    : Array.isArray(data?.results)
+      ? data.results
+      : Array.isArray(data?.data)
+        ? data.data
+        : null;
+  if (!rawLists) {
+    throw new Error('Unexpected watchlist list response: expected an array');
+  }
+
+  const lists = rawLists.map(list => ({
+    id: list.id,
+    name: list.name || list.title || null,
+    symbol_count: Array.isArray(list.symbols)
+      ? list.symbols.length
+      : (list.symbol_count ?? list.symbols_count ?? null),
+  }));
+
+  return {
+    success: true, count: lists.length, lists, api: 'rest',
+    transport: use_function ? 'callFunctionOn' : 'evaluateAsync',
+  };
+}
+
+export async function add({ symbol, _deps }) {
+  const deps = _resolve(_deps);
+  const { evaluate, getClient, sleep } = deps;
   const c = await getClient();
-  await ensureWatchlistOpen();
+  await ensureWatchlistOpen(deps);
 
   const addClicked = await evaluate(`
     (function() {
@@ -130,16 +212,16 @@ export async function add({ symbol }) {
     })()
   `);
   if (!addClicked?.found) throw new Error('Add symbol button not found in watchlist panel');
-  await new Promise(r => setTimeout(r, 400));
+  await sleep(400);
 
   await c.Input.insertText({ text: symbol });
-  await new Promise(r => setTimeout(r, 700));
+  await sleep(700);
   await c.Input.dispatchKeyEvent({ type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
   await c.Input.dispatchKeyEvent({ type: 'keyUp', key: 'Enter', code: 'Enter' });
-  await new Promise(r => setTimeout(r, 400));
+  await sleep(400);
   await c.Input.dispatchKeyEvent({ type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
   await c.Input.dispatchKeyEvent({ type: 'keyUp', key: 'Escape', code: 'Escape' });
-  await new Promise(r => setTimeout(r, 400));
+  await sleep(400);
 
   // Verify the row actually appeared instead of reporting blind success.
   const bare = symbol.split(':').pop().toUpperCase();
@@ -157,11 +239,11 @@ export async function add({ symbol }) {
   return { success: !!verified, symbol, added_as: verified, action: verified ? 'added' : 'not_verified' };
 }
 
-export async function addBulk({ symbols }) {
+export async function addBulk({ symbols, _deps }) {
   const results = [];
   for (const symbol of symbols) {
     try {
-      const r = await add({ symbol });
+      const r = await add({ symbol, _deps });
       results.push({ symbol, success: r.success, added_as: r.added_as });
     } catch (err) {
       results.push({ symbol, success: false, error: err.message });
@@ -171,9 +253,11 @@ export async function addBulk({ symbols }) {
   return { success: added > 0, added, failed: results.length - added, results };
 }
 
-export async function remove({ symbols }) {
-  await ensureWatchlistOpen();
-  const listInfo = await getActiveListInfo();
+export async function remove({ symbols, _deps }) {
+  const deps = _resolve(_deps);
+  const { evaluate, evaluateAsync, openPanel, sleep } = deps;
+  await ensureWatchlistOpen(deps);
+  const listInfo = await getActiveListInfo(evaluate);
   if (!listInfo) throw new Error('Cannot read active watchlist metadata (React fiber probe failed)');
 
   // Match requested symbols (bare or EXCHANGE:SYMBOL) against the list.
@@ -193,9 +277,11 @@ export async function remove({ symbols }) {
     return { success: false, removed: [], skipped, error: 'No matching symbols in the active watchlist' };
   }
 
-  // Page-context fetch — browser attaches session cookies automatically.
+  // Page-context same-origin fetch — TradingView uses localized chart origins
+  // such as tw.tradingview.com, so a hard-coded www host would trigger CORS.
+  // A relative URL follows the active page origin and its session cookies.
   const resp = await evaluateAsync(`
-    fetch('https://www.tradingview.com/api/v1/symbols_list/custom/' + ${JSON.stringify(listInfo.id)} + '/remove/', {
+    fetch('/api/v1/symbols_list/custom/' + ${JSON.stringify(listInfo.id)} + '/remove/', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
@@ -211,14 +297,13 @@ export async function remove({ symbols }) {
 
   // The desktop widget doesn't live-sync API removals — remount it by
   // toggling the panel, then verify the rows are actually gone.
-  await evaluate(`(function() { var btn = ${WL_BUTTON_JS}; if (btn) btn.click(); })()`);
-  await new Promise(r => setTimeout(r, 400));
-  await evaluate(`(function() { var btn = ${WL_BUTTON_JS}; if (btn) btn.click(); })()`);
+  await openPanel({ panel: 'watchlist', action: 'close', _deps: { evaluate } });
+  await sleep(400);
+  await openPanel({ panel: 'watchlist', action: 'open', _deps: { evaluate } });
 
   let stillPresent = toRemove;
-  const deadline = Date.now() + 5000;
-  while (Date.now() < deadline) {
-    await new Promise(r => setTimeout(r, 500));
+  for (let waited = 0; waited < 5000; waited += 500) {
+    await sleep(500);
     stillPresent = await evaluate(`
       (function() {
         var rows = document.querySelectorAll('[class*="layout__area--right"] [data-symbol-full]');

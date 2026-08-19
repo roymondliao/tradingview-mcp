@@ -3,6 +3,12 @@
  */
 import { evaluate, evaluateAsync, getClient } from '../connection.js';
 
+const RIGHT_PANEL_LOCATORS = {
+  'watchlist': { dataNames: ['base', 'base-watchlist-widget-button'], ariaLabels: ['Watchlist, details, and news', 'Watchlist'] },
+  'alerts': { dataNames: ['alerts-button', 'alerts'], ariaLabels: ['Alerts'] },
+  'trading': { dataNames: ['trading-button'], ariaLabels: ['Trading Panel'] },
+};
+
 export async function click({ by, value }) {
   const escaped = JSON.stringify(value);
   const result = await evaluate(`
@@ -28,11 +34,12 @@ export async function click({ by, value }) {
   return { success: true, clicked: result };
 }
 
-export async function openPanel({ panel, action }) {
+export async function openPanel({ panel, action, _deps } = {}) {
+  const evaluatePage = _deps?.evaluate || evaluate;
   const isBottomPanel = panel === 'pine-editor' || panel === 'strategy-tester';
   if (isBottomPanel) {
     const widgetName = panel === 'pine-editor' ? 'pine-editor' : 'backtesting';
-    const result = await evaluate(`
+    const result = await evaluatePage(`
       (function() {
         var bwb = window.TradingView && window.TradingView.bottomWidgetBar;
         if (!bwb) return { error: 'bottomWidgetBar not available' };
@@ -62,24 +69,50 @@ export async function openPanel({ panel, action }) {
     if (result && result.error) throw new Error(result.error);
     return { success: true, panel, action, was_open: result?.was_open ?? false, performed: result?.performed ?? 'unknown' };
   } else {
-    // Newer TV builds renamed the right-rail buttons (watchlist is now
-    // data-name="base", aria "Watchlist, details, and news"; alerts is
-    // data-name="alerts") — keep legacy selectors as fallbacks.
-    const selectorMap = {
-      'watchlist': { dataNames: ['base-watchlist-widget-button', 'base'], ariaLabels: ['Watchlist', 'Watchlist, details, and news'] },
-      'alerts': { dataNames: ['alerts-button', 'alerts'], ariaLabels: ['Alerts'] },
-      'trading': { dataNames: ['trading-button'], ariaLabels: ['Trading Panel'] },
-    };
-    const sel = selectorMap[panel];
-    const result = await evaluate(`
+    // Keep current and one legacy locator together here so callers do not
+    // duplicate TradingView's frequently changing right-rail selectors.
+    const sel = RIGHT_PANEL_LOCATORS[panel];
+    if (!sel) throw new Error(`Unknown right panel: ${panel}`);
+    const result = await evaluatePage(`
       (function() {
         var dataNames = ${JSON.stringify(sel.dataNames)};
         var ariaLabels = ${JSON.stringify(sel.ariaLabels)};
         var action = ${JSON.stringify(action)};
         var btn = null;
-        for (var d = 0; d < dataNames.length && !btn; d++) btn = document.querySelector('[data-name="' + dataNames[d] + '"]');
-        for (var a = 0; a < ariaLabels.length && !btn; a++) btn = document.querySelector('[aria-label="' + ariaLabels[a] + '"]');
-        if (!btn) return { error: 'Button not found for panel: ' + ${JSON.stringify(panel)} };
+        var matchedBy = null;
+        function firstVisible(selector) {
+          var matches = document.querySelectorAll(selector);
+          for (var i = 0; i < matches.length; i++) {
+            var el = matches[i];
+            if ((el.tagName === 'BUTTON' || el.getAttribute('role') === 'button')
+              && (el.offsetWidth || el.offsetHeight || el.getClientRects().length)) return el;
+          }
+          return null;
+        }
+        for (var d = 0; d < dataNames.length && !btn; d++) {
+          btn = firstVisible('[data-name="' + dataNames[d] + '"]');
+          if (btn) matchedBy = 'data-name=' + dataNames[d];
+        }
+        for (var a = 0; a < ariaLabels.length && !btn; a++) {
+          btn = firstVisible('[aria-label="' + ariaLabels[a] + '"]');
+          if (btn) matchedBy = 'aria-label=' + ariaLabels[a];
+        }
+        if (!btn) {
+          var observed = [];
+          var buttons = document.querySelectorAll('button, [role="button"]');
+          for (var i = 0; i < buttons.length && observed.length < 12; i++) {
+            var rect = buttons[i].getBoundingClientRect();
+            if (rect.left <= window.innerWidth - 120 || !(rect.width || rect.height)) continue;
+            observed.push({
+              data_name: buttons[i].getAttribute('data-name') || null,
+              aria_label: buttons[i].getAttribute('aria-label') || null,
+            });
+          }
+          return {
+            error: 'Button not found for panel: ' + ${JSON.stringify(panel)},
+            diagnostics: { data_names_tried: dataNames, aria_labels_tried: ariaLabels, right_rail_buttons: observed },
+          };
+        }
         var isActive = btn.getAttribute('aria-pressed') === 'true' || btn.classList.contains('isActive') || btn.classList.toString().indexOf('active') !== -1 || btn.classList.toString().indexOf('Active') !== -1;
         var rightArea = document.querySelector('[class*="layout__area--right"]');
         var sidebarOpen = !!(rightArea && rightArea.offsetWidth > 50);
@@ -89,11 +122,19 @@ export async function openPanel({ panel, action }) {
         else if (action === 'close' && isOpen) { btn.click(); performed = 'closed'; }
         else if (action === 'toggle') { btn.click(); performed = isOpen ? 'closed' : 'opened'; }
         else { performed = isOpen ? 'already_open' : 'already_closed'; }
-        return { was_open: isOpen, performed: performed };
+        return { was_open: isOpen, performed: performed, matched_by: matchedBy };
       })()
     `);
-    if (result && result.error) throw new Error(result.error);
-    return { success: true, panel, action, was_open: result?.was_open ?? false, performed: result?.performed ?? 'unknown' };
+    if (result && result.error) {
+      const diagnostics = result.diagnostics ? `; diagnostics=${JSON.stringify(result.diagnostics)}` : '';
+      throw new Error(result.error + diagnostics);
+    }
+    return {
+      success: true, panel, action,
+      was_open: result?.was_open ?? false,
+      performed: result?.performed ?? 'unknown',
+      matched_by: result?.matched_by ?? null,
+    };
   }
 }
 

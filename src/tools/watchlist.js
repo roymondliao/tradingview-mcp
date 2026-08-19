@@ -4,7 +4,7 @@ import * as core from '../core/watchlist.js';
 
 export function registerWatchlistTools(server) {
   server.tool('watchlist_get', 'Get all symbols from the current TradingView watchlist with last price, change, and change%', {}, async () => {
-    try { return jsonResult(await core.get()); }
+    try { return jsonResult(await core.getWatchlist()); }
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 
