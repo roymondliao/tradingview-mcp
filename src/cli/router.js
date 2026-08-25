@@ -46,7 +46,7 @@ function printCommandHelp(name, cmd) {
     console.log('\nOptions:');
     for (const [k, v] of Object.entries(opts)) {
       const flag = v.short ? `-${v.short}, --${k}` : `    --${k}`;
-      console.log(`  ${flag.padEnd(20)}${v.description || ''}`);
+      console.log(`  ${flag.padEnd(26)}${v.description || ''}`);
     }
   }
 }
@@ -104,7 +104,7 @@ export async function run(argv) {
           console.log('\nOptions:');
           for (const [k, v] of Object.entries(options)) {
             const flag = v.short ? `-${v.short}, --${k}` : `    --${k}`;
-            console.log(`  ${flag.padEnd(20)}${v.description || ''}`);
+            console.log(`  ${flag.padEnd(26)}${v.description || ''}`);
           }
         }
         process.exit(0);
@@ -146,11 +146,20 @@ async function execute(handler, values, positionals) {
 
 function handleError(err) {
   const message = err.message || String(err);
+  const payload = {
+    success: false,
+    ...(err.code && { code: err.code }),
+    error: message,
+    ...(err.stage && { stage: err.stage }),
+    ...(err.timeout_ms !== undefined && { timeout_ms: err.timeout_ms }),
+    ...(err.target_id && { target_id: err.target_id }),
+    ...(err.chart_id && { chart_id: err.chart_id }),
+  };
   // Connection failures get exit code 2
-  if (/CDP|connection|ECONNREFUSED|not running/i.test(message)) {
-    console.error(JSON.stringify({ success: false, error: message }, null, 2));
+  if (String(err.code || '').startsWith('CDP_') || /CDP|connection|ECONNREFUSED|not running/i.test(message)) {
+    console.error(JSON.stringify(payload, null, 2));
     process.exit(2);
   }
-  console.error(JSON.stringify({ success: false, error: message }, null, 2));
+  console.error(JSON.stringify(payload, null, 2));
   process.exit(1);
 }

@@ -3,6 +3,8 @@
  */
 import { evaluate as _evaluate, evaluateAsync as _evaluateAsync, safeString, requireFinite } from '../connection.js';
 import { waitForChartReady as _waitForChartReady } from '../wait.js';
+import { getActivePaneState } from './studies.js';
+import { unixSecondsToIso, withUnixSecondsIso } from './time.js';
 
 const CHART_API = 'window.TradingViewApi._activeChartWidgetWV.value()';
 
@@ -15,26 +17,7 @@ function _resolve(deps) {
 }
 
 export async function getState({ _deps } = {}) {
-  const { evaluate } = _resolve(_deps);
-  const state = await evaluate(`
-    (function() {
-      var chart = ${CHART_API};
-      var studies = [];
-      try {
-        var allStudies = chart.getAllStudies();
-        studies = allStudies.map(function(s) {
-          return { id: s.id, name: s.name || s.title || 'unknown' };
-        });
-      } catch(e) {}
-      return {
-        symbol: chart.symbol(),
-        resolution: chart.resolution(),
-        chartType: chart.chartType(),
-        studies: studies,
-      };
-    })()
-  `);
-  return { success: true, ...state };
+  return getActivePaneState({ _deps });
 }
 
 export async function setSymbol({ symbol, _deps }) {
@@ -162,7 +145,11 @@ export async function getVisibleRange({ _deps } = {}) {
       return { visible_range: chart.getVisibleRange(), bars_range: chart.getVisibleBarsRange() };
     })()
   `);
-  return { success: true, visible_range: result.visible_range, bars_range: result.bars_range };
+  return {
+    success: true,
+    visible_range: withUnixSecondsIso(result.visible_range || {}, ['from', 'to']),
+    bars_range: result.bars_range,
+  };
 }
 
 export async function setVisibleRange({ from, to, _deps }) {
@@ -211,7 +198,11 @@ export async function setVisibleRange({ from, to, _deps }) {
       catch(e) { return { from: 0, to: 0, error: e.message }; }
     })()
   `);
-  return { success: true, requested: { from, to }, actual: actual || { from: 0, to: 0 } };
+  return {
+    success: true,
+    requested: withUnixSecondsIso({ from: f, to: t }, ['from', 'to']),
+    actual: withUnixSecondsIso(actual || { from: 0, to: 0 }, ['from', 'to']),
+  };
 }
 
 export async function scrollToDate({ date, _deps } = {}) {
@@ -251,7 +242,14 @@ export async function scrollToDate({ date, _deps } = {}) {
     })()
   `);
   await new Promise(r => setTimeout(r, 500));
-  return { success: true, date, centered_on: timestamp, resolution, window: { from, to } };
+  return {
+    success: true,
+    date,
+    centered_on: timestamp,
+    centered_on_iso: unixSecondsToIso(timestamp),
+    resolution,
+    window: withUnixSecondsIso({ from, to }, ['from', 'to']),
+  };
 }
 
 export async function symbolInfo({ _deps } = {}) {

@@ -3,6 +3,7 @@
  * Uses efficient poll + dedup: only emits when data changes.
  */
 import { evaluate } from '../connection.js';
+import { unixMillisecondsToIso, withUnixSecondsIso } from './time.js';
 
 const CHART_API = 'window.TradingViewApi._activeChartWidgetWV.value()';
 const MODEL = `${CHART_API}._chartWidget.model()`;
@@ -36,7 +37,13 @@ async function pollLoop(fetcher, { interval = 500, dedupe = true, label = 'strea
       const hash = dedupe ? JSON.stringify(data) : null;
       if (!dedupe || hash !== lastHash) {
         lastHash = hash;
-        const line = JSON.stringify({ ...data, _ts: Date.now(), _stream: label });
+        const emittedAt = Date.now();
+        const line = JSON.stringify({
+          ...data,
+          _ts: emittedAt,
+          _ts_iso: unixMillisecondsToIso(emittedAt),
+          _stream: label,
+        });
         process.stdout.write(line + '\n');
       }
     } catch (err) {
@@ -60,7 +67,7 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 // ── Stream: quote ──
 
 async function fetchQuote() {
-  return evaluate(`
+  const result = await evaluate(`
     (function() {
       var chart = ${CHART_API};
       var m = ${MODEL};
@@ -79,6 +86,7 @@ async function fetchQuote() {
       };
     })()
   `);
+  return result ? withUnixSecondsIso(result, ['time']) : result;
 }
 
 export async function streamQuote({ interval } = {}) {
@@ -88,7 +96,7 @@ export async function streamQuote({ interval } = {}) {
 // ── Stream: ohlcv (last N bars, emits on new bar) ──
 
 async function fetchLastBar() {
-  return evaluate(`
+  const result = await evaluate(`
     (function() {
       var chart = ${CHART_API};
       var m = ${MODEL};
@@ -109,6 +117,7 @@ async function fetchLastBar() {
       };
     })()
   `);
+  return result ? withUnixSecondsIso(result, ['bar_time']) : result;
 }
 
 export async function streamBars({ interval } = {}) {
@@ -293,7 +302,7 @@ export async function streamTables({ interval, filter } = {}) {
 const CWC = 'window.TradingViewApi._chartWidgetCollection';
 
 async function fetchAllPanes() {
-  return evaluate(`
+  const result = await evaluate(`
     (function() {
       var cwc = ${CWC};
       var all = cwc.getAll();
@@ -328,6 +337,11 @@ async function fetchAllPanes() {
       return { layout: layoutType, pane_count: panes.length, panes: panes };
     })()
   `);
+  if (!result?.panes) return result;
+  return {
+    ...result,
+    panes: result.panes.map(pane => pane.time == null ? pane : withUnixSecondsIso(pane, ['time'])),
+  };
 }
 
 export async function streamAllPanes({ interval } = {}) {

@@ -2,6 +2,7 @@
  * Core drawing logic.
  */
 import { evaluate as _evaluate, getChartApi as _getChartApi, safeString, requireFinite } from '../connection.js';
+import { withUnixSecondsIso } from './time.js';
 
 function _resolve(deps) {
   return { evaluate: deps?.evaluate || _evaluate, getChartApi: deps?.getChartApi || _getChartApi };
@@ -82,6 +83,9 @@ export async function getProperties({ entity_id }) {
     })()
   `);
   if (result?.error) throw new Error(result.error);
+  if (Array.isArray(result?.points)) {
+    result.points = result.points.map(point => withUnixSecondsIso(point, ['time']));
+  }
   return { success: true, ...result };
 }
 

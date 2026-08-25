@@ -2,7 +2,8 @@
  * Core pane/layout management logic.
  * Controls multi-chart layouts (split panes) in TradingView.
  */
-import { evaluate, evaluateAsync, getClient, safeString } from '../connection.js';
+import { evaluate, evaluateAsync, getTargetInfo, safeString } from '../connection.js';
+import { attachTab, identifyTab } from './tab.js';
 
 const CWC = 'window.TradingViewApi._chartWidgetCollection';
 
@@ -40,6 +41,11 @@ export async function list() {
       if (typeof count === 'object' && count && typeof count.value === 'function') count = count.value();
 
       var all = cwc.getAll();
+      var saver = window.TradingViewApi._saveChartService && window.TradingViewApi._saveChartService._chartSaver;
+      var saved = saver && saver._prevChartState ? saver._prevChartState : null;
+      var savedContent = null;
+      try { savedContent = saved && saved.content ? JSON.parse(saved.content) : null; } catch (e) {}
+      var savedCharts = savedContent && Array.isArray(savedContent.charts) ? savedContent.charts : [];
       var panes = [];
       for (var i = 0; i < all.length; i++) {
         try {
@@ -48,8 +54,14 @@ export async function list() {
           var mainSeries = model ? model.mainSeries() : null;
           var sym = mainSeries ? mainSeries.symbol() : 'unknown';
           var res = mainSeries ? mainSeries.interval() : null;
-          panes.push({ index: i, symbol: sym, resolution: res || null });
-        } catch(e) { panes.push({ index: i, error: e.message }); }
+          panes.push({
+            index: i,
+            pane_index: i,
+            pane_id: savedCharts[i] && savedCharts[i].chartId != null ? String(savedCharts[i].chartId) : null,
+            symbol: sym,
+            resolution: res || null
+          });
+        } catch(e) { panes.push({ index: i, pane_index: i, pane_id: null, error: e.message }); }
       }
 
       // Check which pane is active
@@ -61,14 +73,28 @@ export async function list() {
         } catch(e) {}
       }
 
-      return { layout: layoutType, chart_count: count, active_index: activeIndex, panes: panes };
+      for (var k = 0; k < panes.length; k++) panes[k].active = panes[k].pane_index === activeIndex;
+      return {
+        layout: layoutType,
+        layout_id: saved && saved.id != null ? saved.id : null,
+        layout_name: saved ? (saved.name || saved.description || null) : null,
+        chart_count: count,
+        active_index: activeIndex,
+        panes: panes
+      };
     })()
   `);
 
+  const target = await getTargetInfo();
+
   return {
     success: true,
-    layout: result.layout,
-    layout_name: LAYOUT_NAMES[result.layout] || result.layout,
+    target_id: target?.id || null,
+    url_chart_id: target?.url?.match(/\/chart\/([^/?]+)/)?.[1] || null,
+    layout_id: result.layout_id,
+    layout_name: result.layout_name,
+    pane_layout: result.layout,
+    pane_layout_name: LAYOUT_NAMES[result.layout] || result.layout,
     chart_count: result.chart_count,
     active_index: result.active_index,
     panes: result.panes,
@@ -102,8 +128,8 @@ export async function setLayout({ layout }) {
   const state = await list();
   return {
     success: true,
-    layout: resolved,
-    layout_name: LAYOUT_NAMES[resolved],
+    pane_layout: resolved,
+    pane_layout_name: LAYOUT_NAMES[resolved],
     chart_count: state.chart_count,
     panes: state.panes,
   };
@@ -114,20 +140,81 @@ export async function setLayout({ layout }) {
  */
 export async function focus({ index }) {
   const idx = Number(index);
+  if (!Number.isInteger(idx) || idx < 0) throw new Error('Pane index must be a non-negative integer');
   const result = await evaluate(`
     (function() {
       var cwc = ${CWC};
       var all = cwc.getAll();
       if (${idx} >= all.length) return { error: 'Pane index ' + ${idx} + ' out of range (have ' + all.length + ' panes)' };
       var chart = all[${idx}];
-      // Click the main div to activate it
-      if (chart._mainDiv) chart._mainDiv.click();
+      try {
+        if (window.TradingViewApi && typeof window.TradingViewApi._activateChart === 'function') {
+          window.TradingViewApi._activateChart(chart);
+        }
+      } catch (e) {}
+      if (chart._mainDiv) {
+        try { chart._mainDiv.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); } catch (e) {}
+        chart._mainDiv.click();
+      }
       return { focused: ${idx}, total: all.length };
     })()
   `);
 
   if (result?.error) throw new Error(result.error);
-  return { success: true, focused_index: result.focused, total_panes: result.total };
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const state = await list();
+    if (state.active_index === idx) {
+      const pane = state.panes.find((item) => item.pane_index === idx);
+      return {
+        success: true,
+        focused_index: idx,
+        pane_id: pane?.pane_id || null,
+        total_panes: result.total,
+      };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Pane focus readback failed for index ${idx}`);
+}
+
+/** Resolve an explicit Tab/Layout/Pane selector and return the chosen context. */
+export async function prepareContext({ tab_index, url_chart_id, layout_id, pane_index, _deps } = {}) {
+  const attach = _deps?.attachTab || attachTab;
+  const identify = _deps?.identifyTab || identifyTab;
+  const listPanes = _deps?.list || list;
+  const focusPane = _deps?.focus || focus;
+  const attached = await attach({ tab_index, url_chart_id, layout_id });
+  let inventory = await listPanes();
+  if (layout_id != null && String(inventory.layout_id) !== String(layout_id)) {
+    throw new Error(`Attached Layout ${inventory.layout_id} does not match requested layout_id ${layout_id}`);
+  }
+  let selectedIndex;
+  if (pane_index != null) {
+    selectedIndex = Number(pane_index);
+    await focusPane({ index: selectedIndex });
+    inventory = await listPanes();
+  } else {
+    selectedIndex = inventory.active_index;
+    if (selectedIndex == null && inventory.panes.length === 1) selectedIndex = 0;
+    if (selectedIndex == null) {
+      throw new Error('Active Pane is unresolved; provide pane_index explicitly.');
+    }
+  }
+  const selectedPane = inventory.panes.find((pane) => pane.pane_index === selectedIndex);
+  if (!selectedPane) throw new Error(`Pane index ${selectedIndex} not found in selected Layout.`);
+  const tabIdentity = attached || await identify(inventory.target_id);
+  return {
+    tab_index: tabIdentity?.tab_index ?? tab_index ?? null,
+    target_id: inventory.target_id,
+    url_chart_id: inventory.url_chart_id,
+    layout_id: inventory.layout_id,
+    layout_name: inventory.layout_name,
+    pane_layout: inventory.pane_layout,
+    pane_index: selectedPane.pane_index,
+    pane_id: selectedPane.pane_id,
+    symbol: selectedPane.symbol,
+    resolution: selectedPane.resolution,
+  };
 }
 
 /**

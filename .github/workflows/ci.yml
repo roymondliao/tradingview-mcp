@@ -1,9 +1,6 @@
 name: CI
 
 "on":
-  push:
-    branches:
-      - fork-main
   pull_request:
     branches:
       - fork-main

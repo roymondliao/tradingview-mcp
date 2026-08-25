@@ -156,6 +156,11 @@ tv status                          # check connection
 tv quote                           # current price
 tv symbol AAPL                     # change symbol
 tv ohlcv --summary                 # price summary
+tv history --symbol NASDAQ:AAPL -t D  # load all available daily history metadata
+tv history --symbol NASDAQ:AAPL -t D --bars-per-request 1000 --max-requests 20 --max-bars 10000 --include-bars --output history.json
+tv history --symbol NASDAQ:AAPL -t D --include-bars --output history.json --force  # explicitly overwrite an existing file
+tv tab list                        # resolve Tab, Saved Layout names/IDs, and Pane IDs
+tv study list --layout-id 201414175 --pane-index 0  # read one explicit Pane
 tv screenshot -r chart             # capture chart
 tv pine compile                    # compile Pine Script
 tv pane layout 2x2                 # 4-chart grid
@@ -167,7 +172,7 @@ tv stream quote | jq '.close'      # monitor price changes
 
 ```
 tv status / launch / state / symbol / timeframe / type / info / search
-tv quote / ohlcv / values
+tv quote / ohlcv / history / values
 tv data lines/labels/tables/boxes/strategy/trades/equity/depth/indicator
 tv pine get/set/compile/analyze/check/save/new/open/list/errors/console
 tv draw shape/list/get/remove/clear
@@ -228,6 +233,9 @@ Claude reads [`CLAUDE.md`](CLAUDE.md) automatically when working in this project
 | `data_get_study_values` | Read current RSI, MACD, BB, EMA values from all indicators | ~500B |
 | `quote_get` | Get latest price, OHLC, volume | ~200B |
 | `data_get_ohlcv` | Get price bars. **Use `summary: true`** for compact stats | 500B (summary) / 8KB (100 bars) |
+| `data_get_history` | Load older OHLCV batches until `from` or the available-history boundary. Metadata by default | Varies |
+
+Unix timestamp fields are preserved for programmatic use and include UTC ISO 8601 companions, such as `time` + `time_iso` and `period.from` + `period.from_iso`. Logical indexes such as `bar_index` are not timestamps.
 
 ### Custom Indicator Data (Pine Drawings)
 
@@ -354,7 +362,7 @@ npm test
 Claude Code  ←→  MCP Server (stdio)  ←→  CDP (port 9222)  ←→  TradingView Desktop (Electron)
 ```
 
-- **Transport**: MCP over stdio (84 tools) + CLI (`tv` command, 30 commands with 66 subcommands)
+- **Transport**: MCP over stdio (85 tools) + CLI (`tv` command, 31 commands with 66 subcommands)
 - **Connection**: Chrome DevTools Protocol on localhost:9222
 - **Streaming**: Poll-and-diff loop with deduplication, JSONL output to stdout
 - **No dependencies** beyond `@modelcontextprotocol/sdk` and `chrome-remote-interface`

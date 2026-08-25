@@ -1,10 +1,13 @@
 import { z } from 'zod';
 import { jsonResult } from './_format.js';
 import * as core from '../core/pane.js';
+import { paneContextSchema, withPaneContext } from './pane-context.js';
 
 export function registerPaneTools(server) {
-  server.tool('pane_list', 'List all chart panes in the current layout with their symbols and active state', {}, async () => {
-    try { return jsonResult(await core.list()); }
+  server.tool('pane_list', 'List all chart panes in the selected Layout with IDs, symbols, and active state', {
+    ...paneContextSchema,
+  }, async (args) => {
+    try { return jsonResult(await withPaneContext(args, () => core.list())); }
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 

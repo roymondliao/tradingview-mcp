@@ -1,10 +1,13 @@
 import { z } from 'zod';
 import { jsonResult } from './_format.js';
 import * as core from '../core/chart.js';
+import { paneContextSchema, withPaneContext } from './pane-context.js';
 
 export function registerChartTools(server) {
-  server.tool('chart_get_state', 'Get current chart state (symbol, timeframe, chart type, indicators)', {}, async () => {
-    try { return jsonResult(await core.getState()); }
+  server.tool('chart_get_state', 'Get current chart state (symbol, timeframe, chart type, indicators)', {
+    ...paneContextSchema,
+  }, async (args) => {
+    try { return jsonResult(await withPaneContext(args, () => core.getState())); }
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 

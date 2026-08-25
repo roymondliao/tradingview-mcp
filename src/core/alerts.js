@@ -7,6 +7,7 @@
  * the endpoint rejects. The create/delete bodies must be wrapped in a `payload` object.
  */
 import { evaluate, evaluateAsync, safeString, requireFinite } from '../connection.js';
+import { unixSecondsToIso } from './time.js';
 
 // Map the tool's friendly condition names to TradingView's alert condition types.
 const CONDITION_TYPE_MAP = {
@@ -91,7 +92,16 @@ export async function list() {
       })
       .catch(function(e) { return { alerts: [], error: e.message }; })
   `);
-  return { success: true, alert_count: result?.alerts?.length || 0, source: 'internal_api', alerts: result?.alerts || [], error: result?.error };
+  const alerts = (result?.alerts || []).map(alert => {
+    const expirationIso = unixSecondsToIso(alert.expiration);
+    return {
+      ...alert,
+      created_iso: unixSecondsToIso(alert.created),
+      last_fired_iso: unixSecondsToIso(alert.last_fired),
+      ...(expirationIso && { expiration_iso: expirationIso }),
+    };
+  });
+  return { success: true, alert_count: alerts.length, source: 'internal_api', alerts, error: result?.error };
 }
 
 export async function deleteAlerts({ delete_all, alert_ids, alert_id } = {}) {

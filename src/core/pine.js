@@ -4,6 +4,7 @@
  * They throw on error (callers catch and format).
  */
 import { evaluate, evaluateAsync, getClient } from '../connection.js';
+import { unixSecondsToIso } from './time.js';
 
 // ── Monaco finder (injected into TV page) ──
 const FIND_MONACO = `
@@ -588,8 +589,38 @@ export async function openScript({ name }) {
   return { success: true, name: result.name, script_id: result.id, lines: result.lines, source: 'internal_api', opened: true };
 }
 
-export async function listScripts() {
-  const scripts = await evaluateAsync(`
+export function normalizeSavedScript(script) {
+  const kind = script?.kind || script?.extra?.kind || null;
+  const type = kind === 'strategy'
+    ? 'strategy'
+    : kind === 'study'
+      ? 'indicator'
+      : kind === 'library'
+        ? 'library'
+        : 'unknown';
+  const scriptId = script?.script_id || script?.scriptIdPart || script?.id || null;
+  const modified = script?.modified || null;
+  return {
+    id: scriptId,
+    script_id: scriptId,
+    name: script?.name || script?.scriptName || script?.scriptTitle || 'Untitled',
+    title: script?.title || script?.scriptTitle || null,
+    type,
+    version: script?.version || null,
+    modified,
+    modified_iso: unixSecondsToIso(modified),
+    owned: scriptId ? String(scriptId).startsWith('USER;') : false,
+  };
+}
+
+export async function listScripts({ type, _deps } = {}) {
+  const runEvaluateAsync = _deps?.evaluateAsync || evaluateAsync;
+  const allowedTypes = new Set(['strategy', 'indicator', 'library', 'unknown']);
+  if (type && !allowedTypes.has(type)) {
+    throw new Error(`type must be one of: ${[...allowedTypes].join(', ')}`);
+  }
+
+  const response = await runEvaluateAsync(`
     fetch('https://pine-facade.tradingview.com/pine-facade/list/?filter=saved', { credentials: 'include' })
       .then(function(r) { return r.json(); })
       .then(function(data) {
@@ -597,11 +628,12 @@ export async function listScripts() {
         return {
           scripts: data.map(function(s) {
             return {
-              id: s.scriptIdPart || null,
-              name: s.scriptName || s.scriptTitle || 'Untitled',
-              title: s.scriptTitle || null,
+              scriptIdPart: s.scriptIdPart || null,
+              scriptName: s.scriptName || null,
+              scriptTitle: s.scriptTitle || null,
               version: s.version || null,
               modified: s.modified || null,
+              kind: s.extra && s.extra.kind ? s.extra.kind : null
             };
           })
         };
@@ -609,11 +641,231 @@ export async function listScripts() {
       .catch(function(e) { return {scripts: [], error: e.message}; })
   `);
 
+  const normalized = (response?.scripts || []).map(normalizeSavedScript);
+  const scripts = type ? normalized.filter((script) => script.type === type) : normalized;
+
   return {
     success: true,
-    scripts: scripts?.scripts || [],
-    count: scripts?.scripts?.length || 0,
+    scripts,
+    count: scripts.length,
+    total_count: normalized.length,
+    ...(type && { type_filter: type }),
     source: 'internal_api',
-    error: scripts?.error,
+    error: response?.error,
   };
+}
+
+export async function getSavedScript({ script_id, _deps } = {}) {
+  if (!script_id) throw new Error('script_id is required. Use pine list to find Saved Pine Script IDs.');
+  if (!String(script_id).startsWith('USER;')) {
+    throw new Error('script_id must identify an account-owned Saved Pine Script (expected USER;...).');
+  }
+  const runEvaluateAsync = _deps?.evaluateAsync || evaluateAsync;
+  const listing = await listScripts({ _deps: { evaluateAsync: runEvaluateAsync } });
+  const metadata = listing.scripts.find((script) => script.script_id === script_id);
+  if (!metadata) throw new Error(`Saved Pine Script not found: ${script_id}`);
+
+  const result = await runEvaluateAsync(`
+    fetch('https://pine-facade.tradingview.com/pine-facade/get/' + ${JSON.stringify(script_id)} + '/' + ${JSON.stringify(metadata.version || 1)}, { credentials: 'include' })
+      .then(function(r) {
+        if (!r.ok) throw new Error('pine-facade get failed with HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function(data) { return { source: data.source || '' }; })
+      .catch(function(e) { return { error: e.message }; })
+  `);
+  if (result?.error) throw new Error(result.error);
+
+  const pineSource = result?.source || '';
+  return {
+    success: true,
+    ...metadata,
+    pine_source: pineSource,
+    lines: pineSource ? pineSource.split('\n').length : 0,
+    source: 'internal_api',
+  };
+}
+
+const SAVED_PINE_TYPES = new Set(['strategy', 'indicator', 'library']);
+
+export function detectPineType(source) {
+  const declarations = [
+    ['strategy', /(?:^|\n)\s*strategy\s*\(/m],
+    ['indicator', /(?:^|\n)\s*indicator\s*\(/m],
+    ['library', /(?:^|\n)\s*library\s*\(/m],
+  ];
+  const match = declarations.find(([, pattern]) => pattern.test(String(source || '')));
+  return match?.[0] || 'unknown';
+}
+
+function normalizePineSource(source) {
+  return String(source || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
+async function pollSavedScript({ script_id, expectPresent, _deps }) {
+  const runList = _deps?.listScripts || listScripts;
+  const delay = _deps?.delay || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const attempts = _deps?.readbackAttempts || 12;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const listing = await runList({});
+    const found = (listing.scripts || []).find((script) => script.script_id === script_id) || null;
+    if ((expectPresent && found) || (!expectPresent && !found)) return found;
+    if (attempt + 1 < attempts) await delay(250);
+  }
+  throw new Error(`Saved Pine Script ${expectPresent ? 'create/update' : 'delete'} readback failed: ${script_id}`);
+}
+
+async function pollSavedSource({ script_id, source, _deps }) {
+  const getScript = _deps?.getSavedScript || getSavedScript;
+  const delay = _deps?.delay || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const attempts = _deps?.readbackAttempts || 12;
+  let latest = null;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    latest = await getScript({ script_id });
+    if (normalizePineSource(latest.pine_source) === normalizePineSource(source)) return latest;
+    if (attempt + 1 < attempts) await delay(250);
+  }
+  throw new Error(`Saved Pine Script source readback mismatch: ${script_id}`);
+}
+
+function normalizeSaveResult(result) {
+  const meta = result?.metaInfo || result?.result?.metaInfo || {};
+  const compileErrors = result?.compileErrors || result?.result?.compileErrors || {};
+  return {
+    api_success: result?.success !== false,
+    script_id: meta.scriptIdPart || meta.pineId || result?.scriptIdPart || result?.pineId || null,
+    version: meta.version || result?.version || null,
+    errors: compileErrors.errors || [],
+    warnings: compileErrors.warnings || [],
+  };
+}
+
+async function saveNewViaPage({ name, source }) {
+  return evaluateAsync(`
+    Promise.resolve(window.TradingViewApi.pineLibApi())
+      .then(function(api) { return api.saveNew({ scriptSource: ${JSON.stringify(source)}, scriptName: ${JSON.stringify(name)} }); })
+      .then(function(result) {
+        var meta = result && result.metaInfo ? result.metaInfo : {};
+        var compileErrors = result && result.compileErrors ? result.compileErrors : {};
+        return {
+          success: result && result.success !== false,
+          metaInfo: { scriptIdPart: meta.scriptIdPart || meta.pineId || null, version: meta.version || null },
+          compileErrors: { errors: compileErrors.errors || [], warnings: compileErrors.warnings || [] }
+        };
+      })
+      .catch(function(error) { return { error: error && error.message ? error.message : String(error) }; })
+  `);
+}
+
+async function saveNextViaPage({ script_id, name, source }) {
+  return evaluateAsync(`
+    Promise.resolve(window.TradingViewApi.pineLibApi())
+      .then(function(api) { return api.saveNext({
+        scriptIdPart: ${JSON.stringify(script_id)},
+        scriptSource: ${JSON.stringify(source)},
+        isLegacyScript: false,
+        ${name ? `scriptName: ${JSON.stringify(name)}` : ''}
+      }); })
+      .then(function(result) {
+        var meta = result && result.metaInfo ? result.metaInfo : {};
+        var compileErrors = result && result.compileErrors ? result.compileErrors : {};
+        return {
+          success: result && result.success !== false,
+          metaInfo: { scriptIdPart: meta.scriptIdPart || meta.pineId || null, version: meta.version || null },
+          compileErrors: { errors: compileErrors.errors || [], warnings: compileErrors.warnings || [] }
+        };
+      })
+      .catch(function(error) { return { error: error && error.message ? error.message : String(error) }; })
+  `);
+}
+
+async function deleteViaPage({ script_id }) {
+  return evaluateAsync(`
+    fetch('https://pine-facade.tradingview.com/pine-facade/delete/' + ${JSON.stringify(script_id)}, {
+      method: 'POST', credentials: 'include'
+    }).then(function(response) {
+      return response.text().then(function(body) {
+        return { ok: response.ok, status: response.status, body: body };
+      });
+    }).catch(function(error) { return { error: error.message }; })
+  `);
+}
+
+export async function createSavedScript({ name, type, source, _deps } = {}) {
+  if (!name || !String(name).trim()) throw new Error('name is required');
+  if (!SAVED_PINE_TYPES.has(type)) throw new Error('type must be one of: strategy, indicator, library');
+  if (!source || !String(source).trim()) throw new Error('source is required');
+  const detectedType = detectPineType(source);
+  if (detectedType !== type) throw new Error(`Pine declaration type is ${detectedType}; requested type was ${type}.`);
+
+  const runList = _deps?.listScripts || listScripts;
+  const before = await runList({});
+  const normalizedName = String(name).trim().toLowerCase();
+  if ((before.scripts || []).some((script) => [script.name, script.title].some((value) => String(value || '').trim().toLowerCase() === normalizedName))) {
+    throw new Error(`A Saved Pine Script named "${String(name).trim()}" already exists.`);
+  }
+
+  const saveNew = _deps?.saveNew || saveNewViaPage;
+  const raw = await saveNew({ name: String(name).trim(), source });
+  if (raw?.error) throw new Error(raw.error);
+  const saved = normalizeSaveResult(raw);
+  if (!saved.script_id) throw new Error('TradingView saveNew returned no script_id.');
+  const metadata = await pollSavedScript({ script_id: saved.script_id, expectPresent: true, _deps });
+  const readback = await pollSavedSource({ script_id: saved.script_id, source, _deps });
+  return {
+    success: saved.api_success && saved.errors.length === 0,
+    saved: true,
+    script_id: saved.script_id,
+    name: readback.name || metadata.name,
+    type: readback.type || metadata.type,
+    version: readback.version || metadata.version,
+    compile_ok: saved.api_success && saved.errors.length === 0,
+    errors: saved.errors,
+    warnings: saved.warnings,
+  };
+}
+
+export async function updateSavedScript({ script_id, name, source, _deps } = {}) {
+  if (!source || !String(source).trim()) throw new Error('source is required');
+  const getScript = _deps?.getSavedScript || getSavedScript;
+  const before = await getScript({ script_id });
+  if (!before.owned) throw new Error(`Saved Pine Script is not account-owned: ${script_id}`);
+  const detectedType = detectPineType(source);
+  if (detectedType !== before.type) {
+    throw new Error(`Pine declaration type is ${detectedType}; existing Script type is ${before.type}.`);
+  }
+
+  const saveNext = _deps?.saveNext || saveNextViaPage;
+  const raw = await saveNext({ script_id, name, source });
+  if (raw?.error) throw new Error(raw.error);
+  const saved = normalizeSaveResult(raw);
+  await pollSavedScript({ script_id, expectPresent: true, _deps });
+  const readback = await pollSavedSource({ script_id, source, _deps });
+  return {
+    success: saved.api_success && saved.errors.length === 0,
+    saved: true,
+    script_id,
+    name: readback.name,
+    type: readback.type,
+    previous_version: before.version,
+    version: readback.version,
+    compile_ok: saved.api_success && saved.errors.length === 0,
+    errors: saved.errors,
+    warnings: saved.warnings,
+    ...(saved.errors.length && { revert_hint: `The failed version was saved. Update ${script_id} again with the previous source to revert.` }),
+  };
+}
+
+export async function deleteSavedScript({ script_id, confirmed = false, _deps } = {}) {
+  if (!confirmed) throw new Error('Deleting a Saved Pine Script requires explicit confirmation. Pass --yes or confirm=true.');
+  const getScript = _deps?.getSavedScript || getSavedScript;
+  const before = await getScript({ script_id });
+  if (!before.owned) throw new Error(`Saved Pine Script is not account-owned: ${script_id}`);
+
+  const remove = _deps?.deleteScript || deleteViaPage;
+  const result = await remove({ script_id });
+  if (result?.error) throw new Error(result.error);
+  if (result?.ok === false) throw new Error(`pine-facade delete failed with HTTP ${result.status}`);
+  await pollSavedScript({ script_id, expectPresent: false, _deps });
+  return { success: true, script_id, name: before.name, type: before.type, deleted: true };
 }

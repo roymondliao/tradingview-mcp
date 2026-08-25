@@ -1,10 +1,12 @@
 import { register } from '../router.js';
 import * as core from '../../core/chart.js';
 import * as healthCore from '../../core/health.js';
+import { PANE_CONTEXT_OPTIONS, withPaneContext } from '../pane-context.js';
 
 register('state', {
   description: 'Get current chart state (symbol, TF, studies)',
-  handler: () => core.getState(),
+  options: PANE_CONTEXT_OPTIONS,
+  handler: (opts) => withPaneContext(opts, () => core.getState()),
 });
 
 register('symbol', {
