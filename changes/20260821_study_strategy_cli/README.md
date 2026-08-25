@@ -12,7 +12,7 @@ Status: `done`
 
 - [`Study and Strategy CLI Design`](../../docs/study_strategy_cli_design.md) 是本 Feature 的產品與命名基準；Open Questions 必須在相關 Task 實作前解決並回寫。
 - [`TradingView MCP Terminology Definition`](../../docs/terminology.md) 定義 `script_id`、`entity_id`、Study、Strategy、Order 與 Trade 等名詞。
-- [`CLI command check`](../../docs/cmd_check.json) 是 Runtime timeout、Unsupported Commands 與現有 CLI 行為的 regression baseline。
+- 前期人工 CLI 檢測發現的 Runtime timeout、Unsupported Commands 與無 JSON 回應案例，必須轉換為 repository 內可重複執行的 deterministic regression tests；不依賴一次性的 command output 紀錄。
 - TradingView Desktop 已登入並以 CDP port `9222` 啟動；Live Smoke 不可破壞既有使用者 Scripts 或 Pane State。
 - Node.js 22.x 以上與目前 repository CI commands 可正常執行。
 
@@ -81,3 +81,4 @@ TASK-003 與 TASK-005 可在 TASK-002 完成後平行；TASK-006 也可平行進
 - Automated gate: `npm run test:all` passed `243/243`; `npm run test:cli` passed `17/17`; lint completed with zero errors and four pre-existing warnings; `git diff --check` passed.
 - Live gate: TradingView Desktop 3.3.0 on Chrome 140／Electron 38.2.2; Built-in and Account add/get/input/remove cleanup passed; explicit Strategy active/report/orders/trades/equity reads passed.
 - 2026-08-25 follow-up: explicit Tab/Layout/Pane selectors and non-page History naming were added; safe regression passed `250/250`, CLI passed `19/19`, and live reads distinguished `dev` from the background `Short-Strategy` Layout without `pane_label`.
+- 2026-08-25 final gate: Unix timestamp ISO companion fields and their regression coverage raised the safe full suite to `256/256`; CLI remained `19/19`, lint reported zero errors and three pre-existing warnings, and `git diff --check` passed.

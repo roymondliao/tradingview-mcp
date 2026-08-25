@@ -39,7 +39,6 @@ scope: local
 
 - [`Feature exit criteria`](./README.md#exit-criteria)
 - [`LLD testing model`](./LLD.md#testing-model)
-- [`CLI command check`](../../docs/cmd_check.json)
 
 ## Design
 

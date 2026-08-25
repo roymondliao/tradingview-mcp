@@ -26,7 +26,7 @@ scope: local
 - 透過 Desktop shell／visibility state 可靠解析 Active Chart Target，不依賴 `/json/list` 排序。
 - Target 切換後更新 connection cache，避免後續 reads 仍指向舊 Tab。
 - CLI 在 timeout 時輸出 JSON 並以一致 exit code 結束。
-- 為 `docs/cmd_check.json` 中只有 npm banner、無 JSON 的案例建立 regression coverage。
+- 將前期人工檢測中只有 npm banner、無 JSON 的案例轉換為 deterministic regression coverage。
 
 ### Out of scope
 
@@ -36,7 +36,6 @@ scope: local
 
 ### Constraints and references
 
-- [`CLI command check`](../../docs/cmd_check.json)
 - [`Study and Strategy CLI LLD`](./LLD.md#shared-runtime-rules)
 - Existing connection implementation: `src/connection.js`
 
@@ -58,7 +57,7 @@ scope: local
 - [x] 多 Tab 情境能定位 Desktop Active Chart Target。
 - [x] 每個 timeout response 包含 stable code、stage 與 `timeout_ms`。
 - [x] Target switch 後的下一個 Core call 使用新 Target。
-- [x] `docs/cmd_check.json` 的 timeout baseline 有 deterministic regression test。
+- [x] 前期人工檢測發現的 timeout／無 JSON baseline 已由 deterministic regression tests 覆蓋。
 
 ### Validation commands
 
