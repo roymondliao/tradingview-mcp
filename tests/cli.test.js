@@ -44,6 +44,7 @@ describe('CLI — help and routing', () => {
     assert.ok(stdout.includes('status'));
     assert.ok(stdout.includes('pine'));
     assert.ok(stdout.includes('quote'));
+    assert.ok(stdout.includes('history'));
   });
 
   it('-h is same as --help', () => {
@@ -74,10 +75,41 @@ describe('CLI — help and routing', () => {
     const { stdout, exitCode } = run(['pine', '--help']);
     assert.equal(exitCode, 0);
     assert.ok(stdout.includes('get'));
+    assert.ok(stdout.includes('create'));
+    assert.ok(stdout.includes('update'));
+    assert.ok(stdout.includes('delete'));
     assert.ok(stdout.includes('set'));
     assert.ok(stdout.includes('compile'));
     assert.ok(stdout.includes('analyze'));
     assert.ok(stdout.includes('check'));
+  });
+
+  it('pine delete refuses non-interactive execution without --yes', () => {
+    const { stderr, exitCode } = run(['pine', 'delete', '--script-id', 'USER;test']);
+    assert.equal(exitCode, 1);
+    assert.match(stderr, /without --yes/);
+  });
+
+  it('study --help shows read-only Study commands', () => {
+    const { stdout, exitCode } = run(['study', '--help']);
+    assert.equal(exitCode, 0);
+    assert.ok(stdout.includes('search'));
+    assert.ok(stdout.includes('list'));
+    assert.ok(stdout.includes('get'));
+    assert.ok(stdout.includes('inputs'));
+    assert.ok(stdout.includes('toggle'));
+    assert.ok(stdout.includes('remove'));
+  });
+
+  it('strategy --help shows explicit Strategy Tester commands', () => {
+    const { stdout, exitCode } = run(['strategy', '--help']);
+    assert.equal(exitCode, 0);
+    assert.ok(stdout.includes('active'));
+    assert.ok(stdout.includes('select'));
+    assert.ok(stdout.includes('report'));
+    assert.ok(stdout.includes('orders'));
+    assert.ok(stdout.includes('trades'));
+    assert.ok(stdout.includes('equity'));
   });
 
   it('ohlcv --help shows options', () => {
@@ -85,6 +117,49 @@ describe('CLI — help and routing', () => {
     assert.equal(exitCode, 0);
     assert.ok(stdout.includes('--count'));
     assert.ok(stdout.includes('--summary'));
+  });
+
+  it('history --help shows batch loading and output options', () => {
+    const { stdout, exitCode } = run(['history', '--help']);
+    assert.equal(exitCode, 0);
+    assert.ok(stdout.includes('--bars-per-request'));
+    assert.ok(stdout.includes('--max-requests'));
+    assert.ok(stdout.includes('--include-bars'));
+    assert.ok(stdout.includes('--output'));
+    assert.ok(stdout.includes('--force'));
+    assert.ok(stdout.includes('--layout-id'));
+    assert.ok(stdout.includes('--pane-index'));
+  });
+
+  it('pane-scoped Study help exposes explicit Tab/Layout/Pane selectors', () => {
+    const { stdout, exitCode } = run(['study', 'list', '--help']);
+    assert.equal(exitCode, 0);
+    assert.ok(stdout.includes('--tab-index'));
+    assert.ok(stdout.includes('--url-chart-id'));
+    assert.ok(stdout.includes('--layout-id'));
+    assert.ok(stdout.includes('--pane-index'));
+  });
+
+  it('history rejects removed page terminology before connecting', () => {
+    const { stderr, exitCode } = run(['history', '--page-size', '1000']);
+    assert.equal(exitCode, 1);
+    assert.match(stderr, /--bars-per-request/);
+  });
+
+  it('CDP failures return structured JSON and exit code 2', () => {
+    const { stderr, exitCode } = run(['status'], {
+      env: {
+        ...process.env,
+        TV_CDP_PORT: '9',
+        TV_CDP_DISCOVERY_TIMEOUT_MS: '25',
+        TV_CDP_TOTAL_TIMEOUT_MS: '100',
+      },
+    });
+    assert.equal(exitCode, 2);
+    const result = JSON.parse(stderr);
+    assert.equal(result.success, false);
+    assert.match(result.code, /^CDP_/);
+    assert.ok(result.stage);
   });
 });
 

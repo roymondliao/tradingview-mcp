@@ -1,6 +1,6 @@
 # TradingView MCP — Claude Instructions
 
-84 tools for reading and controlling a live TradingView Desktop chart via CDP (port 9222).
+85 tools for reading and controlling a live TradingView Desktop chart via CDP (port 9222).
 
 ## Decision Tree — Which Tool When
 
@@ -22,6 +22,7 @@ Use `study_filter` parameter to target a specific indicator by name substring (e
 ### "Give me price data"
 - `data_get_ohlcv` with `summary: true` → compact stats (high, low, range, change%, avg volume, last 5 bars)
 - `data_get_ohlcv` without summary → all bars (use `count` to limit, default 100)
+- `data_get_history` → page backward to a date or the first bar available to the account; inspect metadata before requesting full bars
 - `quote_get` → single latest price snapshot
 
 ### "Analyze my chart" (full report workflow)

@@ -1,13 +1,31 @@
 import { z } from 'zod';
 import { jsonResult } from './_format.js';
 import * as core from '../core/data.js';
+import * as strategyCore from '../core/strategy.js';
+import { paneContextSchema, withPaneContext } from './pane-context.js';
 
 export function registerDataTools(server) {
   server.tool('data_get_ohlcv', 'Get OHLCV bar data from the chart. Use summary=true for compact stats instead of all bars (saves context).', {
+    ...paneContextSchema,
     count: z.coerce.number().optional().describe('Number of bars to retrieve (max 500, default 100)'),
     summary: z.coerce.boolean().optional().describe('Return summary stats (high, low, open, close, avg volume, range) instead of all bars — much smaller output'),
-  }, async ({ count, summary }) => {
-    try { return jsonResult(await core.getOhlcv({ count, summary })); }
+  }, async (args) => {
+    try { return jsonResult(await withPaneContext(args, () => core.getOhlcv({ count: args.count, summary: args.summary }))); }
+    catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+  });
+
+  server.tool('data_get_history', 'Load older OHLCV batches until the requested start time or the available TradingView history is reached. TradingView plan/data limits still apply. Returns metadata by default; set include_bars=true for the full dataset.', {
+    ...paneContextSchema,
+    symbol: z.string().optional().describe('Symbol to load (for example NASDAQ:AAPL). Blank uses the current chart.'),
+    timeframe: z.string().optional().describe('Chart resolution (for example D, W, 60, or 15). Blank uses the current chart.'),
+    from: z.union([z.string(), z.coerce.number()]).optional().describe('Optional earliest date or Unix timestamp. Blank requests the first available bar.'),
+    bars_per_request: z.coerce.number().optional().describe('Older bars requested per TradingView data load (default 1000, range 100-5000).'),
+    max_requests: z.coerce.number().optional().describe('Safety limit for backward data requests (default 100, max 500).'),
+    max_bars: z.coerce.number().optional().describe('Safety limit for returned bars (default 50000, max 200000).'),
+    include_bars: z.coerce.boolean().optional().describe('Include the complete OHLCV bars array (default false).'),
+    restore_chart: z.coerce.boolean().optional().describe('Restore the original chart symbol/timeframe after loading (default true).'),
+  }, async (args) => {
+    try { return jsonResult(await withPaneContext(args, () => core.getHistory(args))); }
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 
@@ -18,20 +36,25 @@ export function registerDataTools(server) {
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 
-  server.tool('data_get_strategy_results', 'Get strategy performance metrics from Strategy Tester. Auto-opens the panel and auto-unhides a hidden strategy (TradingView never computes reports for hidden strategies); result includes unhidden_strategies when that happened.', {}, async () => {
-    try { return jsonResult(await core.getStrategyResults()); }
+  server.tool('data_get_strategy_results', 'Deprecated alias: get strategy performance metrics by explicit entity ID.', {
+    entity_id: z.string().describe('Strategy Instance entity ID'),
+  }, async ({ entity_id }) => {
+    try { return jsonResult(await strategyCore.getStrategyReport({ entity_id })); }
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 
-  server.tool('data_get_trades', 'Get trade list from Strategy Tester. Auto-opens the panel and auto-unhides a hidden strategy.', {
+  server.tool('data_get_trades', 'Deprecated alias: get paired Strategy trades by explicit entity ID.', {
+    entity_id: z.string().describe('Strategy Instance entity ID'),
     max_trades: z.coerce.number().optional().describe('Maximum trades to return'),
-  }, async ({ max_trades }) => {
-    try { return jsonResult(await core.getTrades({ max_trades })); }
+  }, async ({ entity_id, max_trades }) => {
+    try { return jsonResult(await strategyCore.getStrategyTrades({ entity_id, limit: max_trades })); }
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 
-  server.tool('data_get_equity', 'Get equity curve data from Strategy Tester', {}, async () => {
-    try { return jsonResult(await core.getEquity()); }
+  server.tool('data_get_equity', 'Deprecated alias: get Strategy equity by explicit entity ID.', {
+    entity_id: z.string().describe('Strategy Instance entity ID'),
+  }, async ({ entity_id }) => {
+    try { return jsonResult(await strategyCore.getStrategyEquity({ entity_id })); }
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 

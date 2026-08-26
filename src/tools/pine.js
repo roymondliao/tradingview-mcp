@@ -54,8 +54,43 @@ export function registerPineTools(server) {
     catch (err) { return jsonResult({ success: false, source: 'internal_api', error: err.message }, true); }
   });
 
-  server.tool('pine_list_scripts', 'List saved Pine Scripts', {}, async () => {
-    try { return jsonResult(await core.listScripts()); }
+  server.tool('pine_list_scripts', 'List account Saved Pine Scripts, optionally filtered by type', {
+    type: z.enum(['strategy', 'indicator', 'library', 'unknown']).optional().describe('Optional Saved Pine Script type filter'),
+  }, async ({ type }) => {
+    try { return jsonResult(await core.listScripts({ type })); }
+    catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+  });
+
+  server.tool('pine_get_script', 'Get one account Saved Pine Script by script_id', {
+    script_id: z.string().describe('Account Saved Pine Script ID (USER;...)'),
+  }, async ({ script_id }) => {
+    try { return jsonResult(await core.getSavedScript({ script_id })); }
+    catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+  });
+
+  server.tool('pine_create_script', 'Create an account Saved Pine Script and verify its saved source', {
+    name: z.string().describe('Saved Script name'),
+    type: z.enum(['strategy', 'indicator', 'library']).describe('Pine Script type'),
+    source: z.string().describe('Complete Pine source'),
+  }, async ({ name, type, source }) => {
+    try { return jsonResult(await core.createSavedScript({ name, type, source })); }
+    catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+  });
+
+  server.tool('pine_update_script', 'Save a new version of an account Saved Pine Script and verify its source', {
+    script_id: z.string().describe('Account Saved Pine Script ID (USER;...)'),
+    name: z.string().optional().describe('Optional updated Saved Script name'),
+    source: z.string().describe('Complete replacement Pine source'),
+  }, async ({ script_id, name, source }) => {
+    try { return jsonResult(await core.updateSavedScript({ script_id, name, source })); }
+    catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+  });
+
+  server.tool('pine_delete_script', 'Permanently delete an account Saved Pine Script after explicit confirmation', {
+    script_id: z.string().describe('Account Saved Pine Script ID (USER;...)'),
+    confirm: z.literal(true).describe('Must be true to authorize permanent deletion'),
+  }, async ({ script_id, confirm }) => {
+    try { return jsonResult(await core.deleteSavedScript({ script_id, confirmed: confirm })); }
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 

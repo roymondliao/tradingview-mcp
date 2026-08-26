@@ -2,6 +2,7 @@
  * Core UI automation logic.
  */
 import { evaluate, evaluateAsync, getClient } from '../connection.js';
+import { unixSecondsToIso } from './time.js';
 
 const RIGHT_PANEL_LOCATORS = {
   'watchlist': { dataNames: ['base', 'base-watchlist-widget-button'], ariaLabels: ['Watchlist, details, and news', 'Watchlist'] },
@@ -164,7 +165,11 @@ export async function layoutList() {
       } catch(e) { resolve({layouts: [], source: 'internal_api', error: e.message}); }
     })
   `);
-  return { success: true, layout_count: layouts?.layouts?.length || 0, source: layouts?.source, layouts: layouts?.layouts || [], error: layouts?.error };
+  const normalizedLayouts = (layouts?.layouts || []).map(layout => ({
+    ...layout,
+    modified_iso: unixSecondsToIso(layout.modified),
+  }));
+  return { success: true, layout_count: normalizedLayouts.length, source: layouts?.source, layouts: normalizedLayouts, error: layouts?.error };
 }
 
 export async function layoutSwitch({ name }) {

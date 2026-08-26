@@ -12,6 +12,52 @@
 import CDP from 'chrome-remote-interface';
 import { getClient, reconnectTo, CDP_HOST, CDP_PORT } from '../connection.js';
 
+async function readTargetMetadata(targetId) {
+  return withTarget(targetId, (evalIn) => evalIn(`
+    (function() {
+      var api = window.TradingViewApi || {};
+      var cwc = api._chartWidgetCollection;
+      var saver = api._saveChartService && api._saveChartService._chartSaver;
+      var saved = saver && saver._prevChartState ? saver._prevChartState : null;
+      var savedContent = null;
+      try { savedContent = saved && saved.content ? JSON.parse(saved.content) : null; } catch (e) {}
+      var savedCharts = savedContent && Array.isArray(savedContent.charts) ? savedContent.charts : [];
+      var all = cwc && typeof cwc.getAll === 'function' ? cwc.getAll() : [];
+      var active = api._activeChartWidgetWV && typeof api._activeChartWidgetWV.value === 'function'
+        ? api._activeChartWidgetWV.value() : null;
+      var activeWidget = active && active._chartWidget ? active._chartWidget : null;
+      var panes = [];
+      for (var i = 0; i < all.length; i++) {
+        try {
+          var model = all[i].model();
+          var main = model.mainSeries();
+          panes.push({
+            pane_index: i,
+            pane_id: savedCharts[i] && savedCharts[i].chartId != null ? String(savedCharts[i].chartId) : null,
+            symbol: main.symbol(),
+            resolution: main.interval() || null,
+            active: all[i] === activeWidget
+          });
+        } catch (e) {
+          panes.push({ pane_index: i, pane_id: null, error: e.message, active: false });
+        }
+      }
+      var layoutType = cwc && cwc._layoutType;
+      if (layoutType && typeof layoutType.value === 'function') layoutType = layoutType.value();
+      return {
+        visibility: document.visibilityState,
+        focused: document.hasFocus(),
+        layout: {
+          layout_id: saved && saved.id != null ? saved.id : null,
+          layout_name: saved ? (saved.name || saved.description || null) : null,
+          pane_layout: layoutType || (savedContent && savedContent.layout) || null
+        },
+        panes: panes
+      };
+    })()
+  `));
+}
+
 /**
  * List all open chart tabs (CDP page targets).
  */
@@ -21,18 +67,67 @@ export async function list() {
 
   // Chart tabs plus new-tab landing pages (layout picker), so every tab in the
   // top bar is listable and switchable.
-  const tabs = targets
-    .filter(t => t.type === 'page' && (/tradingview\.com\/chart/i.test(t.url) || t.title === 'New tab'))
-    .map((t, i) => ({
-      index: i,
-      id: t.id,
-      title: t.title.replace(/^Live stock.*charts on /, ''),
-      url: t.url,
-      chart_id: t.url.match(/\/chart\/([^/?]+)/)?.[1] || null,
-      is_chart: /tradingview\.com\/chart/i.test(t.url),
-    }));
+  const rawTabs = targets.filter(t => t.type === 'page' && (/tradingview\.com\/chart/i.test(t.url) || t.title === 'New tab'));
+  const tabs = await Promise.all(rawTabs.map(async (target, tabIndex) => {
+    const isChart = /tradingview\.com\/chart/i.test(target.url);
+    let metadata = null;
+    if (isChart) {
+      try { metadata = await readTargetMetadata(target.id); } catch { /* stale target */ }
+    }
+    return {
+      tab_index: tabIndex,
+      target_id: target.id,
+      title: target.title.replace(/^Live stock.*charts on /, ''),
+      url: target.url,
+      url_chart_id: target.url.match(/\/chart\/([^/?]+)/)?.[1] || null,
+      is_chart: isChart,
+      active: metadata ? metadata.focused === true || metadata.visibility === 'visible' : false,
+      visibility: metadata?.visibility || null,
+      focused: metadata?.focused ?? null,
+      layout: metadata?.layout || null,
+      panes: metadata?.panes || [],
+    };
+  }));
 
   return { success: true, tab_count: tabs.length, tabs };
+}
+
+/** Resolve the public Tab index for an already attached CDP target. */
+export async function identifyTab(targetId) {
+  const resp = await fetch(`http://${CDP_HOST}:${CDP_PORT}/json/list`);
+  const targets = await resp.json();
+  const tabs = targets.filter(t => t.type === 'page' && (/tradingview\.com\/chart/i.test(t.url) || t.title === 'New tab'));
+  const tabIndex = tabs.findIndex((tab) => tab.id === targetId);
+  if (tabIndex < 0) return null;
+  const target = tabs[tabIndex];
+  return {
+    tab_index: tabIndex,
+    target_id: target.id,
+    url_chart_id: target.url.match(/\/chart\/([^/?]+)/)?.[1] || null,
+  };
+}
+
+/** Attach the process-local CDP client to an explicit Tab without changing the visible Desktop tab. */
+export async function attachTab({ tab_index, url_chart_id, layout_id, _deps } = {}) {
+  const selectors = [tab_index != null, url_chart_id != null, layout_id != null].filter(Boolean).length;
+  if (selectors === 0) return null;
+  const listTabs = _deps?.list || list;
+  const reconnect = _deps?.reconnectTo || reconnectTo;
+  const inventory = await listTabs();
+  let candidates = inventory.tabs.filter((tab) => tab.is_chart);
+  if (tab_index != null) {
+    const index = Number(tab_index);
+    if (!Number.isInteger(index) || index < 0) throw new Error('tab_index must be a non-negative integer');
+    candidates = candidates.filter((tab) => tab.tab_index === index);
+  }
+  if (url_chart_id != null) candidates = candidates.filter((tab) => tab.url_chart_id === String(url_chart_id));
+  if (layout_id != null) candidates = candidates.filter((tab) => String(tab.layout?.layout_id) === String(layout_id));
+  if (candidates.length !== 1) {
+    throw new Error(`Tab selector resolved ${candidates.length} matches; use tab list and provide a unique tab_index, url_chart_id, or layout_id.`);
+  }
+  const selected = candidates[0];
+  await reconnect(selected.target_id);
+  return selected;
 }
 
 /**
@@ -242,7 +337,7 @@ export async function newTab({ layout, name } = {}) {
     success: true,
     action: wantNew ? 'new_layout_created' : 'layout_opened_in_new_tab',
     layout: picked,
-    chart_id: chartTarget.url.match(/\/chart\/([^/?]+)/)?.[1] || null,
+    url_chart_id: chartTarget.url.match(/\/chart\/([^/?]+)/)?.[1] || null,
   };
 }
 
@@ -292,9 +387,10 @@ export async function switchTab({ index }) {
     throw new Error(`Tab index ${idx} out of range (have ${tabs.tab_count} tabs)`);
   }
 
-  const target = tabs.tabs[idx];
+  const target = tabs.tabs.find((tab) => tab.tab_index === idx);
+  if (!target) throw new Error(`Tab index ${idx} not found.`);
 
-  if (!(await isTargetVisible(target.id))) {
+  if (!(await isTargetVisible(target.target_id))) {
     const clicked = await withShell(async (evalIn) => {
       const count = await evalIn(`document.querySelectorAll('.tabs-container .tab').length`);
       // Try the same ordinal first (shell order usually matches), then the rest.
@@ -302,21 +398,29 @@ export async function switchTab({ index }) {
       for (const k of order) {
         await evalIn(`document.querySelectorAll('.tabs-container .tab')[${k}].click()`);
         await new Promise(r => setTimeout(r, 400));
-        if (await isTargetVisible(target.id)) return k;
+        if (await isTargetVisible(target.target_id)) return k;
       }
       return null;
     });
     if (clicked === null) {
-      throw new Error(`Clicked through all shell tabs but chart ${target.chart_id} never became visible.`);
+      throw new Error(`Clicked through all shell tabs but chart ${target.url_chart_id} never became visible.`);
     }
   }
 
   // Re-attach the cached CDP client so subsequent reads follow the switch.
   try {
-    await reconnectTo(target.id);
+    await reconnectTo(target.target_id);
   } catch (e) {
     throw new Error(`Tab is visible but failed to re-attach CDP to it: ${e.message}`);
   }
 
-  return { success: true, action: 'switched', index: idx, tab_id: target.id, chart_id: target.chart_id, visually_switched: true };
+  return {
+    success: true,
+    action: 'switched',
+    tab_index: idx,
+    target_id: target.target_id,
+    url_chart_id: target.url_chart_id,
+    layout: target.layout,
+    visually_switched: true,
+  };
 }

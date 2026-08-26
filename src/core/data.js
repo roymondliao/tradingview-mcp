@@ -3,9 +3,20 @@
  */
 import { evaluate, evaluateAsync, KNOWN_PATHS, safeString } from '../connection.js';
 import { waitForChartReady } from '../wait.js';
+import {
+  getStrategyEquity,
+  getStrategyReport,
+  getStrategyTrades,
+} from './strategy.js';
+import { unixSecondsToIso, withUnixSecondsIso } from './time.js';
 
 const MAX_OHLCV_BARS = 500;
-const MAX_TRADES = 20;
+const DEFAULT_HISTORY_BARS_PER_REQUEST = 1000;
+const DEFAULT_HISTORY_MAX_REQUESTS = 100;
+const DEFAULT_HISTORY_MAX_BARS = 50000;
+const MAX_HISTORY_BARS_PER_REQUEST = 5000;
+const MAX_HISTORY_REQUESTS = 500;
+const MAX_HISTORY_BARS = 200000;
 
 // Round to 8 dp — enough to kill float noise (29899.999999997 → 29900) without
 // destroying precision on forex/crypto prices. The old 2-dp rounding flattened
@@ -14,74 +25,98 @@ const roundPrice = (v) => (v == null ? null : Math.round(v * 1e8) / 1e8);
 const CHART_API = KNOWN_PATHS.chartApi;
 const BARS_PATH = KNOWN_PATHS.mainSeriesBars;
 
-// Serializes getQuote() calls that mutate chart symbol so concurrent callers
-// can't race over the shared chart state. JS is single-threaded but our
-// awaits interleave; without this every parallel quote_get(symbol) would
-// read whichever symbol the chart happened to be on at evaluate() time.
-let _quoteLock = Promise.resolve();
+// Serialize data calls that may temporarily mutate the shared chart. Without
+// one shared lock, quote_get(symbol) and data_get_history(symbol) could race
+// and read or restore each other's symbol/timeframe.
+let _chartDataLock = Promise.resolve();
 
-// Shared page-context JS: locate the strategy data source. Strategies are
-// identified by metaInfo().isTVScriptStrategy / is_strategy — NOT by
-// is_price_study===false (that was the #48/#173/#181 bug: strategies actually
-// have is_price_study===true, so the old check excluded every one). Falls
-// back to any source exposing reportData/ordersData.
-const FIND_STRATEGY_JS = `
-  function _reportOf(s) {
-    try { var rd = s.reportData(); if (rd && typeof rd.value === 'function') rd = rd.value(); return rd; } catch (e) { return null; }
+function withChartDataLock(task) {
+  const run = _chartDataLock.then(task);
+  _chartDataLock = run.then(() => {}, () => {});
+  return run;
+}
+
+function requireIntegerInRange(value, fallback, min, max, name) {
+  const parsed = value == null ? fallback : Number(value);
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
+    throw new Error(`${name} must be an integer between ${min} and ${max}`);
   }
-  function findStrategies() {
-    var chart = ${CHART_API}._chartWidget;
-    var sources = chart.model().model().dataSources();
-    var strategies = [];
-    for (var i = 0; i < sources.length; i++) {
-      var s = sources[i], mi = null;
-      try { mi = s.metaInfo ? s.metaInfo() : null; } catch (e) {}
-      var isStrat = mi && (mi.isTVScriptStrategy || mi.is_strategy);
-      if ((isStrat || typeof s.reportData === 'function') && typeof s.reportData === 'function') {
-        strategies.push({ s: s, name: mi ? mi.description : null });
+  return parsed;
+}
+
+function parseHistoryFrom(value) {
+  if (value == null || value === '') return null;
+  if (typeof value === 'number' || /^\d+$/.test(String(value))) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) throw new Error(`Invalid from value: ${value}`);
+    return Math.floor(numeric > 1e12 ? numeric / 1000 : numeric);
+  }
+  const timestamp = Date.parse(String(value));
+  if (!Number.isFinite(timestamp)) throw new Error(`Invalid from date: ${value}`);
+  return Math.floor(timestamp / 1000);
+}
+
+function historyRuntime(deps) {
+  const evaluateFn = deps?.evaluate || evaluate;
+  const evaluateAsyncFn = deps?.evaluateAsync || evaluateAsync;
+  const waitForReady = deps?.waitForChartReady || waitForChartReady;
+  return {
+    sleep: deps?.sleep || ((ms) => new Promise(resolve => setTimeout(resolve, ms))),
+    pollAttempts: deps?.pollAttempts || 20,
+    getChartState: deps?.getChartState || (() => evaluateFn(`(function() {
+      var chart = ${CHART_API};
+      return { symbol: chart.symbol(), timeframe: chart.resolution() };
+    })()`)),
+    setChart: deps?.setChart || (async ({ symbol, timeframe }) => {
+      if (symbol) {
+        await evaluateAsyncFn(`(function() {
+          var chart = ${CHART_API};
+          return new Promise(function(resolve) {
+            chart.setSymbol(${safeString(symbol)}, {});
+            setTimeout(resolve, 500);
+          });
+        })()`);
+        await waitForReady(symbol);
       }
-    }
-    return strategies;
-  }
-  // Returns { strat, report } — prefers a strategy whose report is actually
-  // computed (the one selected in the Strategy Tester panel). With multiple
-  // strategies on the chart, only the selected one has non-null reportData,
-  // so returning the first strategy blindly reads the wrong (empty) one.
-  function findStrategy() {
-    var strategies = findStrategies();
-    // Prefer one with a computed report (has .performance).
-    for (var j = 0; j < strategies.length; j++) {
-      var rd = _reportOf(strategies[j].s);
-      if (rd && rd.performance) return { strat: strategies[j].s, report: rd, name: strategies[j].name, strategy_count: strategies.length };
-    }
-    // None computed — return the first so callers can hint "open the panel".
-    if (strategies.length) return { strat: strategies[0].s, report: null, name: strategies[0].name, strategy_count: strategies.length };
-    return null;
-  }
-  // TradingView never computes a report for a hidden strategy (crossed-out eye
-  // in the legend), so a hidden one looks identical to "panel not opened yet".
-  // Unhide any hidden strategies and report their names so callers can tell
-  // the user what changed.
-  function unhideStrategies() {
-    var unhidden = [];
-    var strategies = findStrategies();
-    for (var i = 0; i < strategies.length; i++) {
-      var s = strategies[i].s;
-      try {
-        var vis = null;
-        try { vis = s.properties().visible.value(); } catch (e) {}
-        if (vis !== false) continue;
-        var done = false;
-        try { s.properties().visible.setValue(true); done = true; } catch (e) {}
-        if (!done) {
-          try { var st = ${CHART_API}.getStudyById(s.id()); if (st) { st.setVisible(true); done = true; } } catch (e) {}
+      if (timeframe) {
+        await evaluateFn(`(function() {
+          ${CHART_API}.setResolution(${safeString(timeframe)}, {});
+        })()`);
+        await waitForReady(null, timeframe);
+      }
+    }),
+    readSnapshot: deps?.readSnapshot || ((beforeTime = null) => evaluateFn(`(function() {
+      var chart = ${CHART_API};
+      var series = chart._chartWidget.model().mainSeries();
+      var bars = series.bars();
+      if (!bars || typeof bars.firstIndex !== 'function') return null;
+      var firstIndex = bars.firstIndex();
+      var lastIndex = bars.lastIndex();
+      var first = bars.valueAt(firstIndex);
+      var last = bars.valueAt(lastIndex);
+      var result = [];
+      var before = ${beforeTime == null ? 'null' : Number(beforeTime)};
+      for (var i = firstIndex; i <= lastIndex; i++) {
+        var v = bars.valueAt(i);
+        if (v && (before == null || v[0] < before)) {
+          result.push({time: v[0], open: v[1], high: v[2], low: v[3], close: v[4], volume: v[5] || 0});
         }
-        if (done) unhidden.push(strategies[i].name || 'strategy');
-      } catch (e) {}
-    }
-    return unhidden;
-  }
-`;
+      }
+      var more = true;
+      try { more = series.requestMoreDataAvailable(); } catch (e) {}
+      return {
+        symbol: chart.symbol(), resolution: chart.resolution(),
+        first_time: first && first[0], last_time: last && last[0],
+        total_loaded: bars.size(), more: more, bars: result
+      };
+    })()`)),
+    requestMore: deps?.requestMore || ((barsPerRequest) => evaluateAsyncFn(`(function() {
+      var series = ${CHART_API}._chartWidget.model().mainSeries();
+      var pending = series.requestMoreData(${barsPerRequest});
+      return pending && typeof pending.then === 'function' ? pending : true;
+    })()`)),
+  };
+}
 
 function buildGraphicsJS(collectionName, mapKey, filter) {
   return `
@@ -158,8 +193,10 @@ export async function getOhlcv({ count, summary } = {}) {
     throw new Error('Could not extract OHLCV data. The chart may still be loading.');
   }
 
+  const barsWithIso = data.bars.map(bar => withUnixSecondsIso(bar, ['time']));
+
   if (summary) {
-    const bars = data.bars;
+    const bars = barsWithIso;
     const highs = bars.map(b => b.high);
     const lows = bars.map(b => b.low);
     const volumes = bars.map(b => b.volume);
@@ -167,7 +204,7 @@ export async function getOhlcv({ count, summary } = {}) {
     const last = bars[bars.length - 1];
     return {
       success: true, bar_count: bars.length,
-      period: { from: first.time, to: last.time },
+      period: withUnixSecondsIso({ from: first.time, to: last.time }, ['from', 'to']),
       open: first.open, close: last.close,
       high: Math.max(...highs), low: Math.min(...lows),
       range: roundPrice(Math.max(...highs) - Math.min(...lows)),
@@ -178,7 +215,155 @@ export async function getOhlcv({ count, summary } = {}) {
     };
   }
 
-  return { success: true, bar_count: data.bars.length, total_available: data.total_bars, source: data.source, bars: data.bars };
+  return { success: true, bar_count: barsWithIso.length, total_available: data.total_bars, source: data.source, bars: barsWithIso };
+}
+
+/**
+ * Load older OHLCV batches from the active TradingView chart.
+ * "Complete" means the requested start time was reached or TradingView
+ * reported that no older data is available for the account/symbol/resolution.
+ */
+export async function getHistory(options = {}) {
+  return withChartDataLock(() => _getHistoryInternal(options));
+}
+
+async function _getHistoryInternal({
+  symbol,
+  timeframe,
+  from,
+  bars_per_request,
+  max_requests,
+  max_bars,
+  include_bars = false,
+  restore_chart = true,
+  _deps,
+} = {}) {
+  const barsPerRequest = requireIntegerInRange(bars_per_request, DEFAULT_HISTORY_BARS_PER_REQUEST, 100, MAX_HISTORY_BARS_PER_REQUEST, 'bars_per_request');
+  const maxRequests = requireIntegerInRange(max_requests, DEFAULT_HISTORY_MAX_REQUESTS, 1, MAX_HISTORY_REQUESTS, 'max_requests');
+  const maxBars = requireIntegerInRange(max_bars, DEFAULT_HISTORY_MAX_BARS, 1, MAX_HISTORY_BARS, 'max_bars');
+  const fromTime = parseHistoryFrom(from);
+  const runtime = historyRuntime(_deps);
+  const original = await runtime.getChartState();
+  const requestedSymbol = symbol ? String(symbol).trim() : null;
+  const requestedTimeframe = timeframe ? String(timeframe).trim() : null;
+  const needsSymbolChange = requestedSymbol && requestedSymbol !== original?.symbol;
+  const needsTimeframeChange = requestedTimeframe && requestedTimeframe !== String(original?.timeframe || '');
+  const shouldRestore = Boolean(restore_chart && (needsSymbolChange || needsTimeframeChange));
+  let chartMutationAttempted = false;
+
+  try {
+    if (needsSymbolChange || needsTimeframeChange) {
+      chartMutationAttempted = true;
+      await runtime.setChart({
+        symbol: needsSymbolChange ? requestedSymbol : null,
+        timeframe: needsTimeframeChange ? requestedTimeframe : null,
+      });
+    }
+
+    const barsByTime = new Map();
+    let snapshot = await runtime.readSnapshot();
+    if (!snapshot || !Array.isArray(snapshot.bars) || snapshot.bars.length === 0) {
+      throw new Error('Could not read historical bars. The chart may still be loading.');
+    }
+
+    const addBars = (bars) => {
+      for (const bar of bars || []) {
+        if (bar?.time != null) barsByTime.set(Number(bar.time), bar);
+      }
+    };
+    addBars(snapshot.bars);
+    const relevantBarCount = () => {
+      if (fromTime == null) return barsByTime.size;
+      let count = 0;
+      for (const time of barsByTime.keys()) if (time >= fromTime) count += 1;
+      return count;
+    };
+
+    let requestsMade = 0;
+    let stopReason = null;
+    while (!stopReason) {
+      const relevantCount = relevantBarCount();
+      if (relevantCount > maxBars) {
+        stopReason = 'max_bars';
+        break;
+      }
+      if (fromTime != null && snapshot.first_time <= fromTime) {
+        stopReason = 'from_reached';
+        break;
+      }
+      if (snapshot.more === false) {
+        stopReason = 'no_more_data';
+        break;
+      }
+      if (requestsMade >= maxRequests) {
+        stopReason = 'max_requests';
+        break;
+      }
+      if (relevantCount === maxBars) {
+        stopReason = 'max_bars';
+        break;
+      }
+
+      const previousFirst = snapshot.first_time;
+      await runtime.requestMore(barsPerRequest);
+      requestsMade += 1;
+
+      let next = null;
+      for (let attempt = 0; attempt < runtime.pollAttempts; attempt++) {
+        next = await runtime.readSnapshot(previousFirst);
+        const movedBack = next?.first_time != null && next.first_time < previousFirst;
+        if (movedBack || next?.more === false) break;
+        await runtime.sleep(250);
+      }
+
+      if (!next || next.first_time == null) {
+        stopReason = 'read_failed';
+        break;
+      }
+      addBars(next.bars);
+      if (next.first_time >= previousFirst && next.more !== false) {
+        snapshot = next;
+        stopReason = 'no_progress';
+        break;
+      }
+      snapshot = next;
+    }
+
+    let bars = [...barsByTime.values()].sort((a, b) => a.time - b.time);
+    if (fromTime != null) bars = bars.filter(bar => bar.time >= fromTime);
+    if (bars.length > maxBars) bars = bars.slice(-maxBars);
+    if (bars.length === 0) {
+      throw new Error('No historical bars matched the requested start time.');
+    }
+    bars = bars.map(bar => withUnixSecondsIso(bar, ['time']));
+
+    const complete = stopReason === 'from_reached' || stopReason === 'no_more_data';
+    const result = {
+      success: true,
+      complete,
+      stop_reason: stopReason,
+      symbol: snapshot.symbol || requestedSymbol || original?.symbol || null,
+      timeframe: snapshot.resolution || requestedTimeframe || original?.timeframe || null,
+      requested_from: fromTime,
+      requested_from_iso: unixSecondsToIso(fromTime),
+      period: withUnixSecondsIso({ from: bars[0].time, to: bars[bars.length - 1].time }, ['from', 'to']),
+      bar_count: bars.length,
+      requests_made: requestsMade,
+      bars_per_request: barsPerRequest,
+      max_requests: maxRequests,
+      max_bars: maxBars,
+      source: 'tradingview_chart_history',
+    };
+    if (include_bars) result.bars = bars;
+    return result;
+  } finally {
+    if (shouldRestore && chartMutationAttempted) {
+      await runtime.setChart({
+        symbol: needsSymbolChange ? original.symbol : null,
+        timeframe: needsTimeframeChange ? original.timeframe : null,
+      });
+    }
+  }
 }
 
 export async function getIndicator({ entity_id }) {
@@ -207,172 +392,23 @@ export async function getIndicator({ entity_id }) {
   return { success: true, entity_id, visible: data?.visible, inputs };
 }
 
-// #173: TradingView doesn't compute strategy report/orders until the Strategy
-// Tester panel is opened — and never computes one for a hidden strategy.
-// Ensure the panel is open (via bottomWidgetBar), unhide any hidden
-// strategies, and wait for reportData to populate, so the strategy read tools
-// work even when the panel started closed or the strategy was hidden.
-// Returns { status, unhidden } — unhidden lists strategies made visible.
-async function ensureStrategyTesterReady(maxWaitMs = 6000) {
-  const unhidden = await evaluate(`
-    (function() {
-      ${FIND_STRATEGY_JS}
-      try {
-        var bwb = window.TradingView && window.TradingView.bottomWidgetBar;
-        if (bwb && typeof bwb.showWidget === 'function') bwb.showWidget('backtesting');
-      } catch (e) {}
-      return unhideStrategies();
-    })()
-  `);
-  const deadline = Date.now() + maxWaitMs;
-  let status = 'timeout';
-  while (Date.now() < deadline) {
-    const ready = await evaluate(`
-      (function() {
-        ${FIND_STRATEGY_JS}
-        var f = findStrategy();
-        if (!f) return 'no-strategy';
-        return f.report && f.report.performance ? 'ready' : 'pending';
-      })()
-    `);
-    if (ready === 'ready' || ready === 'no-strategy') { status = ready; break; }
-    await new Promise(r => setTimeout(r, 500));
-  }
-  return { status, unhidden: unhidden || [] };
+export async function getStrategyResults({ entity_id } = {}) {
+  if (!entity_id) throw new Error('entity_id is required; implicit Strategy selection is no longer supported.');
+  return getStrategyReport({ entity_id });
 }
 
-export async function getStrategyResults() {
-  const ready = await ensureStrategyTesterReady();
-  const results = await evaluate(`
-    (function() {
-      ${FIND_STRATEGY_JS}
-      try {
-        var found = findStrategy();
-        if (!found) return {metrics: {}, source: 'internal_api', error: 'No strategy found on chart. Add a strategy first (e.g. indicator_add with a "... Strategy" script).'};
-        var rd = found.report;
-        if (!rd || !rd.performance) return {metrics: {}, source: 'internal_api', error: 'Strategy report not computed yet. Retry in a few seconds; if it persists, check the Strategy Tester panel is open (ui_open_panel strategy-tester) and the strategy is not hidden on the chart.'};
-        var perf = rd.performance;
-        var all = perf.all || {};
-        // Headline metrics, named to match the Strategy Tester "Key stats".
-        var metrics = {
-          net_profit: all.netProfit,
-          net_profit_percent: all.netProfitPercent,
-          gross_profit: all.grossProfit,
-          gross_loss: all.grossLoss,
-          profit_factor: all.profitFactor,
-          max_drawdown: perf.maxStrategyDrawDown,
-          max_drawdown_percent: perf.maxStrategyDrawDownPercent,
-          total_trades: (all.numberOfWiningTrades || 0) + (all.numberOfLosingTrades || 0),
-          winning_trades: all.numberOfWiningTrades,
-          losing_trades: all.numberOfLosingTrades,
-          percent_profitable: all.percentProfitable,
-          avg_trade: all.avgTrade,
-          largest_win: all.largestWinTrade,
-          largest_loss: all.largestLosTrade,
-          commission_paid: all.commissionPaid,
-          sharpe_ratio: perf.sharpeRatio,
-          sortino_ratio: perf.sortinoRatio,
-          buy_hold_return: perf.buyHoldReturn,
-          open_pl: perf.openPL
-        };
-        var clean = {};
-        for (var k in metrics) { if (metrics[k] !== null && metrics[k] !== undefined) clean[k] = metrics[k]; }
-        var currency = rd.currency || null;
-        return {metrics: clean, currency: currency, strategy: found.name, source: 'internal_api'};
-      } catch(e) { return {metrics: {}, source: 'internal_api', error: e.message}; }
-    })()
-  `);
-  return {
-    success: Object.keys(results?.metrics || {}).length > 0,
-    metric_count: Object.keys(results?.metrics || {}).length,
-    strategy: results?.strategy, currency: results?.currency, source: results?.source,
-    metrics: results?.metrics || {},
-    ...(ready.unhidden.length && { unhidden_strategies: ready.unhidden, note: 'Strategy was hidden on the chart; it was made visible so the report could compute.' }),
-    error: results?.error,
-  };
+export async function getTrades({ entity_id, max_trades } = {}) {
+  if (!entity_id) throw new Error('entity_id is required; implicit Strategy selection is no longer supported.');
+  return getStrategyTrades({ entity_id, limit: max_trades });
 }
 
-export async function getTrades({ max_trades } = {}) {
-  const limit = Math.min(max_trades || 20, MAX_TRADES);
-  const ready = await ensureStrategyTesterReady();
-  const trades = await evaluate(`
-    (function() {
-      ${FIND_STRATEGY_JS}
-      try {
-        var found = findStrategy();
-        if (!found) return {trades: [], source: 'internal_api', error: 'No strategy found on chart.'};
-        var strat = found.strat;
-        var orders = strat.ordersData(); if (orders && typeof orders.value === 'function') orders = orders.value();
-        if (!orders || !Array.isArray(orders)) return {trades: [], source: 'internal_api', total_orders: 0, error: 'Strategy orders not computed yet. Open the Strategy Tester panel (ui_open_panel strategy-tester) and retry.'};
-        var total = orders.length;
-        // Return the most RECENT orders (tail) — that's what a trader wants to see.
-        var start = Math.max(0, total - ${limit});
-        var result = [];
-        for (var t = start; t < total; t++) {
-          var o = orders[t];
-          if (typeof o === 'object' && o !== null) {
-            // Map TradingView's terse order keys to readable names.
-            result.push({
-              id: o.id,
-              type: o.tp,
-              side: o.b ? 'buy' : 'sell',
-              entry: o.e,
-              price: o.p,
-              qty: o.q,
-              time_index: o.tm
-            });
-          }
-        }
-        return {trades: result, total_orders: total, source: 'internal_api'};
-      } catch(e) { return {trades: [], source: 'internal_api', error: e.message}; }
-    })()
-  `);
-  return {
-    success: (trades?.trades?.length || 0) > 0,
-    trade_count: trades?.trades?.length || 0, total_orders: trades?.total_orders ?? 0,
-    source: trades?.source, trades: trades?.trades || [],
-    ...(ready.unhidden.length && { unhidden_strategies: ready.unhidden, note: 'Strategy was hidden on the chart; it was made visible so orders could compute.' }),
-    error: trades?.error,
-  };
-}
-
-export async function getEquity() {
-  const ready = await ensureStrategyTesterReady();
-  const equity = await evaluate(`
-    (function() {
-      ${FIND_STRATEGY_JS}
-      try {
-        var found = findStrategy();
-        if (!found) return {data: [], source: 'internal_api', error: 'No strategy found on chart.'};
-        var rd = found.report;
-        if (!rd) return {data: [], source: 'internal_api', error: 'Strategy report not computed yet. Open the Strategy Tester panel and retry.'};
-        // buyHold is the per-bar account curve; the equity curve is built from
-        // filledOrders' cumulative P&L in reportData.
-        var curve = rd.equity || rd.equityChart || null;
-        if (Array.isArray(curve)) return {data: curve, source: 'internal_api'};
-        if (Array.isArray(rd.buyHold)) {
-          return {data: [], buy_hold_points: rd.buyHold.length, source: 'internal_api',
-                  note: 'Per-bar equity curve not exposed directly; buyHold baseline has ' + rd.buyHold.length + ' points. Use data_get_strategy_results for summary P&L.'};
-        }
-        return {data: [], source: 'internal_api', note: 'Equity curve not available via API; use data_get_strategy_results.'};
-      } catch(e) { return {data: [], source: 'internal_api', error: e.message}; }
-    })()
-  `);
-  return {
-    success: (equity?.data?.length || 0) > 0,
-    data_points: equity?.data?.length || 0, source: equity?.source, data: equity?.data || [],
-    buy_hold_points: equity?.buy_hold_points, note: equity?.note,
-    ...(ready.unhidden.length && { unhidden_strategies: ready.unhidden }),
-    error: equity?.error,
-  };
+export async function getEquity({ entity_id } = {}) {
+  if (!entity_id) throw new Error('entity_id is required; implicit Strategy selection is no longer supported.');
+  return getStrategyEquity({ entity_id });
 }
 
 export async function getQuote({ symbol } = {}) {
-  // Serialize: chained on _quoteLock so parallel callers run one after another.
-  // Catch on the lock chain prevents a single failure from poisoning the chain.
-  const run = _quoteLock.then(() => _getQuoteInternal({ symbol }));
-  _quoteLock = run.then(() => {}, () => {});
-  return run;
+  return withChartDataLock(() => _getQuoteInternal({ symbol }));
 }
 
 async function _getQuoteInternal({ symbol } = {}) {
@@ -430,7 +466,7 @@ async function _getQuoteInternal({ symbol } = {}) {
       })()
     `);
     if (!data || (!data.last && !data.close)) throw new Error('Could not retrieve quote. The chart may still be loading.');
-    return { success: true, ...data };
+    return { success: true, ...withUnixSecondsIso(data, ['time']) };
   } finally {
     if (needsRestore && originalSymbol) {
       try {

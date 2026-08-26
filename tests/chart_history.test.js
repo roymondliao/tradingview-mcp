@@ -48,7 +48,17 @@ describe('setVisibleRange() — history paging', () => {
     const { _deps, evaluate } = mockDeps({ firstTime: 500 });
     const res = await setVisibleRange({ from: 1000, to: 2000, _deps });
     assert.ok(evaluate.calls.some((c) => c.includes('zoomToBarsRange')));
-    assert.deepEqual(res.requested, { from: 1000, to: 2000 });
-    assert.deepEqual(res.actual, { from: 11, to: 22 });
+    assert.deepEqual(res.requested, {
+      from: 1000,
+      to: 2000,
+      from_iso: '1970-01-01T00:16:40.000Z',
+      to_iso: '1970-01-01T00:33:20.000Z',
+    });
+    assert.deepEqual(res.actual, {
+      from: 11,
+      to: 22,
+      from_iso: '1970-01-01T00:00:11.000Z',
+      to_iso: '1970-01-01T00:00:22.000Z',
+    });
   });
 });

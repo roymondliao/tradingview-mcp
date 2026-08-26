@@ -2,6 +2,7 @@
  * Core replay mode logic.
  */
 import { evaluate as _evaluate, getReplayApi as _getReplayApi } from '../connection.js';
+import { unixSecondsToIso } from './time.js';
 
 export const VALID_AUTOPLAY_DELAYS = [100, 143, 200, 300, 1000, 2000, 3000, 5000, 10000];
 
@@ -53,7 +54,13 @@ export async function start({ date, _deps } = {}) {
     throw new Error('Replay failed to start. The selected date may not have data for this timeframe. Try a more recent date or a higher timeframe (e.g., Daily).');
   }
 
-  return { success: true, replay_started: true, date: date || '(first available)', current_date: currentDate };
+  return {
+    success: true,
+    replay_started: true,
+    date: date || '(first available)',
+    current_date: currentDate,
+    current_date_iso: unixSecondsToIso(currentDate),
+  };
 }
 
 export async function step({ _deps } = {}) {
@@ -71,7 +78,12 @@ export async function step({ _deps } = {}) {
     currentDate = await evaluate(wv(`${rp}.currentDate()`));
     if (currentDate !== before) break;
   }
-  return { success: true, action: 'step', current_date: currentDate };
+  return {
+    success: true,
+    action: 'step',
+    current_date: currentDate,
+    current_date_iso: unixSecondsToIso(currentDate),
+  };
 }
 
 export async function autoplay({ speed, _deps } = {}) {
@@ -138,5 +150,11 @@ export async function status({ _deps } = {}) {
   `);
   const pos = await evaluate(wv(`${rp}.position()`));
   const pnl = await evaluate(wv(`${rp}.realizedPL()`));
-  return { success: true, ...st, position: pos, realized_pnl: pnl };
+  return {
+    success: true,
+    ...st,
+    current_date_iso: unixSecondsToIso(st.current_date),
+    position: pos,
+    realized_pnl: pnl,
+  };
 }

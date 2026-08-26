@@ -13,4 +13,7 @@ export * as alerts from './alerts.js';
 export * as batch from './batch.js';
 export * as watchlist from './watchlist.js';
 export * as indicators from './indicators.js';
+export * as studies from './studies.js';
+export * as strategy from './strategy.js';
+export * as time from './time.js';
 export * as ui from './ui.js';

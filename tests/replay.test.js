@@ -54,6 +54,7 @@ describe('start() — date selection and polling', () => {
     assert.equal(result.success, true);
     assert.equal(result.replay_started, true);
     assert.equal(result.current_date, 1773532799);
+    assert.equal(result.current_date_iso, '2026-03-14T23:59:59.000Z');
     assert.equal(result.date, '2026-03-15');
     // Verify selectDate was called with timestamp and .then()
     const selectCall = evaluate.calls.find(c => c.includes('selectDate'));
@@ -160,6 +161,7 @@ describe('step() — doStep and polling', () => {
     const result = await step({ _deps: { evaluate, getReplayApi: mockGetReplayApi() } });
     assert.equal(result.success, true);
     assert.equal(result.current_date, 2000);
+    assert.equal(result.current_date_iso, '1970-01-01T00:33:20.000Z');
     assert.equal(result.action, 'step');
   });
 
@@ -348,6 +350,7 @@ describe('status()', () => {
     assert.equal(result.success, true);
     assert.equal(result.is_replay_started, true);
     assert.equal(result.current_date, 1700000000);
+    assert.equal(result.current_date_iso, '2023-11-14T22:13:20.000Z');
     assert.equal(result.position, 2);
     assert.equal(result.realized_pnl, 123.45);
   });
