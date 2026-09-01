@@ -61,6 +61,13 @@
   - 通常包含 K 線與 OHLCV 資料。
   - Main Series 不同於 Indicator 產生的 Study Series。
 
+- **Market History Data / Chart History Data（市場歷史資料／圖表歷史資料）**
+  - 指特定 Symbol 與 Timeframe 的歷史市場行情。
+  - 每筆資料通常是一根 Bar，包含 Timestamp、Open、High、Low、Close 與 Volume（OHLCV）。
+  - 本 repo 的 `history` 功能透過 Main Series 與 `requestMoreData()` 載入及匯出這類資料。
+  - Market History Data 是 Strategy 回測的輸入之一，不是 Strategy 回測產生的買入／賣出交易紀錄。
+  - `bars_per_request`、`max_requests` 與 `max_bars` 只適用於 Market／Chart History Data，不適用於 Strategy Trading Data。
+
 - **Symbol（商品代號）**
   - 指股票、期貨、外匯或加密貨幣等交易商品。
   - 應優先使用包含交易所的完整格式，例如 `NASDAQ:AAPL`。
@@ -108,6 +115,7 @@
   - 可用來表示 Strategy Order 或 Pine Drawing 出現在哪一根 Bar。
   - Bar Index 可能在載入更多歷史資料後改變，因此不適合作為穩定的分頁游標。
   - Bar Index 不等同於結果集合分頁使用的 Offset。
+  - Strategy Trade 中的 `bar_index` 只是 Entry／Exit 發生位置的 metadata，不能用來向 TradingView 請求下一批 Strategy Trades。
 
 - **Visible Range（可視範圍）**
   - 指目前 Chart 畫面顯示的時間區間或 Logical Bar Range。
@@ -127,7 +135,7 @@
 - **Strategy（策略）**
   - 指可由 Strategy Tester 執行回測的 Pine Study。
   - 一個 Chart 可以同時存在多個 Strategy Instance。
-  - 操作特定 Strategy 時應使用 `strategy_id`，不應只依靠名稱或第一個搜尋結果。
+  - 操作特定 Strategy 時應使用 Strategy Instance 的 `entity_id`，不應只依靠名稱或第一個搜尋結果。
 
 - **Strategy Instance（策略實例）**
   - 指某個 Strategy 被加入特定 Chart 後產生的執行實例。
@@ -136,13 +144,13 @@
 
 - **Active Strategy（目前操作的策略）**
   - 指 Strategy Tester 或 API 當前準備讀取的 Strategy Instance。
-  - 本 repo 目前沒有完整且明確的 `strategy_select` 機制。
-  - 新增相關 API 時，應由呼叫端提供 `strategy_id`，避免依賴隱式的「第一個策略」。
+  - 本 repo 透過 `strategy select`／`strategy_select` 使用明確的 Strategy Instance `entity_id` 選擇並讀回驗證。
+  - Report／Orders／Trades 等 Strategy operations 應由呼叫端提供 `entity_id`，避免依賴隱式的「第一個策略」。
 
 - **Entity ID（圖表實例 ID）**
   - 指 Indicator、Strategy 或 Drawing 加入 Chart 後的實例 ID。
   - 可用於移除 Study、修改 Inputs、選擇 Strategy 或查詢特定 Entity。
-  - 對外表示 Strategy Instance 時，欄位應命名為 `strategy_id`，其值使用 Entity ID。
+  - Strategy Instance 的主要 selector 使用 `entity_id`；若 response 使用語意化欄位 `strategy_id` 或 `strategy_entity_id`，其值仍是同一個 Entity ID，不建立另一種 ID。
 
 - **Pine Script（Pine 原始碼）**
   - 指 Pine Editor 中的程式碼。
@@ -155,7 +163,7 @@
 - **Saved Pine Script（已儲存 Pine 腳本）**
   - 指儲存在 TradingView 帳號中的 Pine Script。
   - 通常具有 `script_id`、名稱與版本。
-  - `script_id` 不等同於 Chart 上的 `strategy_id` 或 Entity ID。
+  - `script_id` 不等同於 Chart 上 Strategy Instance 的 `entity_id`。
 
 - **Pine Drawing（Pine 繪圖輸出）**
   - 指 Pine Script 產生的 Line、Label、Box 或 Table。
@@ -170,7 +178,8 @@
 
 - **Strategy Report（策略回測報告）**
   - 指 Strategy 計算完成後產生的回測結果。
-  - 通常包含 Performance Metrics、Orders、Trades、Equity Curve 與 Drawdown。
+  - 通常包含 Performance Metrics、Strategy Trading Data，以及 TradingView runtime 可提供的其他回測資料。
+  - Strategy Report 是 Strategy 回測的輸出，不是 Symbol 的 OHLCV Market History Data。
 
 - **Performance Metrics（績效指標）**
   - 指 Net Profit、Max Drawdown、Profit Factor 與 Win Rate 等統計結果。
@@ -184,13 +193,25 @@
 - **Trade（交易）**
   - 專指 Entry 與 Exit 配對後的交易紀錄。
   - 一筆 Trade 通常包含 Entry、Exit、Profit 與 Quantity 等資料。
-  - 現有 `data_get_trades` 實際回傳的資料較接近 Orders，命名並不完全精確。
-  - 後續 API 建議以 `strategy_get_orders` 回傳原始 Orders，以 `strategy_get_trades` 回傳配對完成的 Trades。
+  - `strategy_get_orders` 回傳原始 Orders；`strategy_get_trades` 回傳配對後的 Trades，兩者不可混稱。
+
+- **Strategy Trading Data（策略回測交易資料）**
+  - 指 TradingView 根據 Historical Market Data、Pine Strategy、Strategy Inputs 與 Strategy Properties，透過 Broker Emulator 計算出的回測交易紀錄。
+  - 資料包含策略模擬的 Entry、Exit、方向、時間、價格、數量、淨損益與其他 Trade-level metrics。
+  - 本 repo 目前從指定 Strategy Instance 的 `reportData().trades` 取得 paired Strategy Trades。
+  - Strategy Trading Data 是已完成 Strategy Report 的結果集合；取得下一批資料應對此集合使用 Offset／Limit 或 Cursor，不應呼叫 Chart History `requestMoreData()`。
+  - Strategy Trading Data 不是 OHLCV、不是 Watchlist 行情，也不是 Broker Account 的實際成交紀錄。
+
+- **Broker Execution / Actual Broker Trade（券商實際成交）**
+  - 指送往真實 Broker Account 並實際成交的交易。
+  - Strategy Tester 的 Strategy Trading Data 是 Broker Emulator 的回測結果，不代表真實下單或實際成交。
+  - 文件不可只用「真實交易資料」指稱 Strategy Trading Data；應明確寫成「Strategy 實際計算出的回測交易資料」或「策略回測交易資料」。
 
 - **Offset（資料位移）**
   - 指分頁取得 Orders 或 Trades 時，在結果集合中的起始位置。
   - 例如 `offset=100`、`limit=100` 表示從第 101 筆開始取得最多 100 筆資料。
   - Offset 不等同於 Bar Index。
+  - Strategy Trade Offset 只切分同一份 Strategy Report 的 Trade results，不會載入或重新計算 Market History Bars。
 
 - **Limit（每批數量）**
   - 指一次最多回傳多少筆結果。
@@ -285,7 +306,7 @@
 - 使用 `saved_layout` 表示帳號中儲存的 Chart Layout。
 - 使用 `pane_layout` 表示多圖表的格線排列。
 - 使用 `script_id` 表示儲存在帳號中的 Pine Script ID。
-- 使用 `strategy_id` 表示 Chart 上 Strategy Instance 的 Entity ID。
+- 使用 `entity_id` 選擇 Chart 上的 Strategy Instance；`strategy_id`／`strategy_entity_id` 若出現在 response，必須與該 `entity_id` 相同，不建立第三種 ID。
 - 使用 `bar_index` 表示 K 棒在 Chart 中的邏輯位置。
 - 使用 `bars_per_request`、`max_requests`、`requests_made` 與 `max_bars` 描述 Chart History 載入；不使用 Page/Page Size/Max Pages。
 - 使用 `offset` 表示 Orders 或 Trades 結果集合中的分頁位置。
@@ -293,5 +314,6 @@
 - 使用 `trade` 表示 Entry 與 Exit 配對後的交易。
 - 使用 `replay_trade` 表示 Bar Replay 中的模擬交易。
 - 使用 `strategy_trade` 表示 Strategy Tester 產生的回測交易。
+- 使用 `strategy_trading_data` 表示 Strategy Report 中由 paired Strategy Trades 組成的回測交易資料集合；不得用它表示 OHLCV 或 Broker Account 實際成交。
 - 使用 `Depth of Market (DOM)` 表示市場深度，使用 `HTML DOM` 表示頁面元素結構。
 - 避免使用沒有上下文的 `layout`、`panel`、`id`、`DOM` 或 `component`。
