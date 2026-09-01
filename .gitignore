@@ -1,6 +1,6 @@
+data/*
 docs/*
 !docs/terminology.md
-!docs/cmd_check.json
 !docs/study_strategy_cli_design.md
 screenshots/
 scripts/current.pine
