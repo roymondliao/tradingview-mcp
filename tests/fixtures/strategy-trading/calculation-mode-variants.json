@@ -1,0 +1,20 @@
+{
+  "fixture_schema_version": 1,
+  "cases": [
+    {
+      "name": "explicit regular metadata",
+      "input": { "available": true, "value": "regular" },
+      "expected": "regular"
+    },
+    {
+      "name": "explicit deep metadata",
+      "input": { "available": true, "value": "deep" },
+      "expected": "deep"
+    },
+    {
+      "name": "Desktop 3.3.0 metadata unavailable",
+      "input": { "available": false },
+      "expected": "unknown"
+    }
+  ]
+}

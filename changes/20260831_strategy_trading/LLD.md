@@ -109,7 +109,7 @@ npm run tv -- strategy trading-data <entity-id> \
 Batch contract：
 
 - Offset 以 canonical results 的 oldest-first ordering 計算，default `0`。
-- Limit 是單次最多回傳的 paired Trades；實際 default／maximum 在 implementation task 固定，但 maximum 不得大於安全 CDP payload boundary。
+- Limit 是單次最多回傳的 paired Trades；default `500`、maximum `5000`。Slice 必須先在 page context 執行，再透過 CDP return-by-value 回傳。
 - Offset `0` 可不提供 `snapshot_id`，response 建立並回傳 snapshot。
 - Offset 大於 `0` 時必須提供前一批的 `snapshot_id`；不一致回傳 stale snapshot error。
 - Response 包含 `total`、`offset`、`returned`、`next_offset`、`has_more`、`complete` 與 `snapshot_id`。
@@ -135,6 +135,7 @@ npm run tv -- strategy trading-export <entity-id> \
   --output <directory> \
   [--timeframe <resolution>] \
   [--format json|jsonl|csv] \
+  [--force] \
   [context options]
 ```
 
@@ -146,6 +147,8 @@ npm run tv -- strategy trading-export <entity-id> \
   --output <directory> \
   [--timeframe <resolution>] \
   [--format json|jsonl|csv] \
+  [--force] \
+  [--fail-fast] \
   [context options]
 ```
 
@@ -157,7 +160,9 @@ Contract：
 - Watchlist mode 在 run start 建立 immutable Watchlist Snapshot，依原順序 sequential 執行 single-Symbol export function。
 - 第一版不平行操作 Symbols。
 - Watchlist mode 預設記錄單一 Symbol failure 並繼續下一個；run 完成後只要有 failure，CLI exit code 為非零。
+- `--fail-fast` 會在第一個 Symbol failure 後停止，未處理項目記為 skipped；domain／partial failure exit code 為 `1`，CDP connection failure維持 `2`。
 - 每個成功 Symbol 必須通過 complete pagination、Report A/B snapshot stability 與五項 reconciliation。
+- Command／run 在 `finally` 恢復原始 Symbol／Timeframe；Watchlist run 只在整個 run 結束時恢復一次。第一版不提供 `--no-restore`。
 
 ## Dependency architecture
 
@@ -217,18 +222,20 @@ assertPaneContext(expectedContext)
 activatePaneContext(expectedContext)
 ```
 
-`assertPaneContext()` 至少比對 `target_id`、`layout_id`、`pane_id`／`pane_index`；Symbol／Timeframe 由 Chart Session 另行比對。使用者切換其他 Tab 不必使 attached target 自動改變，但 target 消失、Layout 改變或 Pane ownership 改變必須失敗。
+`activatePaneContext()` 以 resolved `target_id` 重新 attach，驗證 `url_chart_id`、`layout_id`、Pane Layout 與 `pane_id`／`pane_index` ownership；若使用者只切到相同 Layout 的另一個 Pane，會重新 focus 原 Pane並驗證 readback。Tab ordinal 只用於初次解析，解析後不再驗證，因為關閉其他 Tab 可能使 ordinal 改變但 target identity 不變。
+
+`assertPaneContext()` 在相同 structural identity 上額外驗證 Symbol／Timeframe。Target 消失、Layout 改變、Pane ownership 改變或 expected Pane 的 Symbol／Timeframe 被外部操作改變，皆回傳 `PANE_CONTEXT_CHANGED`，不靜默採用新 context。
 
 #### `src/core/chart.js`
 
-Reuse Symbol／Timeframe mutation adapter，但建立 strict readback：
+Reuse既有 `setSymbol()`／`setTimeframe()` mutation adapter；`waitForChartReady()` timeout 必須 throw，不得回傳 `success: true` 搭配 `chart_ready: false`。Ready readback 必須使用 TradingView Chart API 的 Symbol／Resolution，兩者不可為空，且不得以 localized DOM text 或 ticker-only fallback 判定成功。
+
+跨 Symbol workflow 的 stable strict readback 由 Chart Session 提供：
 
 ```js
-setSymbolAndVerify({ symbol, context, timeout_ms })
-setTimeframeAndVerify({ timeframe, context, timeout_ms })
+prepareSymbolSession({ context, symbol, timeframe, entity_id, timeout_ms, _deps })
+assertSymbolSession(session, { phase, _deps })
 ```
-
-Timeout 不得像現有 `waitForChartReady()` 一樣回傳 `false` 後仍標記 success。Readback 必須使用 TradingView Chart API 的 Symbol／Resolution，而非只依 localized DOM text。
 
 #### `src/core/watchlist.js`
 
@@ -258,13 +265,13 @@ Reuse Active Pane Study classification、`entity_id` ownership、Strategy type �
 
 #### `src/core/time.js`
 
-所有 Unix timestamp 保留，並使用既有 helpers 建立 UTC ISO companion fields。`bar_index`、`report_index`、Offset 不產生 ISO 欄位。
+所有 Unix timestamp 保留，並使用符合 raw unit 的 helper 建立 UTC ISO companion fields。Strategy Report／Trade runtime timestamps 已確認為 milliseconds，必須使用 `unixMillisecondsToIso()`；`bar_index`、`report_index`、Offset 不產生 ISO 欄位。
 
 ### New `src/core/chart-session.js`
 
 責任：在一個長流程中固定並保護 resolved Chart context。
 
-建議 API：
+TASK-002 public API：
 
 ```js
 withChartSession({ context, _deps }, operation)
@@ -275,25 +282,30 @@ assertSymbolSession(session, { phase, _deps })
 `prepareSymbolSession()`：
 
 1. Assert／reacquire expected Pane。
-2. 驗證 `entity_id` 存在且為 Strategy。
-3. Capture before calculation identity。
-4. 切換 Symbol／Timeframe並 strict readback。
-5. 再次驗證相同 `entity_id` 仍屬於該 Pane。
-6. 交由 Strategy Runtime 等待 fresh／stable Report。
-7. 回傳 immutable Symbol Session。
+2. 保存原始 Symbol／Timeframe。
+3. 透過既有 Chart adapters切換 requested Symbol／Timeframe。
+4. 每 `200 ms` reacquire相同 Pane，以連續兩次相同 TradingView Chart API readback判定 stable。
+5. 使用 approved alias normalization驗證 requested／resolved Symbol；第一版只接受 live驗證過的 exchange `_DLY` alias，不接受 ticker-only fallback。
+6. 回傳 immutable Symbol Session；Strategy entity ownership、freshness與 snapshot由 TASK-003 Strategy Runtime接續處理。
 
 ```js
 {
   context,
-  strategy: { entity_id, name },
+  entity_id?,
+  original_symbol,
+  original_timeframe,
+  requested_symbol,
+  resolved_symbol,
   symbol,
   timeframe,
-  before_snapshot_id,
-  snapshot_id,
+  symbol_changed,
+  timeframe_changed,
   started_at,
   started_at_iso
 }
 ```
+
+Strategy ownership、`before_snapshot_id`與`snapshot_id`會在 TASK-003 整合；TASK-002 不偽造尚未取得的 runtime identity。
 
 Session lock 只保證同一 process 內的 Core operations sequential。其他 CLI process 或使用者 UI 操作無法由 JavaScript mutex 阻止，因此每個 phase 仍必須 revalidate context／snapshot；偵測到 interference 時失敗，不靜默改用新 context。
 
@@ -301,16 +313,22 @@ Session lock 只保證同一 process 內的 Core operations sequential。其他 
 
 責任：封裝 TradingView Desktop internal API，不暴露 unrestricted raw page objects。
 
-建議 API：
+TASK-003 public API：
 
 ```js
 inspectStrategySource({ entity_id, _deps })
 ensureStrategyActive({ entity_id, _deps })
-readRawReportState({ entity_id, _deps })
-readRawTradingReport({ entity_id, _deps })
-readRawTradingDataBatch({ entity_id, offset, limit, _deps })
-waitForFreshTradingReport({ entity_id, before, context, timeout_ms, _deps })
+readRawReportState({ entity_id, session, context, phase, _deps })
+readRawTradingReport({ entity_id, session, context, _deps })
+readRawTradingDataBatch({ entity_id, session, context, offset, limit, _deps })
+waitForFreshTradingReport({ entity_id, session, before, mutated, timeout_ms, _deps })
+createSnapshotCandidate({ entity_id, session, context, raw })
+createRuntimeSignature(snapshotCandidate)
 ```
+
+`inspectStrategySource()` 先從 Active Pane Study inventory驗證 caller指定的 `entity_id` ownership與Strategy type，再從 `internalModel.dataSources()` 驗證同一個source及必要runtime capabilities。`ensureStrategyActive()` 必要時顯示hidden Strategy、設定Strategy Tester active source並readback；不以名稱或第一個Strategy猜測。
+
+`readRawReportState()`／`readRawTradingReport()` 只回傳bounded projection：Chart Symbol／Resolution、Status、Report availability、scalar Performance、testing date ranges、Trade count、first／last Trade identity、calculation mode與page端SHA-256 Inputs fingerprint。它們不跨CDP回傳完整 `report.trades`。
 
 `readRawTradingDataBatch()` 必須在 page context 內先 slice，再經 CDP return-by-value 傳回，避免把一百萬筆 array 一次送入 Node：
 
@@ -321,14 +339,26 @@ reportData().trades
   → return only batch + identity fields
 ```
 
-Runtime adapter 需要 live discovery 的項目：
+Batch read在同一個page function中取得Report before projection、執行slice並取得Report after projection；Node端分別建立`runtime_signature_before`／`runtime_signature_after`與`snapshot_changed`。Default Limit `500`、maximum `5000`，Offset default `0`。
 
-- Regular／Deep Backtesting mode、testing range 與 generation metadata。
-- `reportData().trades` raw ordering。
-- Open Trade representation。
-- Desktop CSV 17 類語意的 raw keys。
-- Large trade retention／truncation signal。
-- Report recalculating、ready、error 與 stable signals。
+TASK-001 的 live discovery contract 固定於 [`RUNTIME_CONTRACT.md`](./RUNTIME_CONTRACT.md)：
+
+- `reportData()` 在 Desktop 3.3.0 是 plain object；Trade 是 compact `e/x/q/v/tp/cm/rn/dd/cp` shape，timestamps 為 Unix milliseconds。
+- `reportData().trades` ordering 是 oldest-first，page-context 使用 Offset／Limit slice。
+- `performance.all.totalTrades` 是 Closed count，`totalOpenTrades` 是 Open count；Open records trailing，且可能有 synthetic `x` mark，不能以 `x` 是否存在分類。
+- `firstTradeIndex !== 0` 表示 retained tail；只有 `firstTradeIndex === 0` 且 array length 等於 Closed + Open counts 才可宣告完整。
+- `status.type` observed `1 = calculating`、`2 = ready`；`reportChanged`／`statusChanged` 可作 wake-up signal。`calculationTime()` 未隨 Symbol calculation 改變，不可作 freshness identity。
+- Runtime 沒有可信 generation ID 或 Regular／Deep discriminator；testing range 由 `settings.dateRange` 提供，mode 缺少時明確記錄 `unknown`。
+- Desktop CSV 17 類語意全部有 compact raw key 或 approved derived rule；unsupported shape 必須明確失敗。
+
+Freshness rules：
+
+- Symbol／Timeframe／Inputs 有 mutation 時，不能接受 mutation 後立即仍可讀取的舊 Report；必須觀察 calculating／unavailable transition、status/report event，或 derived signature change，最後才接受 ready + stable signature。
+- Same-Symbol 且 Timeframe／Inputs 未變時不呼叫 `recalculate()`；current Report 的 derived signature 以 `200 ms` interval連續3次相同即可接受。
+- Default timeout `20,000 ms`。Unknown status、舊 signature 或 timeout 都不以舊 Report fallback。
+- Requested symbol與TradingView resolved symbol可能存在approved alias，例如 `TWSE:*` → `TWSE_DLY:*`；readback需同時保存兩者並用resolved identity驗證，不做任意ticker-only fallback。
+
+TASK-003 使用snapshot candidate schema version 1與stable canonical JSON的SHA-256 `runtime_signature`完成freshness比較；final public `snapshot_id`、canonical normalization及跨batch stale policy由TASK-004／006完成。Calculation phase在polling開始與成功完成時assert Symbol Session；同一phase內每 `200 ms` 直接讀取已固定的exact source，避免每次poll重新attach target。Page adapter仍在每次read驗證source是active Strategy Tester source。
 
 ### New `src/core/strategy-trading-model.js`
 
@@ -361,6 +391,9 @@ Canonical model 保留 paired Trade：
     id, label, direction, price,
     time, time_iso, bar_index, type
   } | null,
+  mark: {
+    price, time, time_iso, bar_index
+  } | null,
   quantity,
   position_value,
   profit: { value, percent },
@@ -373,24 +406,25 @@ Canonical model 保留 paired Trade：
 }
 ```
 
-若 raw payload 未提供欄位，使用 `null` 與 availability metadata；不得以推測值填入。CSV flattening 不在此 module，避免 canonical paired model 被 file format 決定。
+若 raw payload 未提供欄位，使用 `null` 與 availability metadata；不得以推測值填入。Open Trade 的 synthetic raw `x` 正規化為 `mark`、`exit: null`，避免將 mark-to-market value 誤稱實際 Exit。CSV flattening 不在此 module，避免 canonical paired model 被 file format 決定。
 
-Snapshot identity 優先使用 TradingView generation ID；若沒有，使用 stable canonical JSON 產生 SHA-256 derived signature。Signature candidate fields：
+Desktop 3.3.0 沒有可用 generation ID，因此 snapshot schema version 1 固定使用 stable canonical JSON 產生 SHA-256 derived signature。Fields：
 
 ```text
+snapshot schema version / normalization rules
 target_id / layout_id / pane_id
 strategy entity_id
-symbol / timeframe
+requested symbol / resolved symbol / timeframe
 backtest mode / test range
 Strategy Inputs fingerprint
 currency
-raw trade total
+firstTradeIndex / raw trade array length
 closed / open counts
 five reconciliation Report metrics
 first / last stable Trade identity
 ```
 
-Final fields 必須在 live discovery 後固定並加入 `snapshot_schema_version`；不可將 volatile UI text 或 localized labels 納入 signature。
+Trade identity 使用 report index、Entry／Exit-or-mark timestamps、bar indexes、leg types、prices與quantity。`reportChanged` event count、`calculationTime()`、volatile UI text與localized labels不納入signature。
 
 ### New `src/core/strategy-reconciliation.js`
 
@@ -432,8 +466,8 @@ encoder.abort(error)
 Formats：
 
 - `json`：default、lossless envelope；可用 streaming array writer，避免全部 Trades 常駐 memory。
-- `jsonl`：第一行 `record_type: metadata`，後續每行一筆 `record_type: trade` paired Trade。
-- `csv`：固定 UTF-8 與 canonical English headers；每筆 Trade 展開為 Exit／Entry rows，遵循 Desktop semantic mapping。
+- `jsonl`：第一行 `record_type: metadata`，中間每行一筆 `record_type: trade` paired Trade，最後一行 `record_type: summary`。
+- `csv`：固定 UTF-8 without BOM、comma delimiter、RFC 4180 quoting與 LF newline；`null` 使用 empty unquoted field。每筆 Trade 展開為 Exit／Entry rows，遵循 Desktop semantic mapping。
 
 Format module 絕不從 JSON file 重新 parse 後轉檔；JSON 只是 default external format，canonical objects 才是唯一 conversion input。
 
@@ -457,9 +491,11 @@ Rules：
 - Validate output target、safe relative paths 與 deterministic Symbol filename。
 - Staging directory 必須位於 final output 同一 filesystem，確保 rename atomicity。
 - Default 不覆寫 existing artifact。
+- `--force` 只在新 staging 完成全部驗證後替換明確 final target；不可先刪除舊成功 artifacts。
 - Symbol 只有在 pagination、snapshot 與 reconciliation 全部成功後 publish。
 - Report、Reconciliation、Manifest 使用 UTF-8 JSON；Trading Data 使用 selected encoder。
 - Partial file 不得使用 final filename。
+- Failed staging default cleanup；manifest只保留bounded structured error，不保存raw runtime dump或完整failed Trades。
 
 ### New `src/core/errors.js`
 
@@ -484,6 +520,10 @@ STRATEGY_NOT_FOUND_IN_PANE
 ENTITY_NOT_STRATEGY
 PANE_CONTEXT_CHANGED
 SYMBOL_SWITCH_FAILED
+TIMEFRAME_SWITCH_FAILED
+CHART_SESSION_INVALID
+STRATEGY_RUNTIME_INVALID
+STRATEGY_ACTIVATION_FAILED
 STRATEGY_CALCULATION_TIMEOUT
 STRATEGY_REPORT_UNAVAILABLE
 STALE_STRATEGY_SNAPSHOT
@@ -538,6 +578,7 @@ Resolve immutable Pane context
   → Normalize Report
   → Create Snapshot Identity
   → Revalidate context
+  → Restore original Symbol/Timeframe in finally
   → Return canonical Report
 ```
 
@@ -569,6 +610,7 @@ Prepare one Symbol Session
   → calculate five metrics from canonical Closed Trades
   → reconcile with Report B
   → write report.json + reconciliation.json
+  → restore original Symbol/Timeframe
   → atomic publish Symbol artifacts
   → return Symbol summary
 ```
@@ -585,6 +627,7 @@ Resolve context once
       → exportStrategySymbol(same context, same entity_id, symbol)
       → append success / failure to manifest
   → finalize counts
+  → restore original Symbol/Timeframe once
   → publish manifest
   → return JSON run summary
 ```
@@ -700,7 +743,7 @@ MCP tool schema 可以使用 snake_case，但必須維持與 CLI 相同 required
 
 - `strategy orders` 與 `ordersData()` 保持 raw Order semantics，不納入此次 Trading Data export。
 - `history`、`bars_per_request`、`max_requests`、`max_bars` 與 OHLCV output 不受影響。
-- `data strategy`／`data trades` legacy aliases 不擴充成新 contract；是否 deprecate 由 delivery task 記錄。
+- `strategy select`／`strategy report`／`strategy trades` 與 `data strategy`／`data trades` 第一版保留為 deprecated compatibility surface，不擴充成新 contract、不宣告 snapshot-complete，下一個 major version才可移除。
 - `batch_run` 不新增 Strategy Trading action。
 - `strategy report`／`strategy trades` 不可被新 export workflow 當作 subprocess dependency。
 - Target public names 使用 `trading-report`、`trading-data` 與 `trading-export`。
@@ -779,17 +822,19 @@ TASK-001 Runtime contract discovery
 
 每個可觀察功能 Task 必須包含 CLI、Core、tests 與 command documentation；MCP parity 可在 CLI contracts 穩定後獨立成 vertical slice，但不得重新實作 domain workflow。
 
-## TASK-001 contract discovery gates
+## TASK-001 contract decisions
 
-下列決策由 TASK-001 固定並回寫本 LLD；所有依賴 Task 必須遵守其結果：
+TASK-001 gates 已完成。完整 live evidence、17類Desktop CSV mapping與sanitized fixture links見 [`RUNTIME_CONTRACT.md`](./RUNTIME_CONTRACT.md)。下列值是後續 Tasks 的固定 implementation contract：
 
-1. 舊 `strategy report`／`strategy trades`／`strategy select` commands 的 deprecation policy。
-2. `trading-data` default／maximum Limit。
-3. Same-Symbol invocation 如何判定 fresh versus stable current Report。
-4. TradingView generation／Deep Backtesting metadata availability 與 derived snapshot fields。
-5. Raw Trade ordering、Open Trade representation 與 Desktop CSV field mapping。
-6. Watchlist failure default、CLI final exit code 與是否提供 `--fail-fast`。
-7. Existing output、`--force`、staging diagnostic retention 與 cleanup policy。
-8. JSONL metadata-first record contract 及 CSV null representation。
-9. 第一版是否支援 Regular／Deep Backtesting mode selection，或只記錄目前 active calculation mode。
-10. Strategy Trading export 完成後是否恢復執行前 Symbol／Timeframe。
+| Gate | Decision |
+| --- | --- |
+| Legacy commands | 第一版保留並標示 deprecated；不得被新 workflow 呼叫或宣告 complete。 |
+| Trading Data batch | Offset default `0`；Limit default `500`、maximum `5000`；page-context slice。 |
+| Same-Symbol freshness | 未 mutation 時接受 200 ms × 3 stable signature；mutation 後要求 transition或signature change。 |
+| Generation／snapshot | Generation ID unavailable；snapshot schema v1 derived SHA-256；排除 `calculationTime()`。 |
+| Raw Trades | Oldest-first；Closed + trailing Open；`firstTradeIndex !== 0`視為retained tail。 |
+| Watchlist failure | Default continue；`--fail-fast` optional；任何failed Symbol exit `1`，CDP failure `2`。 |
+| Output／force | Default no overwrite；verified staging後才force replace；failed staging cleanup，manifest保留bounded error。 |
+| JSONL／CSV | Metadata → Trades → Summary；CSV UTF-8 no BOM／RFC 4180／LF／null empty field。 |
+| Backtest mode | 第一版不切換；explicit metadata才記錄Regular／Deep，否則`unknown`。 |
+| Chart restore | Command／run finally恢復Symbol＋Timeframe；Watchlist全run只恢復一次；restore failure使command失敗。 |

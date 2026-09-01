@@ -1,0 +1,44 @@
+{
+  "fixture_schema_version": 1,
+  "origin": "synthetic supported verbose-key compatibility shape",
+  "report": {
+    "firstTradeIndex": 0,
+    "currency": "USD",
+    "performance": {
+      "all": {
+        "netProfit": 15,
+        "percentProfitable": 100,
+        "totalTrades": 1,
+        "totalOpenTrades": 0,
+        "numberOfWiningTrades": 1,
+        "numberOfLosingTrades": 0
+      }
+    },
+    "trades": [
+      {
+        "tradeNumber": 1,
+        "entry": {
+          "barIndex": 40,
+          "label": "Long",
+          "price": 50,
+          "time": 1709251200000,
+          "type": "le"
+        },
+        "exit": {
+          "barIndex": 43,
+          "label": "Exit",
+          "price": 58,
+          "time": 1709510400000,
+          "type": "lx"
+        },
+        "quantity": 2,
+        "positionValue": 100,
+        "profit": { "value": 15, "percent": 15 },
+        "commission": 1,
+        "runup": { "value": 18, "percent": 18 },
+        "drawdown": { "value": 2, "percent": 2 },
+        "cumulativeProfit": { "value": 15, "percent": 15 }
+      }
+    ]
+  }
+}

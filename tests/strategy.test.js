@@ -75,18 +75,28 @@ describe('Strategy Instance selection', () => {
 
   it('selects an explicit Strategy and verifies active/report readback', async () => {
     let stateCall = 0;
-    let expression = '';
+    let activationCalled = false;
     const result = await selectStrategy({
       entity_id: 'strategy', timeout_ms: 100,
       _deps: {
         getActivePaneState: async () => (++stateCall === 1 ? pending : ready),
-        evaluate: async (source) => { expression = source; return { method: 'activeStrategySource.setValue' }; },
+        callPageFunction: async (fn) => {
+          if (fn.name === 'activateSourcePage') {
+            activationCalled = true;
+            return { method: 'activeStrategySource.setValue' };
+          }
+          return {
+            source_found: true,
+            active_source: stateCall > 1,
+            capabilities: { report_data: true, status: true },
+          };
+        },
         delay: async () => {},
       },
     });
     assert.equal(result.active_strategy.entity_id, 'strategy');
     assert.equal(result.selection_method, 'activeStrategySource.setValue');
-    assert.match(expression, /setActiveStrategySource/);
+    assert.equal(activationCalled, true);
   });
 
   it('makes a hidden Strategy visible and reports the change', async () => {
@@ -98,7 +108,11 @@ describe('Strategy Instance selection', () => {
           studies: [{ ...pending.studies[0], visible: false }],
         },
         toggleStudyVisibility: async () => { toggled = true; return { success: true }; },
-        evaluate: async () => ({ method: 'already_active' }),
+        callPageFunction: async () => ({
+          source_found: true,
+          active_source: true,
+          capabilities: { report_data: true, status: true },
+        }),
         delay: async () => {},
       },
     });
@@ -109,7 +123,7 @@ describe('Strategy Instance selection', () => {
     let evaluated = false;
     const deps = {
       getActivePaneState: async () => pending,
-      evaluate: async () => { evaluated = true; },
+      callPageFunction: async () => { evaluated = true; },
     };
     await assert.rejects(() => selectStrategy({ entity_id: 'indicator', _deps: deps }), /not a strategy/);
     await assert.rejects(() => selectStrategy({ entity_id: 'missing', _deps: deps }), /not found/);
@@ -121,7 +135,13 @@ describe('Strategy Instance selection', () => {
       entity_id: 'strategy', timeout_ms: 100,
       _deps: {
         getActivePaneState: async () => pending,
-        evaluate: async () => ({ error: 'TradingView build does not expose a Strategy selection adapter' }),
+        callPageFunction: async (fn) => fn.name === 'activateSourcePage'
+          ? { error: 'TradingView build does not expose a Strategy selection adapter', error_code: 'STRATEGY_ACTIVATION_FAILED' }
+          : {
+              source_found: true,
+              active_source: false,
+              capabilities: { report_data: true, status: true },
+            },
       },
     }), /does not expose/);
   });

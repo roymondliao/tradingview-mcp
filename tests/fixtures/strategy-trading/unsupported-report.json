@@ -1,0 +1,19 @@
+{
+  "fixture_schema_version": 1,
+  "origin": "synthetic unsupported raw shape",
+  "report": {
+    "firstTradeIndex": 0,
+    "performance": {
+      "all": {
+        "totalTrades": 1,
+        "totalOpenTrades": 0
+      }
+    },
+    "trades": [
+      {
+        "unknownEntry": { "at": 1704067200000 },
+        "unknownProfit": 10
+      }
+    ]
+  }
+}

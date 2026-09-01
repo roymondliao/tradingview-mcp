@@ -1,7 +1,7 @@
 ---
 id: TASK-001
 title: Strategy Trading runtime contract discovery
-status: todo
+status: done
 phase: strategy-trading
 depends_on: []
 blocks:
@@ -37,7 +37,8 @@ scope: active-pane
 
 ### Constraints and references
 
-- [`LLD review gates`](./LLD.md#lld-review-gates)
+- [`TASK-001 contract decisions`](./LLD.md#task-001-contract-decisions)
+- [`Runtime contract evidence`](./RUNTIME_CONTRACT.md)
 - [`Desktop CSV semantic reference`](./README.md#desktop-csv-as-semantic-reference)
 - Sample: [`data/trade_sample.csv`](../../data/trade_sample.csv)
 
@@ -56,11 +57,11 @@ Probe 只讀取明確 Strategy `entity_id` 的必要 raw shape、types、counts 
 
 ### Acceptance criteria
 
-- [ ] LLD review gates 全部有明確決策或正式 deferred contract。
-- [ ] Desktop CSV 17 類語意都有 raw key、derived rule或 unavailable 狀態。
-- [ ] Raw ordering、Trade retention與 complete-data判定可被 deterministic tests 表達。
-- [ ] Freshness與 snapshot candidate fields 有 Live evidence。
-- [ ] Fixtures 不含 private Pine source、cookies、credentials或 unrestricted raw objects。
+- [x] LLD review gates 全部有明確決策或正式 deferred contract。
+- [x] Desktop CSV 17 類語意都有 raw key、derived rule或 unavailable 狀態。
+- [x] Raw ordering、Trade retention與 complete-data判定可被 deterministic tests 表達。
+- [x] Freshness與 snapshot candidate fields 有 Live evidence。
+- [x] Fixtures 不含 private Pine source、cookies、credentials或 unrestricted raw objects。
 
 ### Validation commands
 
@@ -77,4 +78,12 @@ npm run tv -- strategy active
 
 ## Completion record
 
-Not started.
+Completed on 2026-09-01.
+
+- Added bounded live probe：`scripts/probe_strategy_trading_contract.js`。
+- Added [`RUNTIME_CONTRACT.md`](./RUNTIME_CONTRACT.md)，固定 compact raw mapping、freshness、snapshot、retention、format、failure與restore policies。
+- Added sanitized compact／verbose／unsupported／calculation-mode fixtures and 7 targeted contract tests。
+- Live evidence observed `status.type` 2 → 1 → 2、Report ready → unavailable → ready、derived signature change，以及 subscribable report／status events。
+- Live probe temporarily switched one Watchlist Symbol and confirmed original Symbol／Timeframe restored；final `study list --type strategy` and `strategy active` readback succeeded on the original context。
+- `fnm exec --using=22 npm run lint`：0 errors，3 pre-existing warnings。
+- `fnm exec --using=22 npm run test:unit`：263 passed，0 failed。

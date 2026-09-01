@@ -1,7 +1,7 @@
 ---
 id: TASK-002
 title: Chart Session context and strict readback
-status: todo
+status: done
 phase: strategy-trading
 depends_on:
   - TASK-001
@@ -56,10 +56,10 @@ CLI 解析 selectors 後將 immutable resolved context 傳入 Core。Session 在
 
 ### Acceptance criteria
 
-- [ ] Long-running Core operation不依賴一次性的Active Pane focus。
-- [ ] Wrong context或readback不會回傳success。
-- [ ] Context errors包含stable code與phase。
-- [ ] 既有 Pane／Chart commands regression不受影響。
+- [x] Long-running Core operation不依賴一次性的Active Pane focus。
+- [x] Wrong context或readback不會回傳success。
+- [x] Context errors包含stable code與phase。
+- [x] 既有 Pane／Chart commands regression不受影響。
 
 ### Validation commands
 
@@ -77,4 +77,14 @@ npm run tv -- state
 
 ## Completion record
 
-Not started.
+Completed on 2026-09-01.
+
+- Added `src/core/chart-session.js`：immutable resolved context、process-local async mutex、Symbol／Timeframe mutation及兩次 stable API readback、per-phase session assertion。
+- Added `src/core/errors.js`：bounded safe context與stable `CoreOperationError` metadata；CLI JSON error保留 `code`、`phase`、`symbol`、`retryable`與safe context。
+- Extended `src/core/pane.js`：以 `target_id` reacquire，驗證 URL／Layout／Pane ownership，並在使用者只切換active Pane時refocus原 Pane。Resolved後不把可變的Tab ordinal當identity。
+- Extended Chart readiness：API Symbol／Resolution必須存在且匹配；timeout分別回傳 `SYMBOL_SWITCH_FAILED`／`TIMEFRAME_SWITCH_FAILED`，不再回傳false success。
+- Added 12 deterministic tests，涵蓋approved Symbol alias、bounded errors、Pane refocus、closed target、Layout／Pane／Symbol interference、strict readback、phase revalidation與mutex serialization。
+- Live validation在 Tab 0／Pane 0將 `TPEX:3324` 切至requested `TWSE:2344`，readback resolved為 `TWSE_DLY:2344`／`1D`；finally恢復原始 `TPEX:3324`／`1D`，後續 `pane list`與`state`皆確認原context。
+- `fnm exec --using=22 npm run lint`：0 errors，3 pre-existing warnings。
+- `fnm exec --using=22 npm run test:unit`：279 passed，0 failed。
+- `fnm exec --using=22 npm run test:cli`：19 passed，0 failed。

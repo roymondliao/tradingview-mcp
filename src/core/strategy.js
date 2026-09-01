@@ -2,9 +2,9 @@
  * Strategy Tester operations that act on explicit Active Pane Strategy Instances.
  */
 import { getActivePaneState as _getActivePaneState } from './studies.js';
-import { toggleStudyVisibility as _toggleStudyVisibility } from './studies.js';
 import { evaluate as _evaluate, safeString } from '../connection.js';
 import { unixSecondsToIso } from './time.js';
+import { ensureStrategyActive as _ensureStrategyActive } from './strategy-runtime.js';
 
 const CHART_API = 'window.TradingViewApi._activeChartWidgetWV.value()';
 
@@ -29,83 +29,29 @@ export async function getActiveStrategy({ _deps } = {}) {
 }
 
 export async function selectStrategy({ entity_id, timeout_ms = 20000, _deps } = {}) {
-  if (!entity_id) throw new Error('entity_id is required. Use study list --type strategy.');
-  if (!Number.isInteger(timeout_ms) || timeout_ms < 100 || timeout_ms > 60000) {
-    throw new Error('timeout_ms must be an integer from 100 to 60000');
-  }
+  const ensureStrategyActive = _deps?.ensureStrategyActive || _ensureStrategyActive;
+  const activation = await ensureStrategyActive({ entity_id, timeout_ms, _deps });
+  if (activation.active_strategy?.report_ready === true) return activation;
+
   const getState = _deps?.getActivePaneState || _getActivePaneState;
-  const before = await getState({ _deps });
-  const target = (before.studies || []).find((study) => study.entity_id === entity_id);
-  if (!target) throw new Error(`Strategy not found in the active pane: ${entity_id}`);
-  if (target.type !== 'strategy') throw new Error(`Entity ${entity_id} is ${target.type}, not a strategy.`);
-
-  let visibilityChanged = false;
-  if (target.visible === false) {
-    const toggle = _deps?.toggleStudyVisibility || _toggleStudyVisibility;
-    await toggle({ entity_id, visible: true, _deps });
-    visibilityChanged = true;
-  }
-
-  const runEvaluate = _deps?.evaluate || _evaluate;
-  const selection = await runEvaluate(`
-    (function() {
-      var chart = ${CHART_API};
-      var chartModel = chart._chartWidget.model();
-      var internalModel = chartModel.model();
-      var sources = internalModel.dataSources() || [];
-      var target = null;
-      for (var i = 0; i < sources.length; i++) {
-        var id = null;
-        try { id = typeof sources[i].id === 'function' ? sources[i].id() : sources[i].id; } catch (e) {}
-        if (String(id) === ${safeString(entity_id)}) { target = sources[i]; break; }
-      }
-      if (!target) return { error: 'Strategy source not found in active pane model' };
-      try {
-        var bwb = window.TradingView && window.TradingView.bottomWidgetBar;
-        if (bwb && typeof bwb.showWidget === 'function') bwb.showWidget('backtesting');
-      } catch (e) {}
-      var holder = null;
-      if (typeof internalModel.activeStrategySource === 'function') holder = internalModel.activeStrategySource();
-      else if (typeof chartModel.activeStrategySource === 'function') holder = chartModel.activeStrategySource();
-      var current = holder && typeof holder.value === 'function' ? holder.value() : holder;
-      if (current === target) return { method: 'already_active' };
-      if (typeof internalModel.setActiveStrategySource === 'function') {
-        internalModel.setActiveStrategySource(target);
-        return { method: 'internalModel.setActiveStrategySource' };
-      }
-      if (typeof chartModel.setActiveStrategySource === 'function') {
-        chartModel.setActiveStrategySource(target);
-        return { method: 'chartModel.setActiveStrategySource' };
-      }
-      if (holder && typeof holder.setValue === 'function') {
-        holder.setValue(target);
-        return { method: 'activeStrategySource.setValue' };
-      }
-      return { error: 'TradingView build does not expose a Strategy selection adapter' };
-    })()
-  `);
-  if (selection?.error) throw new Error(selection.error);
-
-  const delay = _deps?.delay || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
-  const deadline = Date.now() + timeout_ms;
-  let readback = target;
-  while (Date.now() < deadline) {
+  const delay = _deps?.delay || ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+  const now = _deps?.now || Date.now;
+  const deadline = now() + timeout_ms;
+  while (now() <= deadline) {
     const state = await getState({ _deps });
-    readback = (state.studies || []).find((study) => study.entity_id === entity_id) || null;
+    const readback = (state.studies || []).find((study) => study.entity_id === entity_id);
     if (readback?.is_active_strategy === true && readback?.report_ready === true) {
       return {
-        success: true,
+        ...activation,
         status: 'ready',
         symbol: state.symbol,
         resolution: state.resolution,
-        selection_method: selection?.method || 'unknown',
-        visibility_changed: visibilityChanged,
         active_strategy: readback,
       };
     }
     await delay(400);
   }
-  throw new Error(`Strategy selection timed out after ${timeout_ms}ms for ${entity_id}; visibility_changed=${visibilityChanged}`);
+  throw new Error(`Strategy selection timed out after ${timeout_ms}ms for ${entity_id}; visibility_changed=${activation.visibility_changed}`);
 }
 
 function validateLimit(limit, defaultValue = 200) {

@@ -22,7 +22,7 @@ Status: `planned`
 
 此文件是本 feature 的需求與資料 contract。Implementation Tasks 與 LLD 必須以本文件為依據，不得回到依賴固定延遲、隱式 Strategy 選擇或只讀取最近 N 筆 Trades 的舊流程。
 
-Core module boundaries、dependency direction、CLI response／output semantics 與 testing architecture 定義於 [`LLD.md`](./LLD.md)。Tasks 已依 vertical slices 與 dependency 拆分；[`TASK-001`](./TASK-001-runtime-contract-discovery.md) 必須先完成 live contract discovery，才能開始依賴該 contract 的實作。
+Core module boundaries、dependency direction、CLI response／output semantics 與 testing architecture 定義於 [`LLD.md`](./LLD.md)。Tasks 已依 vertical slices 與 dependency 拆分；[`TASK-001`](./TASK-001-runtime-contract-discovery.md) 已完成 live contract discovery，結果固定於 [`RUNTIME_CONTRACT.md`](./RUNTIME_CONTRACT.md)。
 
 ## Approved CLI contract
 
@@ -443,9 +443,9 @@ Output rules：
 
 | Task | Deliverable | Depends on | Status |
 | --- | --- | --- | --- |
-| [`TASK-001`](./TASK-001-runtime-contract-discovery.md) | Runtime contract discovery 與 LLD gates 決策 | — | `todo` |
-| [`TASK-002`](./TASK-002-chart-session-context.md) | Chart Session context locking 與 strict readback | TASK-001 | `todo` |
-| [`TASK-003`](./TASK-003-strategy-runtime-snapshot.md) | Strategy Runtime raw adapter 與 snapshot lifecycle | TASK-001, TASK-002 | `todo` |
+| [`TASK-001`](./TASK-001-runtime-contract-discovery.md) | Runtime contract discovery 與 LLD gates 決策 | — | `done` |
+| [`TASK-002`](./TASK-002-chart-session-context.md) | Chart Session context locking 與 strict readback | TASK-001 | `done` |
+| [`TASK-003`](./TASK-003-strategy-runtime-snapshot.md) | Strategy Runtime raw adapter 與 snapshot lifecycle | TASK-001, TASK-002 | `done` |
 | [`TASK-004`](./TASK-004-canonical-model-reconciliation.md) | Canonical model、identity 與 reconciliation | TASK-001, TASK-003 | `todo` |
 | [`TASK-005`](./TASK-005-trading-report-cli.md) | `strategy active`／`trading-report` CLI vertical slice | TASK-002, TASK-003, TASK-004 | `todo` |
 | [`TASK-006`](./TASK-006-trading-data-pagination-cli.md) | `trading-data` JSON pagination CLI vertical slice | TASK-002, TASK-003, TASK-004, TASK-005 | `todo` |
