@@ -1,12 +1,12 @@
 # Strategy Trading Data LLD
 
-Status: `draft-for-review`
+Status: `planned`
 
 ## Purpose
 
 本文件定義 [`Strategy Trading Data Workflow`](./README.md) 的 CLI-first implementation architecture。第一版以 CLI command contract 作為產品入口，將可重用行為實作於 Core modules；MCP tools 後續直接呼叫相同 Core application service，不建立另一套 workflow，也不透過 shell 或 CLI subprocess 串接功能。
 
-本 LLD 不建立 implementation Tasks。待 architecture 與尚需 live discovery 的 TradingView runtime contract 確認後，才拆分 vertical-slice Tasks。
+Implementation 已拆分為 [`TASK-001`](./TASK-001-runtime-contract-discovery.md) 至 [`TASK-011`](./TASK-011-regression-delivery-gate.md)。其中 TASK-001 負責以 live discovery 固定仍未知的 TradingView runtime contract；其依賴 Tasks 不得在 contract 尚未確認時臆測實作。
 
 ## Architecture principles
 
@@ -761,28 +761,27 @@ Live validation 不進 CI；CI 必須完整覆蓋 deterministic seams，不能�
 
 ## Implementation order
 
-LLD 核准後，Tasks 應依 dependency 拆分為：
+Tasks 依下列 dependency 實作：
 
 ```text
-CLI contract + shared errors
-  → Chart Session context/readback
-  → Strategy Runtime raw discovery/read adapter
-  → Canonical Model + Snapshot
-  → Trading Report CLI vertical slice
-  → Trading Data pagination CLI vertical slice
-  → Reconciliation
-  → Format Encoders + Artifact Transaction
-  → Single-Symbol Trading Export
-  → Watchlist Sequential Export
-  → MCP parity
-  → Regression / docs / safe live gate
+TASK-001 Runtime contract discovery
+  → TASK-002 Chart Session context/readback
+  → TASK-003 Strategy Runtime + snapshot adapter
+  → TASK-004 Canonical Model + reconciliation
+  → TASK-005 Trading Report CLI vertical slice
+  → TASK-006 Trading Data pagination CLI vertical slice
+  → TASK-007 Format Encoders + Artifact Transaction
+  → TASK-008 Single-Symbol Trading Export
+  → TASK-009 Watchlist Sequential Export
+  → TASK-010 MCP parity + compatibility
+  → TASK-011 Regression / docs / safe live gate
 ```
 
 每個可觀察功能 Task 必須包含 CLI、Core、tests 與 command documentation；MCP parity 可在 CLI contracts 穩定後獨立成 vertical slice，但不得重新實作 domain workflow。
 
-## LLD review gates
+## TASK-001 contract discovery gates
 
-拆分 Tasks 前仍需確認：
+下列決策由 TASK-001 固定並回寫本 LLD；所有依賴 Task 必須遵守其結果：
 
 1. 舊 `strategy report`／`strategy trades`／`strategy select` commands 的 deprecation policy。
 2. `trading-data` default／maximum Limit。

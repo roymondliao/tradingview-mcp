@@ -1,7 +1,7 @@
 ---
 id: FEATURE-20260831-STRATEGY-TRADING
 title: Strategy Trading Data Workflow
-status: design-approved
+status: planned
 created: 2026-08-31
 scope:
   - watchlist
@@ -14,15 +14,15 @@ scope:
 
 # Strategy Trading Data Workflow
 
-Status: `design-approved`
+Status: `planned`
 
 ## Objective
 
 建立可靠且可驗證的 Strategy Trading 匯出流程。CLI 是主要功能入口，必須在明確的 TradingView Tab、Chart Layout、Pane 與 Strategy Instance context 下，依序切換 Watchlist 中的 Symbol，等待 Strategy Tester 完成該 Symbol 的最新計算，取得 Strategy Report 與完整 Strategy Trading Data，核對關鍵績效數據後才將結果寫入指定目錄。MCP 後續映射與 CLI 相同的 Core workflow，不建立另一套流程。
 
-此文件是本 feature 的需求與資料 contract。Task 尚未拆分；後續 Tasks 與 LLD 必須以本文件為依據，不得回到依賴固定延遲、隱式 Strategy 選擇或只讀取最近 N 筆 Trades 的舊流程。
+此文件是本 feature 的需求與資料 contract。Implementation Tasks 與 LLD 必須以本文件為依據，不得回到依賴固定延遲、隱式 Strategy 選擇或只讀取最近 N 筆 Trades 的舊流程。
 
-Core module boundaries、dependency direction、CLI response／output semantics 與 testing architecture 的 review draft 定義於 [`LLD.md`](./LLD.md)。LLD 核准前不拆分 implementation Tasks。
+Core module boundaries、dependency direction、CLI response／output semantics 與 testing architecture 定義於 [`LLD.md`](./LLD.md)。Tasks 已依 vertical slices 與 dependency 拆分；[`TASK-001`](./TASK-001-runtime-contract-discovery.md) 必須先完成 live contract discovery，才能開始依賴該 contract 的實作。
 
 ## Approved CLI contract
 
@@ -439,9 +439,43 @@ Output rules：
 - Broker Account 的真實委託、成交紀錄或持倉。
 - 遠端儲存、排程服務或分散式 worker orchestration。
 
+## Tasks
+
+| Task | Deliverable | Depends on | Status |
+| --- | --- | --- | --- |
+| [`TASK-001`](./TASK-001-runtime-contract-discovery.md) | Runtime contract discovery 與 LLD gates 決策 | — | `todo` |
+| [`TASK-002`](./TASK-002-chart-session-context.md) | Chart Session context locking 與 strict readback | TASK-001 | `todo` |
+| [`TASK-003`](./TASK-003-strategy-runtime-snapshot.md) | Strategy Runtime raw adapter 與 snapshot lifecycle | TASK-001, TASK-002 | `todo` |
+| [`TASK-004`](./TASK-004-canonical-model-reconciliation.md) | Canonical model、identity 與 reconciliation | TASK-001, TASK-003 | `todo` |
+| [`TASK-005`](./TASK-005-trading-report-cli.md) | `strategy active`／`trading-report` CLI vertical slice | TASK-002, TASK-003, TASK-004 | `todo` |
+| [`TASK-006`](./TASK-006-trading-data-pagination-cli.md) | `trading-data` JSON pagination CLI vertical slice | TASK-002, TASK-003, TASK-004, TASK-005 | `todo` |
+| [`TASK-007`](./TASK-007-formats-artifact-transaction.md) | JSON／JSONL／CSV encoders 與 artifact transaction | TASK-004, TASK-006 | `todo` |
+| [`TASK-008`](./TASK-008-single-symbol-export.md) | Single-Symbol verified export | TASK-005, TASK-006, TASK-007 | `todo` |
+| [`TASK-009`](./TASK-009-watchlist-sequential-export.md) | Active Watchlist sequential export | TASK-008 | `todo` |
+| [`TASK-010`](./TASK-010-mcp-compatibility.md) | MCP parity 與 legacy compatibility | TASK-005, TASK-006, TASK-009 | `todo` |
+| [`TASK-011`](./TASK-011-regression-delivery-gate.md) | Regression、live evidence、docs 與 release gate | TASK-010 | `todo` |
+
+Dependency flow：
+
+```text
+TASK-001 Runtime discovery
+  └─ TASK-002 Chart Session
+       └─ TASK-003 Strategy Runtime
+            └─ TASK-004 Canonical model + reconciliation
+                 └─ TASK-005 Trading Report CLI
+                      └─ TASK-006 Trading Data pagination CLI
+                           └─ TASK-007 Formats + artifact transaction
+                                └─ TASK-008 Single-Symbol export
+                                     └─ TASK-009 Watchlist export
+                                          └─ TASK-010 MCP + compatibility
+                                               └─ TASK-011 Delivery gate
+```
+
+表格中的 dependency metadata 是實際執行 gate；圖示呈現主要 critical path。部分基礎 Tasks 可在 dependency 滿足後並行，但不得略過 Task 文件列出的 prerequisites。
+
 ## Implementation prerequisites
 
-拆分 Tasks 前，LLD 必須補齊並固定：
+下列 contract 由 TASK-001 透過受控 live discovery 固定，並回寫 LLD／fixtures。依賴這些 contract 的 implementation Task 不得先行猜測：
 
 1. Live raw Strategy Trade payload 與 Desktop CSV 17 類語意的 mapping table。
 2. Fresh calculation 的 observable signals、polling interval 與 timeout。
@@ -473,6 +507,6 @@ Output rules：
 - [ ] Deterministic tests 與受控 live validation 都通過，且不依賴 UI download clicks。
 - [ ] 文件與 response 明確表示 Strategy Trading Data 是 Broker Emulator 的回測交易結果，不是 OHLCV 或 Broker Account 實際成交。
 
-## Task planning gate
+## Feature completion rule
 
-本文件的產品流程、CLI contract 與資料核對原則已核准；[`LLD.md`](./LLD.md) 目前為 review draft，尚未建立 implementation Tasks。完成 LLD review gates 與必要 raw schema discovery 後，才依 Core、CLI、MCP、output、tests、documentation 與 live validation 拆分 vertical-slice Tasks。
+本文件的產品流程、CLI contract、資料核對原則、LLD 與 Tasks 已完成規劃。Feature 只有在 TASK-001～TASK-011 的 dependency、acceptance criteria、tests 與 completion record 全部完成後，才能將狀態改為 `done`；僅完成 Core、CLI 或單一 live smoke 都不代表整體 feature 完成。
