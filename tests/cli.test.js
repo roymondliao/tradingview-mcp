@@ -106,11 +106,41 @@ describe('CLI — help and routing', () => {
     assert.equal(exitCode, 0);
     assert.ok(stdout.includes('active'));
     assert.ok(stdout.includes('trading-report'));
+    assert.ok(stdout.includes('trading-data'));
     assert.ok(stdout.includes('select'));
     assert.ok(stdout.includes('report'));
     assert.ok(stdout.includes('orders'));
     assert.ok(stdout.includes('trades'));
     assert.ok(stdout.includes('equity'));
+  });
+
+  it('strategy trading-data help exposes Offset/Limit/Snapshot pagination', () => {
+    const { stdout, exitCode } = run(['strategy', 'trading-data', '--help']);
+    assert.equal(exitCode, 0);
+    assert.ok(stdout.includes('<entity-id>'));
+    assert.ok(stdout.includes('--symbol'));
+    assert.ok(stdout.includes('--offset'));
+    assert.ok(stdout.includes('--limit'));
+    assert.ok(stdout.includes('--snapshot-id'));
+    assert.ok(stdout.includes('--pane-index'));
+  });
+
+  it('strategy trading-data validates pagination before CDP discovery', () => {
+    const missingSnapshot = run([
+      'strategy', 'trading-data', 'strategy-1', '--symbol', 'TWSE:2344', '--offset', '1',
+    ]);
+    assert.equal(missingSnapshot.exitCode, 1);
+    assert.equal(JSON.parse(missingSnapshot.stderr).code, 'STALE_STRATEGY_SNAPSHOT');
+    const invalidOffset = run([
+      'strategy', 'trading-data', 'strategy-1', '--symbol', 'TWSE:2344', '--offset', '-1',
+    ]);
+    assert.equal(invalidOffset.exitCode, 1);
+    assert.equal(JSON.parse(invalidOffset.stderr).code, 'STRATEGY_RUNTIME_INVALID');
+    const invalidLimit = run([
+      'strategy', 'trading-data', 'strategy-1', '--symbol', 'TWSE:2344', '--limit', '5001',
+    ]);
+    assert.equal(invalidLimit.exitCode, 1);
+    assert.equal(JSON.parse(invalidLimit.stderr).code, 'STRATEGY_RUNTIME_INVALID');
   });
 
   it('strategy trading-report help exposes required Symbol and context options', () => {

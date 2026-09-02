@@ -163,6 +163,7 @@ tv tab list                        # resolve Tab, Saved Layout names/IDs, and Pa
 tv study list --layout-id 201414175 --pane-index 0  # read one explicit Pane
 tv strategy active --layout-id 201414175 --pane-index 0  # active Strategy + Report snapshot state
 tv strategy trading-report <entity-id> --symbol TWSE:2344 --layout-id 201414175 --pane-index 0
+tv strategy trading-data <entity-id> --symbol TWSE:2344 --offset 0 --limit 500
 tv screenshot -r chart             # capture chart
 tv pine compile                    # compile Pine Script
 tv pane layout 2x2                 # 4-chart grid
@@ -183,7 +184,7 @@ tv draw shape/list/get/remove/clear
 tv alert list/create/delete
 tv watchlist get/add
 tv indicator add/remove/toggle/set/get
-tv strategy active/trading-report/select/report/orders/trades/equity
+tv strategy active/trading-report/trading-data/select/report/orders/trades/equity
 tv layout list/switch
 tv pane list/layout/focus/symbol
 tv tab list/new/close/switch

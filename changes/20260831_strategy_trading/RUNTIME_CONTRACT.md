@@ -218,3 +218,13 @@ Trade identity 使用 report index、Entry／Exit-or-mark timestamps、bar index
 - [`calculation-mode-variants.json`](../../tests/fixtures/strategy-trading/calculation-mode-variants.json)：Regular／Deep explicit metadata與unavailable policy variants。
 
 Fixtures 不代表完整 TradingView objects，只保存後續 deterministic adapter tests 所需的最小 contract。
+
+## TASK-006 live pagination evidence
+
+2026-09-02以`TPEX:4768 / 1D`驗證public `strategy trading-data` vertical slice：
+
+- Offset 0建立snapshot，再以相同snapshot讀取middle與last batches；`report_index`完整涵蓋0～7，沒有重複或缺口。
+- First／middle batches回傳`has_more: true`，last batch回傳`has_more: false`；只有offset 0一次涵蓋全部results時，單一batch envelope才會回傳`complete: true`。
+- Closed Trades之後的trailing Open Trade保持`exit: null`，synthetic runtime `x`只投影為`mark`。
+- 一次先前snapshot因TradingView重新計算而失效，command在batch read前回傳`STALE_STRATEGY_SNAPSHOT`，沒有回傳或混合新舊Trades。
+- 每次command完成後均成功恢復原本`TWSE_DLY:2486 / 1D`並通過readback。

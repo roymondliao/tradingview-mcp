@@ -1,6 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { getStrategyTradingReport } from '../src/core/strategy-trading.js';
+import {
+  getStrategyTradingData,
+  getStrategyTradingReport,
+} from '../src/core/strategy-trading.js';
+import { createSnapshotIdentity } from '../src/core/strategy-trading-model.js';
 import { CoreOperationError } from '../src/core/errors.js';
 
 const context = Object.freeze({
@@ -75,6 +79,42 @@ function snapshotCandidate() {
     },
     first_trade_identity: identity,
     last_trade_identity: { ...identity, report_index: 1 },
+  };
+}
+
+function rawTrades() {
+  return [
+    {
+      e: { b: 10, c: 'Long', p: 100, tm: 1704067200000, tp: 'le' },
+      x: { b: 15, c: 'Exit', p: 110, tm: 1704499200000, tp: 'lx' },
+      q: 1, v: 100, tp: { v: 9, p: 0.09 }, cm: 1,
+      rn: { v: 12, p: 0.12 }, dd: { v: 2, p: 0.02 }, cp: { v: 9, p: 0.09 },
+    },
+    {
+      e: { b: 20, c: 'Long', p: 120, tm: 1704931200000, tp: 'le' },
+      x: { b: 24, c: 'Stop', p: 110, tm: 1705276800000, tp: 'lx' },
+      q: 1, v: 120, tp: { v: -11, p: -0.0916666667 }, cm: 1,
+      rn: { v: 3, p: 0.025 }, dd: { v: 12, p: 0.1 }, cp: { v: -2, p: -0.0066666667 },
+    },
+  ];
+}
+
+function runtimeBatch({ offset, limit }, candidate = snapshotCandidate(), trades = rawTrades()) {
+  const items = trades.slice(offset, offset + limit);
+  const nextOffset = offset + items.length;
+  return {
+    success: true,
+    status_type: 2,
+    total: trades.length,
+    offset,
+    limit,
+    returned: items.length,
+    next_offset: nextOffset < trades.length ? nextOffset : null,
+    has_more: nextOffset < trades.length,
+    items,
+    snapshot_before: candidate,
+    snapshot_after: candidate,
+    snapshot_changed: false,
   };
 }
 
@@ -240,5 +280,166 @@ describe('Strategy Trading Report application service', () => {
       (error) => error.code === 'SYMBOL_INVALID',
     );
     assert.equal(sessions, 0);
+  });
+});
+
+describe('Strategy Trading Data pagination application service', () => {
+  it('walks first and last batches oldest-first with one stable snapshot ID', async () => {
+    const { deps } = harness({
+      readRawTradingDataBatch: async (args) => runtimeBatch(args),
+    });
+    const first = await getStrategyTradingData({
+      entity_id: 'strategy-2', symbol: 'TWSE:2344', context,
+      offset: 0, limit: 1, _deps: deps,
+    });
+    assert.equal(first.ordering, 'oldest_first');
+    assert.equal(first.total, 2);
+    assert.equal(first.returned, 1);
+    assert.equal(first.next_offset, 1);
+    assert.equal(first.has_more, true);
+    assert.equal(first.complete, false);
+    assert.equal(first.trades[0].report_index, 0);
+
+    const last = await getStrategyTradingData({
+      entity_id: 'strategy-2', symbol: 'TWSE:2344', context,
+      offset: first.next_offset, limit: 1, snapshot_id: first.snapshot_id, _deps: deps,
+    });
+    assert.equal(last.returned, 1);
+    assert.equal(last.next_offset, null);
+    assert.equal(last.has_more, false);
+    assert.equal(last.complete, false);
+    assert.equal(last.trades[0].report_index, 1);
+    assert.equal(last.snapshot_id, first.snapshot_id);
+  });
+
+  it('marks a one-shot full batch complete and includes its schema version', async () => {
+    const { deps } = harness({
+      readRawTradingDataBatch: async (args) => runtimeBatch(args),
+    });
+    const result = await getStrategyTradingData({
+      entity_id: 'strategy-2', symbol: 'TWSE:2344', context,
+      offset: 0, limit: 10, _deps: deps,
+    });
+    assert.equal(result.schema_version, 1);
+    assert.equal(result.total, 2);
+    assert.equal(result.returned, 2);
+    assert.equal(result.has_more, false);
+    assert.equal(result.complete, true);
+  });
+
+  it('returns a complete empty batch for an empty full Report', async () => {
+    const emptyCandidate = {
+      ...snapshotCandidate(),
+      trade_count: 0,
+      closed_trades: 0,
+      open_trades: 0,
+      first_trade_identity: null,
+      last_trade_identity: null,
+      metrics: {
+        total_net_profit: 0, win_rate_percent: 0, total_trades: 0,
+        winning_trades: 0, losing_trades: 0,
+      },
+    };
+    const { observation, deps } = harness();
+    deps.waitForFreshTradingReport = async () => ({
+      ...observation, snapshot_candidate: emptyCandidate,
+    });
+    deps.readRawTradingDataBatch = async (args) => runtimeBatch(args, emptyCandidate, []);
+    const result = await getStrategyTradingData({
+      entity_id: 'strategy-2', symbol: 'TWSE:2344', context, _deps: deps,
+    });
+    assert.equal(result.total, 0);
+    assert.equal(result.returned, 0);
+    assert.equal(result.complete, true);
+    assert.deepEqual(result.trades, []);
+  });
+
+  it('requires a snapshot ID before opening a Chart Session for offset > 0', async () => {
+    let sessions = 0;
+    await assert.rejects(
+      getStrategyTradingData({
+        entity_id: 'strategy-2', symbol: 'TWSE:2344', context, offset: 1,
+        _deps: { withChartSession: async () => { sessions += 1; } },
+      }),
+      (error) => error.code === 'STALE_STRATEGY_SNAPSHOT'
+        && error.phase === 'request_validation',
+    );
+    assert.equal(sessions, 0);
+  });
+
+  it('rejects a caller snapshot mismatch before reading a batch', async () => {
+    let batchReads = 0;
+    const { calls, deps } = harness({
+      readRawTradingDataBatch: async () => { batchReads += 1; },
+    });
+    await assert.rejects(
+      getStrategyTradingData({
+        entity_id: 'strategy-2', symbol: 'TWSE:2344', context,
+        offset: 1, snapshot_id: 'sha256:stale', _deps: deps,
+      }),
+      (error) => error.code === 'STALE_STRATEGY_SNAPSHOT'
+        && error.phase === 'trading_data_snapshot',
+    );
+    assert.equal(batchReads, 0);
+    assert.equal(calls.restored.length, 1);
+  });
+
+  it('rejects a snapshot change during the page-context batch read', async () => {
+    const changed = {
+      ...snapshotCandidate(),
+      metrics: { ...snapshotCandidate().metrics, total_net_profit: 11 },
+    };
+    const { deps } = harness({
+      readRawTradingDataBatch: async (args) => ({
+        ...runtimeBatch(args), snapshot_after: changed,
+      }),
+    });
+    await assert.rejects(
+      getStrategyTradingData({
+        entity_id: 'strategy-2', symbol: 'TWSE:2344', context, _deps: deps,
+      }),
+      (error) => error.code === 'STALE_STRATEGY_SNAPSHOT'
+        && error.phase === 'trading_data_batch_after',
+    );
+  });
+
+  it('rejects retained tails and count-inconsistent batches as incomplete', async () => {
+    const retained = { ...snapshotCandidate(), first_trade_index: 10 };
+    const { observation, deps } = harness();
+    deps.waitForFreshTradingReport = async () => ({
+      ...observation, snapshot_candidate: retained,
+    });
+    deps.readRawTradingDataBatch = async (args) => runtimeBatch(args, retained);
+    await assert.rejects(
+      getStrategyTradingData({
+        entity_id: 'strategy-2', symbol: 'TWSE:2344', context, _deps: deps,
+      }),
+      (error) => error.code === 'TRADING_DATA_INCOMPLETE'
+        && error.phase === 'trading_data_completeness',
+    );
+  });
+
+  it('validates Offset and Limit boundaries without touching the Chart', async () => {
+    let sessions = 0;
+    const deps = { withChartSession: async () => { sessions += 1; } };
+    await assert.rejects(
+      getStrategyTradingData({
+        entity_id: 'strategy-2', symbol: 'TWSE:2344', context, offset: -1, _deps: deps,
+      }),
+      (error) => error.code === 'STRATEGY_RUNTIME_INVALID',
+    );
+    await assert.rejects(
+      getStrategyTradingData({
+        entity_id: 'strategy-2', symbol: 'TWSE:2344', context, limit: 5001, _deps: deps,
+      }),
+      (error) => error.code === 'STRATEGY_RUNTIME_INVALID',
+    );
+    assert.equal(sessions, 0);
+  });
+
+  it('uses the canonical public snapshot generated from the Report candidate', () => {
+    const snapshot = createSnapshotIdentity(snapshotCandidate());
+    assert.equal(snapshot.available, true);
+    assert.match(snapshot.snapshot_id, /^sha256:[a-f0-9]{64}$/);
   });
 });

@@ -454,7 +454,7 @@ Output rules：
 | [`TASK-003`](./TASK-003-strategy-runtime-snapshot.md) | Strategy Runtime raw adapter 與 snapshot lifecycle | TASK-001, TASK-002 | `done` |
 | [`TASK-004`](./TASK-004-canonical-model-reconciliation.md) | Canonical model、identity 與 reconciliation | TASK-001, TASK-003 | `done` |
 | [`TASK-005`](./TASK-005-trading-report-cli.md) | `strategy active`／`trading-report` CLI vertical slice | TASK-002, TASK-003, TASK-004 | `done` |
-| [`TASK-006`](./TASK-006-trading-data-pagination-cli.md) | `trading-data` JSON pagination CLI vertical slice | TASK-002, TASK-003, TASK-004, TASK-005 | `todo` |
+| [`TASK-006`](./TASK-006-trading-data-pagination-cli.md) | `trading-data` JSON pagination CLI vertical slice | TASK-002, TASK-003, TASK-004, TASK-005 | `done` |
 | [`TASK-007`](./TASK-007-formats-artifact-transaction.md) | JSON／JSONL／CSV encoders 與 artifact transaction | TASK-004, TASK-006 | `todo` |
 | [`TASK-008`](./TASK-008-single-symbol-export.md) | Single-Symbol verified export | TASK-005, TASK-006, TASK-007 | `todo` |
 | [`TASK-009`](./TASK-009-watchlist-sequential-export.md) | Active Watchlist sequential export | TASK-008 | `todo` |
