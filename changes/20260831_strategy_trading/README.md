@@ -68,8 +68,8 @@ Repository 目前已有以下基礎能力：
 - **Strategy Report**：Strategy Tester 對指定 Strategy、Symbol、Timeframe、Inputs 與測試範圍計算出的回測結果，包含 Performance Metrics 與 Strategy Trading Data。
 - **Strategy Trading Data**：Strategy Tester「交易清單」中由 Broker Emulator 計算出的 paired Strategy Trades。它記錄 Strategy 回測的 Entry／Exit、價格、數量與損益等結果；不是 OHLCV，也不是 Broker Account 實際成交。對外匯出的 CSV 應保有 TradingView Desktop 的 Entry／Exit 雙列語意。
 - **Order**：`ordersData()` 提供的原始 order event。Order 不等同 Trade，本 feature 不將 Order 靜默命名為 Trade。
-- **Closed Trade**：已有有效 Exit 的 Trade。只有 Closed Trades 參與本 feature 的 reconciliation。
-- **Open Trade**：尚未 Exit 的 Strategy Trade。仍可輸出至 Strategy Trading Data，但不納入五項 reconciliation 指標。
+- **Closed Trade**：已有有效 Exit 的 Trade。勝率與交易次數只使用 Closed Trades；其淨損益是 Report 總損益的主要來源。
+- **Open Trade**：尚未 Exit 的 Strategy Trade。其浮動損益不納入 Report 總損益，勝率與交易次數也不納入；但已實際收取的 commission 會調整 Report 總損益。
 - **Broker Execution／Actual Broker Trade**：送往真實 Broker Account 並實際成交的交易。本 feature 不讀取或匯出這類資料。
 - **Snapshot**：可證明 Report 與全部 Trade batches 屬於同一個 Tab、Layout、Pane、Strategy、Symbol、Timeframe、Inputs 與計算結果的識別資料。
 - **Staging Output**：尚未通過完整性與 reconciliation 驗證的暫存檔案，不得視為成功匯出結果。
@@ -152,7 +152,7 @@ Tab selector → Chart Target / chart-id → Layout → pane_index → Strategy 
 6. 從同一份 `reportData().trades` 結果集合，以 deterministic record batches 取得完整 Strategy Trading Data；每一批都必須屬於相同 snapshot。
 7. 將 raw Trade payload 正規化為 repo-owned canonical trade schema。
 8. 再次讀取 Strategy Report B，確認 Report A、Trades 與 Report B 的 context／snapshot 一致。
-9. 只使用 Closed Trades 計算五項 reconciliation metrics，並與 Report B 比對。
+9. 以 Closed Trades 計算勝率與交易次數，並以 Closed P&L 扣除 Open 已收 commission 計算總損益，再與 Report B 比對。
 10. 驗證成功後才將 staging artifacts atomic publish 到該 Symbol 的正式輸出目錄。
 11. 將該 Symbol 的成功或失敗結果寫入 run manifest，再處理下一個 Symbol。
 
@@ -309,15 +309,15 @@ Report 與 Strategy Trading Data 的正確性只以以下五項作為 reconcilia
 
 | Metric | Strategy Trading Data calculation | Match rule |
 | --- | --- | --- |
-| Total net profit | 所有 Closed Trades 的 `net_profit` 合計 | 與 Report 總損益差值在 tolerance 內 |
+| Total net profit | 所有 Closed Trades 的 `net_profit` 合計，再減去 Open Trades 已收取的 `commission` | 與 Report 總損益差值在 tolerance 內 |
 | Win rate | `winning_trades / total_closed_trades * 100` | 與 Report 交易勝率差值在 tolerance 內 |
 | Total trades | Closed Trade 數量 | 必須完全相等 |
 | Winning trades | Closed Trades 中 `net_profit > 0` 的數量 | 必須完全相等 |
 | Losing trades | Closed Trades 中 `net_profit < 0` 的數量 | 必須完全相等 |
 
-不將下列欄位作為成功 gate：
+不將下列欄位獨立作為成功 gate：
 
-- commission
+- commission（但 Open Trade 已收 commission 是計算 Total net profit 的必要調整值）
 - run-up／drawdown
 - Entry／Exit row count
 - position value
@@ -329,7 +329,8 @@ Report 與 Strategy Trading Data 的正確性只以以下五項作為 reconcilia
 
 ### Closed, open and breakeven rules
 
-- Open Trades 不計入 total net profit、win rate、total trades、winning trades 或 losing trades。
+- Open Trade 的浮動損益不計入 total net profit；已收取的 Open Trade commission 會從 Closed Trade 淨損益合計扣除，以符合 Trading Report 語意。
+- Open Trades 不計入 win rate、total trades、winning trades 或 losing trades。
 - `net_profit === 0` 的 Closed Trade 是 breakeven，計入 total trades，但不計入 winning 或 losing trades。
 - 因此不可假設 `total trades === winning trades + losing trades`。
 - 若 Report 對 breakeven 的分類語意不同，必須以 live verification 確認並在 LLD 定義，不可靜默調整。
@@ -344,21 +345,26 @@ Report 與 Strategy Trading Data 的正確性只以以下五項作為 reconcilia
 
 實作需保留 TradingView raw precision，最後才套用 tolerance，不可先按畫面格式 round 後再計算。若特定 currency 的最小單位不是 `0.01`，後續 LLD 應定義 currency-aware tolerance；未定義時不得擴大容忍值掩蓋 mismatch。
 
-### Sample expectation
+### Paired Desktop evidence
 
-依目前 Desktop sample，Closed Trades 為交易編號 1–5；交易編號 6 為 Open Trade，不納入 reconciliation。預期計算結果為：
+`trade_sample.csv` 沒有同一時間點的 Trading Report summary，只能驗證 CSV 欄位解析與 Open／Closed 分類，不能單獨作為 Report reconciliation ground truth。
+
+2026-09-02 從同一個 Desktop Pane 取得 `TWSE_DLY:2344 / 1D` 的 Trading Report，並與 `data/trade_data_TWSE_2344.csv` 配對。CSV 顯示精度的計算結果為：
 
 ```json
 {
-  "total_net_profit": 1408.20,
-  "win_rate_percent": 60.00,
-  "total_trades": 5,
-  "winning_trades": 3,
-  "losing_trades": 2
+  "closed_trade_net_profit": 869.12,
+  "open_commission_charged": 3.52,
+  "report_comparable_net_profit": 865.60,
+  "report_total_net_profit": 865.59545,
+  "win_rate_percent": 36.36363636363637,
+  "total_trades": 11,
+  "winning_trades": 4,
+  "losing_trades": 7
 }
 ```
 
-此 sample 用於欄位語意與計算規則 fixture，不代表所有 Strategy、locale、currency 或 TradingView version 都具有相同 raw shape。
+Total net profit 差值為 `0.00455 TWD`，來自 Desktop CSV 顯示精度，落在 `0.01 TWD` tolerance 內。Sanitized paired fixture 位於 `tests/fixtures/strategy-trading/desktop-paired-report-trades.json`；此 evidence 不代表所有 Strategy、locale、currency 或 TradingView version 都具有相同 raw shape。
 
 ## Output contract
 
@@ -418,7 +424,7 @@ Output rules：
 5. Strategy Report canonical contract。
 6. 對同一份 Strategy Report results 執行完整 Strategy Trading Data batching／pagination。
 7. Desktop CSV semantic mapping 與 stable canonical schema。
-8. 五項 closed-trade reconciliation。
+8. 五項 Trading Report／Trading Data reconciliation。
 9. 指定目錄、staging、atomic publish、manifest 與 per-Symbol artifacts。
 10. CLI、MCP、Core 共用 schemas、errors 與 deterministic tests。
 11. Safe live validation，包括 localized Desktop CSV sample 與 runtime raw payload discovery。
@@ -446,8 +452,8 @@ Output rules：
 | [`TASK-001`](./TASK-001-runtime-contract-discovery.md) | Runtime contract discovery 與 LLD gates 決策 | — | `done` |
 | [`TASK-002`](./TASK-002-chart-session-context.md) | Chart Session context locking 與 strict readback | TASK-001 | `done` |
 | [`TASK-003`](./TASK-003-strategy-runtime-snapshot.md) | Strategy Runtime raw adapter 與 snapshot lifecycle | TASK-001, TASK-002 | `done` |
-| [`TASK-004`](./TASK-004-canonical-model-reconciliation.md) | Canonical model、identity 與 reconciliation | TASK-001, TASK-003 | `todo` |
-| [`TASK-005`](./TASK-005-trading-report-cli.md) | `strategy active`／`trading-report` CLI vertical slice | TASK-002, TASK-003, TASK-004 | `todo` |
+| [`TASK-004`](./TASK-004-canonical-model-reconciliation.md) | Canonical model、identity 與 reconciliation | TASK-001, TASK-003 | `done` |
+| [`TASK-005`](./TASK-005-trading-report-cli.md) | `strategy active`／`trading-report` CLI vertical slice | TASK-002, TASK-003, TASK-004 | `done` |
 | [`TASK-006`](./TASK-006-trading-data-pagination-cli.md) | `trading-data` JSON pagination CLI vertical slice | TASK-002, TASK-003, TASK-004, TASK-005 | `todo` |
 | [`TASK-007`](./TASK-007-formats-artifact-transaction.md) | JSON／JSONL／CSV encoders 與 artifact transaction | TASK-004, TASK-006 | `todo` |
 | [`TASK-008`](./TASK-008-single-symbol-export.md) | Single-Symbol verified export | TASK-005, TASK-006, TASK-007 | `todo` |
@@ -500,7 +506,7 @@ TASK-001 Runtime discovery
 - [ ] CSV projection 覆蓋 Desktop sample 的資料語意；欄名不受 TradingView UI locale 影響。
 - [ ] Unix timestamp 保留，並附帶對應 UTC ISO 8601 欄位。
 - [ ] Reconciliation 只 gate 總損益、勝率、總交易次數、獲利次數與虧損次數。
-- [ ] Open Trades 不納入五項 metrics；breakeven 規則明確且有測試。
+- [ ] Open Trade 浮動損益不納入五項 metrics、已收 commission 正確調整總損益；breakeven 規則明確且有測試。
 - [ ] 未通過 snapshot、completeness 或 reconciliation 的 Symbol 不會發布正式 artifacts。
 - [ ] Manifest 能分辨每個 Symbol 的成功、失敗、錯誤 phase 與 artifact 狀態。
 - [ ] CLI、MCP 與 Core 使用相同 canonical schemas 與 error semantics。

@@ -1,7 +1,7 @@
 ---
 id: TASK-005
 title: Trading Report CLI vertical slice
-status: todo
+status: done
 phase: strategy-trading
 depends_on:
   - TASK-002
@@ -57,10 +57,10 @@ CLI handler只解析options並呼叫`getStrategyTradingReport()`。Core建立Sym
 
 ### Acceptance criteria
 
-- [ ] Command必須同時指定entity與symbol。
-- [ ] Response包含context、strategy、symbol、timeframe、metrics與snapshot。
-- [ ] 找不到entity／wrong type不修改其他Strategy。
-- [ ] CLI不要求使用者先執行`strategy select`。
+- [x] Command必須同時指定entity與symbol。
+- [x] Response包含context、strategy、symbol、timeframe、metrics與snapshot。
+- [x] 找不到entity／wrong type不修改其他Strategy。
+- [x] CLI不要求使用者先執行`strategy select`。
 
 ### Validation commands
 
@@ -78,4 +78,15 @@ npm run tv -- strategy active
 
 ## Completion record
 
-Not started.
+Completed on 2026-09-02.
+
+- Added `src/core/strategy-trading.js` application service，依序完成 explicit Strategy ownership/type validation、internal active-source readiness、before snapshot、strict Symbol／Timeframe Session、fresh stable Report、canonical normalization與public SHA-256 snapshot。
+- Added `strategy trading-report <entity-id> --symbol <exchange:symbol>`，支援Timeframe、Tab／Layout／Pane selectors與per-phase timeout；missing／invalid Entity、Symbol及timeout在CDP discovery前回傳stable structured error。
+- Expanded `strategy active`，read-only回傳Report state、calculation range、five reconciliation metrics與safe snapshot metadata；不切換Symbol、Timeframe、Strategy或visibility。
+- Added Chart restore lifecycle：成功或calculation／snapshot失敗都在`finally`恢復原Symbol／Timeframe；Symbol Session strict readback中途失敗也會立即rollback，restore failure以`CHART_RESTORE_FAILED`明確失敗。
+- Legacy `strategy select`／`strategy report`／`strategy trades`維持deprecated compatibility surface；new workflow不呼叫這些commands或legacy Core functions。
+- Added deterministic Core／CLI tests，涵蓋required options、explicit Entity、same-Symbol stable read、Symbol mutation、snapshot unavailable、calculation failure、restore／rollback與active read-only expansion。
+- Live validation：read-only active state成功；same-Symbol Report stable；由原本`TPEX:4768 / 1D`切換至`TWSE_DLY:2344 / 1D`取得fresh canonical Report與snapshot，並在command完成後成功恢復及readback原Chart。
+- `fnm exec --using=22 npm run test:unit`：331 passed，0 failed。
+- `fnm exec --using=22 npm run test:cli`：21 passed，0 failed。
+- `fnm exec --using=22 npm run lint`：0 errors，3 pre-existing warnings。

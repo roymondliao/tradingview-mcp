@@ -4,11 +4,15 @@
 import { getActivePaneState as _getActivePaneState } from './studies.js';
 import { evaluate as _evaluate, safeString } from '../connection.js';
 import { unixSecondsToIso } from './time.js';
-import { ensureStrategyActive as _ensureStrategyActive } from './strategy-runtime.js';
+import {
+  ensureStrategyActive as _ensureStrategyActive,
+  readRawReportState as _readRawReportState,
+} from './strategy-runtime.js';
+import { createSnapshotIdentity, normalizeTradingReport } from './strategy-trading-model.js';
 
 const CHART_API = 'window.TradingViewApi._activeChartWidgetWV.value()';
 
-export async function getActiveStrategy({ _deps } = {}) {
+export async function getActiveStrategy({ context, _deps } = {}) {
   const getState = _deps?.getActivePaneState || _getActivePaneState;
   const state = await getState({ _deps });
   const strategies = (state.studies || []).filter((study) => study.type === 'strategy');
@@ -18,13 +22,71 @@ export async function getActiveStrategy({ _deps } = {}) {
     throw new Error(`Strategy Tester active Strategy readback is ambiguous (${active.length} report-ready Strategies).`);
   }
 
-  return {
+  const base = {
     success: true,
     symbol: state.symbol,
+    timeframe: state.resolution,
     resolution: state.resolution,
     strategy_count: strategies.length,
     status: active.length === 1 ? 'ready' : (strategies.length ? 'not_ready' : 'no_strategy'),
     active_strategy: active[0] || null,
+  };
+  if (!context || active.length !== 1) {
+    return {
+      ...base,
+      report_state: {
+        status: strategies.length ? 'not_selected' : 'no_strategy',
+        report_available: false,
+      },
+      snapshot: null,
+    };
+  }
+
+  const readRawReportState = _deps?.readRawReportState || _readRawReportState;
+  const observation = await readRawReportState({
+    entity_id: active[0].entity_id,
+    context,
+    phase: 'active_strategy_state',
+    _deps,
+  });
+  const reportStatus = observation.status_error
+    ? 'error'
+    : observation.status_type === 1
+      ? 'calculating'
+      : observation.report_available
+        ? 'ready'
+        : 'unavailable';
+  const snapshot = createSnapshotIdentity(observation.snapshot_candidate);
+  const report = observation.report_available
+    ? normalizeTradingReport(observation, {
+      context,
+      entity_id: active[0].entity_id,
+      strategy_name: active[0].name,
+      requested_symbol: state.symbol,
+      resolved_symbol: observation.symbol,
+      timeframe: observation.timeframe,
+      calculation_mode: observation.snapshot_candidate?.calculation_mode,
+    })
+    : null;
+  return {
+    ...base,
+    status: reportStatus === 'ready' ? 'ready' : 'not_ready',
+    report_state: {
+      status: reportStatus,
+      status_type: observation.status_type,
+      report_available: observation.report_available,
+      error: observation.status_error || observation.report_error || null,
+    },
+    calculation: report?.calculation ?? null,
+    reconciliation_metrics: report?.reconciliation_metrics ?? null,
+    snapshot: {
+      available: snapshot.available,
+      snapshot_schema_version: snapshot.snapshot_schema_version,
+      snapshot_id: snapshot.snapshot_id,
+      algorithm: snapshot.algorithm,
+      missing_fields: snapshot.missing_fields,
+    },
+    ...(snapshot.available && { snapshot_id: snapshot.snapshot_id }),
   };
 }
 

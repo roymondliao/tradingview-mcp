@@ -18,6 +18,6 @@ export function paneContextArgs(opts = {}) {
 
 export async function withPaneContext(opts, operation) {
   const context = await prepareContext(paneContextArgs(opts));
-  const result = await operation();
+  const result = await operation(context);
   return { ...result, context };
 }

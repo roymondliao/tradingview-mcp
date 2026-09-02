@@ -57,7 +57,14 @@ function timeframeMatches(expected, actual) {
   return expected != null && actual != null && String(expected) === String(actual);
 }
 
-async function waitForStrictReadback({ context, symbol, timeframe, timeout_ms, _deps }) {
+async function waitForStrictReadback({
+  context,
+  symbol,
+  timeframe,
+  timeout_ms,
+  phase = 'symbol_timeframe_readback',
+  _deps,
+}) {
   const activate = _deps?.activatePaneContext || _activatePaneContext;
   const delay = _deps?.delay || ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
   const now = _deps?.now || Date.now;
@@ -69,7 +76,7 @@ async function waitForStrictReadback({ context, symbol, timeframe, timeout_ms, _
   while (now() <= deadline) {
     const readback = await activate({
       context,
-      phase: 'symbol_timeframe_readback',
+      phase,
       activate: true,
       reacquire: false,
       _deps,
@@ -95,7 +102,7 @@ async function waitForStrictReadback({ context, symbol, timeframe, timeout_ms, _
       : `Timeframe readback timed out: expected ${timeframe}, received ${lastReadback?.resolution || 'unresolved'}.`,
     {
       code: symbolMismatch ? 'SYMBOL_SWITCH_FAILED' : 'TIMEFRAME_SWITCH_FAILED',
-      phase: 'symbol_timeframe_readback',
+      phase,
       symbol,
       retryable: true,
       context,
@@ -160,16 +167,40 @@ export async function prepareSymbolSession({
 
   const symbolChanged = !symbolIdentitiesMatch(requestedSymbol, before.symbol);
   const timeframeChanged = !timeframeMatches(requestedTimeframe, before.resolution);
-  if (symbolChanged) await setSymbol({ symbol: requestedSymbol, _deps });
-  if (timeframeChanged) await setTimeframe({ timeframe: requestedTimeframe, _deps });
-
-  const readback = await waitForStrictReadback({
-    context: expectedContext,
-    symbol: requestedSymbol,
-    timeframe: requestedTimeframe,
-    timeout_ms: timeout,
-    _deps,
-  });
+  let readback;
+  try {
+    if (symbolChanged) await setSymbol({ symbol: requestedSymbol, _deps });
+    if (timeframeChanged) await setTimeframe({ timeframe: requestedTimeframe, _deps });
+    readback = await waitForStrictReadback({
+      context: expectedContext,
+      symbol: requestedSymbol,
+      timeframe: requestedTimeframe,
+      timeout_ms: timeout,
+      _deps,
+    });
+  } catch (error) {
+    try {
+      if (symbolChanged) await setSymbol({ symbol: before.symbol, _deps });
+      if (timeframeChanged) await setTimeframe({ timeframe: before.resolution, _deps });
+      await waitForStrictReadback({
+        context: expectedContext,
+        symbol: before.symbol,
+        timeframe: before.resolution,
+        timeout_ms: timeout,
+        phase: 'chart_restore',
+        _deps,
+      });
+    } catch (restoreError) {
+      throw new CoreOperationError(
+        `Symbol Session failed and original Chart could not be restored: ${restoreError?.message || String(restoreError)}`,
+        {
+          code: 'CHART_RESTORE_FAILED', phase: 'chart_restore', symbol: before.symbol,
+          retryable: true, context: expectedContext, cause: restoreError,
+        },
+      );
+    }
+    throw error;
+  }
   const startedAt = (_deps?.now || Date.now)();
   return Object.freeze({
     context: expectedContext,
@@ -202,4 +233,45 @@ export async function assertSymbolSession(session, { phase = 'symbol_session', _
     phase,
     _deps,
   });
+}
+
+/** Restore the original Symbol/Timeframe after a prepared Symbol Session. */
+export async function restoreSymbolSession(session, { timeout_ms, _deps } = {}) {
+  if (!session?.context || !session?.original_symbol || session?.original_timeframe == null) {
+    throw new CoreOperationError('Prepared Symbol Session with original Chart identity is required.', {
+      code: 'CHART_RESTORE_FAILED', phase: 'chart_restore', context: session?.context,
+    });
+  }
+  const timeout = timeoutValue(timeout_ms);
+  const setSymbol = _deps?.setSymbol || _setSymbol;
+  const setTimeframe = _deps?.setTimeframe || _setTimeframe;
+  try {
+    await assertSymbolSession(session, { phase: 'chart_restore_start', _deps });
+    if (session.symbol_changed) await setSymbol({ symbol: session.original_symbol, _deps });
+    if (session.timeframe_changed) await setTimeframe({ timeframe: session.original_timeframe, _deps });
+    const readback = await waitForStrictReadback({
+      context: session.context,
+      symbol: session.original_symbol,
+      timeframe: session.original_timeframe,
+      timeout_ms: timeout,
+      phase: 'chart_restore',
+      _deps,
+    });
+    return {
+      success: true,
+      restored: session.symbol_changed || session.timeframe_changed,
+      symbol: readback.symbol,
+      timeframe: readback.resolution,
+    };
+  } catch (error) {
+    if (error?.code === 'CHART_RESTORE_FAILED') throw error;
+    throw new CoreOperationError(`Failed to restore original Chart: ${error?.message || String(error)}`, {
+      code: 'CHART_RESTORE_FAILED',
+      phase: 'chart_restore',
+      symbol: session.original_symbol,
+      retryable: true,
+      context: session.context,
+      cause: error,
+    });
+  }
 }

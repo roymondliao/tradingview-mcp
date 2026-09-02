@@ -64,6 +64,8 @@ numberOfWiningTrades
 numberOfLosingTrades
 ```
 
+Live TASK-004 verification進一步確認`performance.all.percentProfitable`與其他`*Percent` performance fields使用ratio，canonical percentage point必須乘以`100`；例如raw `0.5`表示`50%`。這與Trade metric pair的`p` ratio規則一致。
+
 `settings.dateRange` observed shape：
 
 ```js
@@ -131,6 +133,8 @@ Verbose compatibility keys already supported by existing normalizers remain vali
 - Live evidence observed `report.trades.length === totalTrades + totalOpenTrades`。
 - Open Trades 排在 Closed Trades 後方。Observed Open Trade 仍有 synthetic `x` price、time、bar index、type 與 mark-to-market metrics，但 `x.c` 為空；因此不得用「是否存在 `x`」判斷 Open／Closed。
 - Canonical Open Trade 的 `exit` 必須是 `null`，raw `x` 投影為 `mark`，避免將尚未成交的 mark-to-market value 誤稱實際 Exit。
+- Live paired evidence (`TWSE_DLY:2344 / 1D`) observed Report `netProfit = 865.59545`、Closed Trade P&L displayed sum `869.12` 與 Open Trade commission displayed `3.52`。因此 Report Net Profit 排除 Open mark-to-market P&L，但包含已收取的 Open commission；CSV 精度推導值 `865.60` 與 Report 差 `0.00455 TWD`。
+- Reconciliation 的 Total Net Profit 必須使用 `sum(Closed profit.value) - sum(Open commission)`。Open Trade commission unavailable 時不得宣告該 metric matched。
 - `firstTradeIndex` 是 retained result 的起始 index。只有 `firstTradeIndex === 0` 才能宣告從第一筆開始完整取得；Trade number 為 `firstTradeIndex + array index + 1`。
 - 沒有觀察到另一個 Trade load-more／history API。Offset／Limit 只對同一份 in-memory `report.trades` 做 slice。
 
@@ -210,6 +214,7 @@ Trade identity 使用 report index、Entry／Exit-or-mark timestamps、bar index
 - [`compact-report.json`](../../tests/fixtures/strategy-trading/compact-report.json)：sanitized Desktop compact shape、Closed + trailing Open、freshness evidence。
 - [`verbose-report.json`](../../tests/fixtures/strategy-trading/verbose-report.json)：supported verbose-key compatibility shape。
 - [`unsupported-report.json`](../../tests/fixtures/strategy-trading/unsupported-report.json)：required keys無法辨識。
+- [`desktop-paired-report-trades.json`](../../tests/fixtures/strategy-trading/desktop-paired-report-trades.json)：sanitized same-pane Trading Report／Trading Data reconciliation evidence，保留 CSV display precision tolerance case。
 - [`calculation-mode-variants.json`](../../tests/fixtures/strategy-trading/calculation-mode-variants.json)：Regular／Deep explicit metadata與unavailable policy variants。
 
 Fixtures 不代表完整 TradingView objects，只保存後續 deterministic adapter tests 所需的最小 contract。

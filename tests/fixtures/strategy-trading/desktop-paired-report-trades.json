@@ -1,0 +1,34 @@
+{
+  "fixture_schema_version": 1,
+  "source": "sanitized same-pane Desktop observation; Trading Data values use displayed CSV precision",
+  "symbol": "TWSE_DLY:2344",
+  "resolution": "1D",
+  "currency": "TWD",
+  "trading_report": {
+    "metrics": {
+      "total_net_profit": 865.59545,
+      "win_rate_percent": 36.36363636363637,
+      "total_trades": 11,
+      "winning_trades": 4,
+      "losing_trades": 7
+    }
+  },
+  "trading_data": {
+    "closed_trade_net_profit_displayed": 869.12,
+    "open_commission_displayed": 3.52,
+    "trades": [
+      { "report_index": 0, "trade_number": 1, "status": "closed", "profit": { "value": 410.9 }, "commission": 7.6, "currency": "TWD" },
+      { "report_index": 1, "trade_number": 2, "status": "closed", "profit": { "value": -237.64 }, "commission": 6.64, "currency": "TWD" },
+      { "report_index": 2, "trade_number": 3, "status": "closed", "profit": { "value": -171.85 }, "commission": 6.85, "currency": "TWD" },
+      { "report_index": 3, "trade_number": 4, "status": "closed", "profit": { "value": -348.44 }, "commission": 6.44, "currency": "TWD" },
+      { "report_index": 4, "trade_number": 5, "status": "closed", "profit": { "value": 680.94 }, "commission": 8.06, "currency": "TWD" },
+      { "report_index": 5, "trade_number": 6, "status": "closed", "profit": { "value": -303.45 }, "commission": 6.45, "currency": "TWD" },
+      { "report_index": 6, "trade_number": 7, "status": "closed", "profit": { "value": 731.82 }, "commission": 8.18, "currency": "TWD" },
+      { "report_index": 7, "trade_number": 8, "status": "closed", "profit": { "value": 719.77 }, "commission": 7.73, "currency": "TWD" },
+      { "report_index": 8, "trade_number": 9, "status": "closed", "profit": { "value": -188.12 }, "commission": 6.62, "currency": "TWD" },
+      { "report_index": 9, "trade_number": 10, "status": "closed", "profit": { "value": -216.8 }, "commission": 6.8, "currency": "TWD" },
+      { "report_index": 10, "trade_number": 11, "status": "closed", "profit": { "value": -208.01 }, "commission": 6.51, "currency": "TWD" },
+      { "report_index": 11, "trade_number": 12, "status": "open", "profit": { "value": -28.01 }, "commission": 3.52, "currency": "TWD" }
+    ]
+  }
+}

@@ -105,11 +105,41 @@ describe('CLI — help and routing', () => {
     const { stdout, exitCode } = run(['strategy', '--help']);
     assert.equal(exitCode, 0);
     assert.ok(stdout.includes('active'));
+    assert.ok(stdout.includes('trading-report'));
     assert.ok(stdout.includes('select'));
     assert.ok(stdout.includes('report'));
     assert.ok(stdout.includes('orders'));
     assert.ok(stdout.includes('trades'));
     assert.ok(stdout.includes('equity'));
+  });
+
+  it('strategy trading-report help exposes required Symbol and context options', () => {
+    const { stdout, exitCode } = run(['strategy', 'trading-report', '--help']);
+    assert.equal(exitCode, 0);
+    assert.ok(stdout.includes('<entity-id>'));
+    assert.ok(stdout.includes('--symbol'));
+    assert.ok(stdout.includes('--timeframe'));
+    assert.ok(stdout.includes('--timeout'));
+    assert.ok(stdout.includes('--tab-index'));
+    assert.ok(stdout.includes('--layout-id'));
+    assert.ok(stdout.includes('--pane-index'));
+  });
+
+  it('strategy trading-report rejects missing required inputs before CDP discovery', () => {
+    const missingEntity = run(['strategy', 'trading-report', '--symbol', 'TWSE:2344']);
+    assert.equal(missingEntity.exitCode, 1);
+    assert.equal(JSON.parse(missingEntity.stderr).code, 'STRATEGY_ENTITY_REQUIRED');
+    const missingSymbol = run(['strategy', 'trading-report', 'strategy-1']);
+    assert.equal(missingSymbol.exitCode, 1);
+    assert.equal(JSON.parse(missingSymbol.stderr).code, 'SYMBOL_REQUIRED');
+    const invalidSymbol = run(['strategy', 'trading-report', 'strategy-1', '--symbol', '2344']);
+    assert.equal(invalidSymbol.exitCode, 1);
+    assert.equal(JSON.parse(invalidSymbol.stderr).code, 'SYMBOL_INVALID');
+    const invalidTimeout = run([
+      'strategy', 'trading-report', 'strategy-1', '--symbol', 'TWSE:2344', '--timeout', 'forever',
+    ]);
+    assert.equal(invalidTimeout.exitCode, 1);
+    assert.equal(JSON.parse(invalidTimeout.stderr).code, 'STRATEGY_RUNTIME_INVALID');
   });
 
   it('ohlcv --help shows options', () => {

@@ -98,7 +98,7 @@ export async function run(argv) {
         strict: false,
       });
       if (values.help) {
-        console.log(`Usage: tv ${cmdName} ${subName} [options]\n`);
+        console.log(`Usage: tv ${cmdName} ${subName}${sub.usage ? ` ${sub.usage}` : ''} [options]\n`);
         console.log(sub.description);
         if (Object.keys(options).length > 0) {
           console.log('\nOptions:');

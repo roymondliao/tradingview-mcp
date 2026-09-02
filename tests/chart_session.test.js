@@ -4,6 +4,7 @@ import {
   AsyncMutex,
   assertSymbolSession,
   prepareSymbolSession,
+  restoreSymbolSession,
   withChartSession,
 } from '../src/core/chart-session.js';
 import { setSymbol, setTimeframe } from '../src/core/chart.js';
@@ -177,6 +178,7 @@ describe('strict Symbol Session readback', () => {
 
   it('throws SYMBOL_SWITCH_FAILED instead of returning success on wrong readback', async () => {
     let now = 0;
+    const mutations = [];
     await assert.rejects(
       prepareSymbolSession({
         context,
@@ -184,7 +186,7 @@ describe('strict Symbol Session readback', () => {
         timeout_ms: 400,
         _deps: {
           assertPaneContext: async () => ({ symbol: 'NASDAQ:MSFT', resolution: '60' }),
-          setSymbol: async () => ({ success: true }),
+          setSymbol: async ({ symbol }) => { mutations.push(symbol); },
           activatePaneContext: async () => ({ symbol: 'NASDAQ:MSFT', resolution: '60' }),
           delay: async (milliseconds) => { now += milliseconds; },
           now: () => now,
@@ -194,6 +196,7 @@ describe('strict Symbol Session readback', () => {
         && error.phase === 'symbol_timeframe_readback'
         && error.retryable === true,
     );
+    assert.deepEqual(mutations, ['NASDAQ:NVDA', 'NASDAQ:MSFT']);
   });
 
   it('throws TIMEFRAME_SWITCH_FAILED on persistent wrong Timeframe', async () => {
@@ -276,5 +279,59 @@ describe('process-local Chart mutation mutex', () => {
     releaseFirst();
     await Promise.all([first, second]);
     assert.deepEqual(events, ['first:start', 'first:end', 'second:start', 'second:end']);
+  });
+});
+
+describe('Chart Session restore', () => {
+  it('restores the original Symbol/Timeframe and requires stable readback', async () => {
+    const state = { symbol: 'TWSE_DLY:2344', resolution: '1D' };
+    let reads = 0;
+    const result = await restoreSymbolSession({
+      context,
+      original_symbol: 'NASDAQ:MSFT',
+      original_timeframe: '60',
+      symbol: 'TWSE:2344',
+      resolved_symbol: 'TWSE_DLY:2344',
+      timeframe: '1D',
+      symbol_changed: true,
+      timeframe_changed: true,
+    }, {
+      timeout_ms: 1000,
+      _deps: {
+        assertPaneContext: async () => ({ symbol: state.symbol, resolution: state.resolution }),
+        setSymbol: async ({ symbol }) => { state.symbol = symbol; },
+        setTimeframe: async ({ timeframe }) => { state.resolution = timeframe; },
+        activatePaneContext: async () => { reads += 1; return { ...state }; },
+        delay: async () => {},
+      },
+    });
+    assert.equal(result.restored, true);
+    assert.equal(result.symbol, 'NASDAQ:MSFT');
+    assert.equal(result.timeframe, '60');
+    assert.equal(reads, 2);
+  });
+
+  it('does not overwrite external Chart interference during restore', async () => {
+    let mutations = 0;
+    await assert.rejects(
+      restoreSymbolSession({
+        context,
+        original_symbol: 'NASDAQ:MSFT',
+        original_timeframe: '60',
+        symbol: 'TWSE:2344',
+        resolved_symbol: 'TWSE_DLY:2344',
+        timeframe: '1D',
+        symbol_changed: true,
+        timeframe_changed: true,
+      }, {
+        _deps: {
+          assertPaneContext: async () => { throw new CoreOperationError('changed', { code: 'PANE_CONTEXT_CHANGED' }); },
+          setSymbol: async () => { mutations += 1; },
+          setTimeframe: async () => { mutations += 1; },
+        },
+      }),
+      (error) => error.code === 'CHART_RESTORE_FAILED' && error.phase === 'chart_restore',
+    );
+    assert.equal(mutations, 0);
   });
 });

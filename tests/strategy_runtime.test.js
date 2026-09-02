@@ -50,7 +50,7 @@ function reportProjection(overrides = {}) {
     performance: {
       all: {
         netProfit: 25,
-        percentProfitable: 50,
+        percentProfitable: 0.5,
         totalTrades: 2,
         totalOpenTrades: 1,
         numberOfWiningTrades: 1,

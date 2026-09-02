@@ -7,7 +7,7 @@
     "performance": {
       "all": {
         "netProfit": 15,
-        "percentProfitable": 100,
+        "percentProfitable": 1,
         "totalTrades": 1,
         "totalOpenTrades": 0,
         "numberOfWiningTrades": 1,

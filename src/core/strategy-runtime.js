@@ -1,5 +1,4 @@
 /** Bounded TradingView Strategy runtime adapter and freshness lifecycle. */
-import { createHash } from 'node:crypto';
 import { callPageFunction as _callPageFunction } from '../connection.js';
 import {
   getActivePaneState as _getActivePaneState,
@@ -7,6 +6,7 @@ import {
 } from './studies.js';
 import { assertSymbolSession as _assertSymbolSession } from './chart-session.js';
 import { CoreOperationError, sanitizeCoreContext } from './errors.js';
+import { stableJsonStringify, sha256Hex } from './stable-json.js';
 
 const DEFAULT_TIMEOUT_MS = 20000;
 const POLL_INTERVAL_MS = 200;
@@ -15,22 +15,12 @@ const DEFAULT_BATCH_LIMIT = 500;
 const MAX_BATCH_LIMIT = 5000;
 const SNAPSHOT_CANDIDATE_VERSION = 1;
 
-function stableValue(value) {
-  if (value === null || ['string', 'boolean'].includes(typeof value)) return value;
-  if (typeof value === 'number') return Number.isFinite(value) ? value : String(value);
-  if (Array.isArray(value)) return value.map(stableValue);
-  if (value && typeof value === 'object') {
-    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stableValue(value[key])]));
-  }
-  return String(value);
-}
-
 export function stableRuntimeJson(value) {
-  return JSON.stringify(stableValue(value));
+  return stableJsonStringify(value);
 }
 
 export function createRuntimeSignature(candidate) {
-  return createHash('sha256').update(stableRuntimeJson(candidate)).digest('hex');
+  return sha256Hex(candidate);
 }
 
 function timeoutValue(timeout_ms) {
@@ -326,8 +316,8 @@ async function readRuntimePage(entityId, mode, offset, limit) {
 function reportMetrics(report) {
   const all = report?.performance?.all || {};
   return {
-    net_profit: all.netProfit ?? null,
-    percent_profitable: all.percentProfitable ?? null,
+    total_net_profit: all.netProfit ?? null,
+    win_rate_percent: all.percentProfitable == null ? null : all.percentProfitable * 100,
     total_trades: all.totalTrades ?? null,
     winning_trades: all.numberOfWiningTrades ?? null,
     losing_trades: all.numberOfLosingTrades ?? null,

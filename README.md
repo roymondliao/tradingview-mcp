@@ -161,12 +161,16 @@ tv history --symbol NASDAQ:AAPL -t D --bars-per-request 1000 --max-requests 20 -
 tv history --symbol NASDAQ:AAPL -t D --include-bars --output history.json --force  # explicitly overwrite an existing file
 tv tab list                        # resolve Tab, Saved Layout names/IDs, and Pane IDs
 tv study list --layout-id 201414175 --pane-index 0  # read one explicit Pane
+tv strategy active --layout-id 201414175 --pane-index 0  # active Strategy + Report snapshot state
+tv strategy trading-report <entity-id> --symbol TWSE:2344 --layout-id 201414175 --pane-index 0
 tv screenshot -r chart             # capture chart
 tv pine compile                    # compile Pine Script
 tv pane layout 2x2                 # 4-chart grid
 tv pane symbol 1 ES1!              # set pane symbol
 tv stream quote | jq '.close'      # monitor price changes
 ```
+
+For snapshot-complete Strategy workflows, use `strategy trading-report`. The existing `strategy select`, `strategy report`, and `strategy trades` commands remain deprecated compatibility surfaces and are not used by the new export workflow.
 
 ### All Commands
 
@@ -179,6 +183,7 @@ tv draw shape/list/get/remove/clear
 tv alert list/create/delete
 tv watchlist get/add
 tv indicator add/remove/toggle/set/get
+tv strategy active/trading-report/select/report/orders/trades/equity
 tv layout list/switch
 tv pane list/layout/focus/symbol
 tv tab list/new/close/switch

@@ -90,6 +90,7 @@ Contract：
 - Success 只在 readback 的 context、entity、symbol、timeframe 與 Report 全部一致時回傳。
 - Response 包含 canonical Report、五項 reconciliation metrics、currency、calculation metadata 與 `snapshot_id`。
 - 此 command 不取得完整 Trades，也不寫 Report file；正式檔案由 `trading-export` 管理。
+- Response 的 `chart_restore`記錄command完成後原Symbol／Timeframe readback；restore失敗時command以`CHART_RESTORE_FAILED`失敗，不回報成功結果。
 
 ### `strategy trading-data`
 
@@ -437,8 +438,9 @@ reconcileTradingReport({ reportMetrics, tradingDataMetrics, tolerance })
 
 規則：
 
-- 只使用 Closed Trades。
-- Open Trades 不計入五項 metrics。
+- Win rate／Total／Winning／Losing counts 只使用 Closed Trades。
+- Total Net Profit 使用 Closed Trade `profit.value` 合計，再扣除 Open Trade 已收取的 `commission`。
+- Open Trade 的 mark-to-market `profit.value` 不計入 Total Net Profit；若存在 Open Trade 但 commission unavailable，Report-comparable Total Net Profit 必須標記 unavailable，不可猜測。
 - Breakeven 計入 total，但不計入 winning／losing。
 - Net Profit absolute tolerance default `0.01` currency unit。
 - Win Rate absolute tolerance default `0.01` percentage point。
