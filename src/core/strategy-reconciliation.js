@@ -43,57 +43,102 @@ function exactDecimalSum(values) {
   return Number(coefficient) / (10 ** scale);
 }
 
-export function calculateTradingDataMetrics(trades) {
-  if (!Array.isArray(trades)) {
-    throw new CoreOperationError('Canonical Strategy Trades must be an array.', {
-      code: 'TRADING_DATA_SCHEMA_UNSUPPORTED', phase: 'reconciliation_calculation',
-    });
-  }
-  if (trades.some((trade) => !['closed', 'open'].includes(trade?.status))) {
-    throw new CoreOperationError('Every canonical Strategy Trade must be classified as closed or open.', {
-      code: 'TRADING_DATA_SCHEMA_UNSUPPORTED', phase: 'reconciliation_calculation',
-    });
-  }
-  const closed = trades.filter((trade) => trade?.status === 'closed');
-  const open = trades.filter((trade) => trade?.status === 'open');
-  const currencies = new Set(closed.map((trade) => trade.currency).filter((currency) => currency != null));
-  if (currencies.size > 1) {
-    throw new CoreOperationError('Closed Strategy Trades contain multiple currencies.', {
-      code: 'RECONCILIATION_MISMATCH', phase: 'reconciliation_calculation',
-    });
-  }
-  const profits = closed.map((trade) => trade?.profit?.value);
-  if (profits.some((value) => typeof value !== 'number' || !Number.isFinite(value))) {
-    throw new CoreOperationError('Every Closed Trade requires a finite profit.value for reconciliation.', {
-      code: 'TRADING_DATA_SCHEMA_UNSUPPORTED', phase: 'reconciliation_calculation',
-    });
-  }
-  const winningTrades = profits.filter((value) => value > 0).length;
-  const losingTrades = profits.filter((value) => value < 0).length;
-  const totalTrades = closed.length;
-  const closedTradeNetProfit = exactDecimalSum(profits);
-  const openCommissions = open.map((trade) => trade?.commission);
-  const openCommissionAvailable = openCommissions.every(
-    (value) => typeof value === 'number' && Number.isFinite(value),
-  );
-  const openCommissionCharged = openCommissionAvailable ? exactDecimalSum(openCommissions) : null;
+function addDecimal(total, value) {
+  const part = decimalParts(value);
+  const scale = Math.max(total.scale, part.scale);
   return {
-    // TradingView excludes Open Trade mark-to-market P&L from Report Net Profit,
-    // but includes commission already charged for the still-open position.
-    total_net_profit: openCommissionCharged == null
-      ? null
-      : exactDecimalSum([closedTradeNetProfit, -openCommissionCharged]),
-    win_rate_percent: totalTrades === 0 ? 0 : (winningTrades * 100) / totalTrades,
-    total_trades: totalTrades,
-    winning_trades: winningTrades,
-    losing_trades: losingTrades,
-    breakeven_trades: totalTrades - winningTrades - losingTrades,
-    closed_trade_net_profit: closedTradeNetProfit,
-    open_commission_charged: openCommissionCharged,
-    open_commission_available: openCommissionAvailable,
-    open_trades_excluded: open.length,
-    currency: currencies.values().next().value ?? null,
+    coefficient: total.coefficient * (10n ** BigInt(scale - total.scale))
+      + part.coefficient * (10n ** BigInt(scale - part.scale)),
+    scale,
   };
+}
+
+function decimalValue(total) {
+  return Number(total.coefficient) / (10 ** total.scale);
+}
+
+/** Incrementally calculate the same five metrics without retaining all Trades. */
+export function createTradingDataMetricsAccumulator() {
+  let closedTrades = 0;
+  let openTrades = 0;
+  let winningTrades = 0;
+  let losingTrades = 0;
+  let closedProfit = { coefficient: 0n, scale: 0 };
+  let openCommission = { coefficient: 0n, scale: 0 };
+  let openCommissionAvailable = true;
+  const currencies = new Set();
+  let api;
+
+  function addBatch(trades) {
+    if (!Array.isArray(trades)) {
+      throw new CoreOperationError('Canonical Strategy Trades must be an array.', {
+        code: 'TRADING_DATA_SCHEMA_UNSUPPORTED', phase: 'reconciliation_calculation',
+      });
+    }
+    for (const trade of trades) {
+      if (!['closed', 'open'].includes(trade?.status)) {
+        throw new CoreOperationError('Every canonical Strategy Trade must be classified as closed or open.', {
+          code: 'TRADING_DATA_SCHEMA_UNSUPPORTED', phase: 'reconciliation_calculation',
+        });
+      }
+      if (trade.status === 'closed') {
+        const profit = trade?.profit?.value;
+        if (typeof profit !== 'number' || !Number.isFinite(profit)) {
+          throw new CoreOperationError('Every Closed Trade requires a finite profit.value for reconciliation.', {
+            code: 'TRADING_DATA_SCHEMA_UNSUPPORTED', phase: 'reconciliation_calculation',
+          });
+        }
+        if (trade.currency != null) currencies.add(trade.currency);
+        if (currencies.size > 1) {
+          throw new CoreOperationError('Closed Strategy Trades contain multiple currencies.', {
+            code: 'RECONCILIATION_MISMATCH', phase: 'reconciliation_calculation',
+          });
+        }
+        closedTrades += 1;
+        if (profit > 0) winningTrades += 1;
+        else if (profit < 0) losingTrades += 1;
+        closedProfit = addDecimal(closedProfit, profit);
+      } else {
+        openTrades += 1;
+        const commission = trade?.commission;
+        if (typeof commission === 'number' && Number.isFinite(commission)) {
+          openCommission = addDecimal(openCommission, commission);
+        } else {
+          openCommissionAvailable = false;
+        }
+      }
+    }
+    return api;
+  }
+
+  function finish() {
+    const closedTradeNetProfit = decimalValue(closedProfit);
+    const openCommissionCharged = openCommissionAvailable ? decimalValue(openCommission) : null;
+    return {
+      // TradingView excludes Open Trade mark-to-market P&L from Report Net Profit,
+      // but includes commission already charged for the still-open position.
+      total_net_profit: openCommissionCharged == null
+        ? null
+        : exactDecimalSum([closedTradeNetProfit, -openCommissionCharged]),
+      win_rate_percent: closedTrades === 0 ? 0 : (winningTrades * 100) / closedTrades,
+      total_trades: closedTrades,
+      winning_trades: winningTrades,
+      losing_trades: losingTrades,
+      breakeven_trades: closedTrades - winningTrades - losingTrades,
+      closed_trade_net_profit: closedTradeNetProfit,
+      open_commission_charged: openCommissionCharged,
+      open_commission_available: openCommissionAvailable,
+      open_trades_excluded: openTrades,
+      currency: currencies.values().next().value ?? null,
+    };
+  }
+
+  api = { addBatch, finish };
+  return api;
+}
+
+export function calculateTradingDataMetrics(trades) {
+  return createTradingDataMetricsAccumulator().addBatch(trades).finish();
 }
 
 function toleranceValues(overrides = {}) {

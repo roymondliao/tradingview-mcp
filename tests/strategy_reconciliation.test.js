@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   calculateTradingDataMetrics,
+  createTradingDataMetricsAccumulator,
   reconcileTradingReport,
 } from '../src/core/strategy-reconciliation.js';
 import { normalizeStrategyTrade } from '../src/core/strategy-trading-model.js';
@@ -66,6 +67,14 @@ describe('five-metric Trading Data calculation', () => {
     assert.equal(metrics.open_commission_charged, null);
     assert.equal(metrics.open_commission_available, false);
     assert.equal(metrics.total_net_profit, null);
+  });
+
+  it('keeps streaming batch aggregates identical to the pure array calculation', () => {
+    const trades = canonicalCompactTrades();
+    const accumulator = createTradingDataMetricsAccumulator();
+    accumulator.addBatch(trades.slice(0, 1));
+    accumulator.addBatch(trades.slice(1));
+    assert.deepEqual(accumulator.finish(), calculateTradingDataMetrics(trades));
   });
 
   it('rejects unknown statuses, missing Closed P&L, and mixed currencies', () => {

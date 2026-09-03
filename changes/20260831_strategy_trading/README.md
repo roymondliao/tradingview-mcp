@@ -123,6 +123,14 @@ Context resolution 的順序為：
 Tab selector → Chart Target / chart-id → Layout → pane_index → Strategy entity_id
 ```
 
+其中Tab inventory與已attach Pane必須使用同一個Layout Identity adapter，避免兩條路徑對同一個Chart Layout產生不同結果：
+
+- `url_chart_id`由CDP `/json/list`的Chart URL取得，不依賴TradingView runtime readiness。
+- Desktop 3.4.0的runtime `layout_id`優先由`_saveChartService.layoutId()`取得；provider暫時不可用時可使用`url_chart_id`作為候選，但attach後仍必須重新讀取並嚴格驗證。
+- Account `saved_layout_id`不等同runtime `layout_id`；它由`getSavedCharts()`catalog以`catalog.url === layout_id`映射至`catalog.id`。
+- `tab list`對每個Chart target執行bounded metadata retry，並回傳`metadata_status`、`metadata_attempts`及bounded `metadata_error`；不得將失敗靜默表示為正常的`layout: null`。
+- `--saved-layout-id`需要成功取得Saved Layout mapping；metadata unavailable時必須回傳明確diagnostic，不可猜測Tab。`--layout-id`可利用3.4.0已驗證的URL identity縮小候選，再由Pane context readback確認ownership。
+
 要求如下：
 
 - 不得假設 `/json/list` 第一筆 target、第一個 Pane 或第一個 report-ready Strategy 就是使用者指定的對象。
@@ -429,6 +437,7 @@ Output rules：
 10. CLI、MCP、Core 共用 schemas、errors 與 deterministic tests。
 11. Safe live validation，包括 localized Desktop CSV sample 與 runtime raw payload discovery。
 12. Canonical Strategy Trading Data model 與 JSON／JSONL／CSV streaming encoders。
+13. Single-Symbol verified export、完整Trade batching、五項reconciliation與atomic run artifact tree。
 
 ## Deferred scope
 
@@ -456,7 +465,7 @@ Output rules：
 | [`TASK-005`](./TASK-005-trading-report-cli.md) | `strategy active`／`trading-report` CLI vertical slice | TASK-002, TASK-003, TASK-004 | `done` |
 | [`TASK-006`](./TASK-006-trading-data-pagination-cli.md) | `trading-data` JSON pagination CLI vertical slice | TASK-002, TASK-003, TASK-004, TASK-005 | `done` |
 | [`TASK-007`](./TASK-007-formats-artifact-transaction.md) | JSON／JSONL／CSV encoders 與 artifact transaction | TASK-004, TASK-006 | `done` |
-| [`TASK-008`](./TASK-008-single-symbol-export.md) | Single-Symbol verified export | TASK-005, TASK-006, TASK-007 | `todo` |
+| [`TASK-008`](./TASK-008-single-symbol-export.md) | Single-Symbol verified export | TASK-005, TASK-006, TASK-007 | `done` |
 | [`TASK-009`](./TASK-009-watchlist-sequential-export.md) | Active Watchlist sequential export | TASK-008 | `todo` |
 | [`TASK-010`](./TASK-010-mcp-compatibility.md) | MCP parity 與 legacy compatibility | TASK-005, TASK-006, TASK-009 | `todo` |
 | [`TASK-011`](./TASK-011-regression-delivery-gate.md) | Regression、live evidence、docs 與 release gate | TASK-010 | `todo` |

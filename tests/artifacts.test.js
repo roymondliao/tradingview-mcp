@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { Writable } from 'node:stream';
 import {
   assertSafeRelativeArtifactPath,
+  createArtifactSetTransaction,
   createArtifactTransaction,
   safeSymbolPathSegment,
   writeTradingDataArtifact,
@@ -147,5 +148,53 @@ describe('Atomic artifact transaction', () => {
     });
     await transaction.abort();
     assert.deepEqual(readdirSync(directory), []);
+  });
+});
+
+describe('Atomic artifact set transaction', () => {
+  it('publishes a complete nested run tree with one directory rename', async () => {
+    const directory = temporaryDirectory();
+    const transaction = await createArtifactSetTransaction({
+      output_directory: directory, run_id: 'run-1',
+    });
+    await transaction.writeJson('manifest.json', { status: 'succeeded' });
+    await transaction.writeJson('symbols/TWSE/report.json', { net_profit: 1 });
+    const publication = await transaction.publish();
+    assert.equal(publication.path, join(directory, 'run-1'));
+    assert.equal(publication.atomic, true);
+    assert.deepEqual(
+      JSON.parse(readFileSync(join(publication.path, 'manifest.json'), 'utf8')),
+      { status: 'succeeded' },
+    );
+    assert.deepEqual(readdirSync(directory), ['run-1']);
+  });
+
+  it('preserves an existing run by default and replaces it only with force', async () => {
+    const directory = temporaryDirectory();
+    const initial = await createArtifactSetTransaction({
+      output_directory: directory, run_id: 'run-1',
+    });
+    await initial.writeJson('manifest.json', { version: 'old' });
+    await initial.publish();
+    await assert.rejects(
+      createArtifactSetTransaction({ output_directory: directory, run_id: 'run-1' }),
+      (error) => error.code === 'OUTPUT_ALREADY_EXISTS',
+    );
+    assert.deepEqual(
+      JSON.parse(readFileSync(join(directory, 'run-1', 'manifest.json'), 'utf8')),
+      { version: 'old' },
+    );
+
+    const replacement = await createArtifactSetTransaction({
+      output_directory: directory, run_id: 'run-1', force: true,
+    });
+    await replacement.writeJson('manifest.json', { version: 'new' });
+    const publication = await replacement.publish();
+    assert.equal(publication.replaced, true);
+    assert.deepEqual(
+      JSON.parse(readFileSync(join(directory, 'run-1', 'manifest.json'), 'utf8')),
+      { version: 'new' },
+    );
+    assert.deepEqual(readdirSync(directory), ['run-1']);
   });
 });

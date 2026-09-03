@@ -175,6 +175,7 @@ src/cli/commands/strategy.js
              ▼
 src/core/strategy-trading.js                 Application Service
   ├── chart-session.js                       Context + symbol session
+  ├── layout-identity.js                     Shared Tab/Layout/Pane identity provider
   ├── watchlist.js                           Active Watchlist snapshot
   ├── strategy-runtime.js                    TradingView adapter
   ├── strategy-trading-model.js              Canonical data + identity
@@ -227,6 +228,8 @@ activatePaneContext(expectedContext)
 `activatePaneContext()` 以 resolved `target_id` 重新 attach，驗證 `url_chart_id`、runtime／URL `layout_id`、可用時的 account `saved_layout_id`、Pane Layout 與 `pane_id`／`pane_index` ownership；若使用者只切到相同 Layout 的另一個 Pane，會重新 focus 原 Pane並驗證 readback。Tab ordinal 只用於初次解析，解析後不再驗證，因為關閉其他 Tab 可能使 ordinal 改變但 target identity 不變。
 
 `assertPaneContext()` 在相同 structural identity 上額外驗證 Symbol／Timeframe。Target 消失、Layout 改變、Pane ownership 改變或 expected Pane 的 Symbol／Timeframe 被外部操作改變，皆回傳 `PANE_CONTEXT_CHANGED`，不靜默採用新 context。
+
+Tab inventory與Pane inventory共用`layout-identity.js`的page-context reader。Desktop 3.4.0以`_saveChartService.layoutId()`提供runtime `layout_id`，並透過`getSavedCharts()`的`url → id`mapping取得account `saved_layout_id`。Tab metadata使用bounded retry及bounded diagnostics；runtime metadata unavailable時，`layout_id`只可用相同URL identity定位候選並在attach後嚴格readback，`saved_layout_id`則不可猜測fallback。
 
 #### `src/core/chart.js`
 

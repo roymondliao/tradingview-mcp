@@ -131,6 +131,41 @@ register('strategy', {
           : result;
       },
     }],
+    ['trading-export', {
+      description: 'Export one verified Strategy Report and complete Trading Data artifact set',
+      usage: '<entity-id>',
+      options: {
+        ...PANE_CONTEXT_OPTIONS,
+        symbol: { type: 'string', description: 'Required exchange:symbol identity' },
+        timeframe: { type: 'string', description: 'Chart resolution (default current Pane timeframe)' },
+        output: { type: 'string', short: 'o', description: 'Required parent directory for the atomic run output' },
+        format: { type: 'string', description: 'Trading Data format: json (default), jsonl, or csv' },
+        force: { type: 'boolean', description: 'Atomically replace an existing run ID directory' },
+        timeout: { type: 'string', description: 'Per-phase timeout in milliseconds (default 20000)' },
+      },
+      handler: async (opts, positionals) => {
+        const entityId = positionals[0];
+        requireStrategySymbolArgs(entityId, opts.symbol, opts.timeout, 'trading-export');
+        if (!opts.output) {
+          throw new CoreOperationError('--output directory is required for strategy trading-export.', {
+            code: 'OUTPUT_WRITE_FAILED', phase: 'output_validation',
+            entity_id: entityId, symbol: opts.symbol,
+          });
+        }
+        const format = resolveTradingDataFormat({ format: opts.format });
+        const context = await prepareContext(paneContextArgs(opts));
+        return trading.exportStrategySymbol({
+          entity_id: entityId,
+          symbol: opts.symbol,
+          timeframe: opts.timeframe,
+          output_directory: opts.output,
+          format,
+          force: opts.force,
+          timeout_ms: opts.timeout ? Number(opts.timeout) : undefined,
+          context,
+        });
+      },
+    }],
     ['select', {
       description: 'Deprecated compatibility: select a Strategy Instance and wait for its report',
       options: {

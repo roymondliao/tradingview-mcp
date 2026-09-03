@@ -5,6 +5,7 @@
 import { evaluate, evaluateAsync, getTargetInfo, reconnectTo, safeString } from '../connection.js';
 import { attachTab, identifyTab } from './tab.js';
 import { CoreOperationError } from './errors.js';
+import { chartRuntimeMetadataExpression } from './layout-identity.js';
 
 const CWC = 'window.TradingViewApi._chartWidgetCollection';
 
@@ -33,97 +34,16 @@ const LAYOUT_NAMES = {
  * List all panes in the current layout with their symbols and index.
  */
 export async function list() {
-  const result = await evaluateAsync(`
-    new Promise(function(resolve) {
-      var cwc = ${CWC};
-      var layoutType = cwc._layoutType;
-      if (typeof layoutType === 'object' && layoutType && typeof layoutType.value === 'function') layoutType = layoutType.value();
-      var count = cwc.inlineChartsCount;
-      if (typeof count === 'object' && count && typeof count.value === 'function') count = count.value();
-
-      var all = cwc.getAll();
-      var service = window.TradingViewApi._saveChartService || null;
-      var saver = service && service._chartSaver;
-      var saved = saver && saver._prevChartState ? saver._prevChartState : null;
-      var savedContent = null;
-      try {
-        savedContent = saved && typeof saved.content === 'string'
-          ? JSON.parse(saved.content)
-          : (saved && saved.content ? saved.content : null);
-      } catch (e) {}
-      var savedCharts = savedContent && Array.isArray(savedContent.charts) ? savedContent.charts : [];
-      var panes = [];
-      for (var i = 0; i < all.length; i++) {
-        try {
-          var c = all[i];
-          var model = c.model ? c.model() : null;
-          var mainSeries = model ? model.mainSeries() : null;
-          var sym = mainSeries ? mainSeries.symbol() : 'unknown';
-          var res = mainSeries ? mainSeries.interval() : null;
-          panes.push({
-            index: i,
-            pane_index: i,
-            pane_id: savedCharts[i] && savedCharts[i].chartId != null ? String(savedCharts[i].chartId) : null,
-            symbol: sym,
-            resolution: res || null
-          });
-        } catch(e) { panes.push({ index: i, pane_index: i, pane_id: null, error: e.message }); }
-      }
-
-      // Check which pane is active
-      var activeChart = window.TradingViewApi._activeChartWidgetWV.value();
-      var activeIndex = null;
-      for (var j = 0; j < all.length; j++) {
-        try {
-          if (all[j].model && activeChart._chartWidget && all[j] === activeChart._chartWidget) { activeIndex = j; break; }
-        } catch(e) {}
-      }
-
-      for (var k = 0; k < panes.length; k++) panes[k].active = panes[k].pane_index === activeIndex;
-      var runtimeLayoutId = null;
-      try {
-        runtimeLayoutId = service && typeof service.layoutId === 'function' ? service.layoutId() : null;
-        if (runtimeLayoutId && typeof runtimeLayoutId.value === 'function') runtimeLayoutId = runtimeLayoutId.value();
-      } catch (e) {}
-
-      var settled = false;
-      function complete(catalog) {
-        if (settled) return;
-        settled = true;
-        var layouts = Array.isArray(catalog) ? catalog : [];
-        var match = null;
-        if (runtimeLayoutId != null) {
-          var matches = layouts.filter(function(item) { return String(item.url) === String(runtimeLayoutId); });
-          if (matches.length === 1) match = matches[0];
-        }
-        if (!match && saved && saved.id != null) {
-          var legacyMatches = layouts.filter(function(item) { return String(item.id) === String(saved.id); });
-          if (legacyMatches.length === 1) match = legacyMatches[0];
-        }
-        if (runtimeLayoutId == null && match && match.url != null) runtimeLayoutId = match.url;
-        resolve({
-          layout: layoutType,
-          layout_id: runtimeLayoutId == null ? null : String(runtimeLayoutId),
-          saved_layout_id: match && match.id != null
-            ? match.id
-            : (saved && saved.id != null ? saved.id : null),
-          layout_name: match
-            ? (match.name || match.title || null)
-            : (savedContent && savedContent.name ? savedContent.name : (saved ? (saved.name || saved.description || null) : null)),
-          chart_count: count,
-          active_index: activeIndex,
-          panes: panes
-        });
-      }
-
-      if (typeof window.TradingViewApi.getSavedCharts === 'function') {
-        try { window.TradingViewApi.getSavedCharts(complete); } catch (e) { complete([]); }
-        setTimeout(function() { complete([]); }, 2000);
-      } else {
-        complete([]);
-      }
-    })
-  `);
+  const metadata = await evaluateAsync(chartRuntimeMetadataExpression());
+  const result = {
+    layout: metadata.layout?.pane_layout ?? null,
+    layout_id: metadata.layout?.layout_id ?? null,
+    saved_layout_id: metadata.layout?.saved_layout_id ?? null,
+    layout_name: metadata.layout?.layout_name ?? null,
+    chart_count: metadata.chart_count,
+    active_index: metadata.active_index,
+    panes: metadata.panes,
+  };
 
   const target = await getTargetInfo();
   const urlChartId = target?.url?.match(/\/chart\/([^/?]+)/)?.[1] || null;

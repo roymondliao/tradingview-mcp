@@ -107,6 +107,7 @@ describe('CLI — help and routing', () => {
     assert.ok(stdout.includes('active'));
     assert.ok(stdout.includes('trading-report'));
     assert.ok(stdout.includes('trading-data'));
+    assert.ok(stdout.includes('trading-export'));
     assert.ok(stdout.includes('select'));
     assert.ok(stdout.includes('report'));
     assert.ok(stdout.includes('orders'));
@@ -192,6 +193,44 @@ describe('CLI — help and routing', () => {
     ]);
     assert.equal(invalidTimeout.exitCode, 1);
     assert.equal(JSON.parse(invalidTimeout.stderr).code, 'STRATEGY_RUNTIME_INVALID');
+  });
+
+  it('strategy trading-export help exposes single-Symbol artifact options', () => {
+    const { stdout, exitCode } = run(['strategy', 'trading-export', '--help']);
+    assert.equal(exitCode, 0);
+    assert.ok(stdout.includes('<entity-id>'));
+    assert.ok(stdout.includes('--symbol'));
+    assert.ok(stdout.includes('--timeframe'));
+    assert.ok(stdout.includes('--output'));
+    assert.ok(stdout.includes('--format'));
+    assert.ok(stdout.includes('--force'));
+    assert.ok(stdout.includes('--timeout'));
+    assert.ok(stdout.includes('--layout-id'));
+    assert.ok(stdout.includes('--pane-index'));
+  });
+
+  it('strategy trading-export validates required inputs before CDP discovery', () => {
+    const missingEntity = run([
+      'strategy', 'trading-export', '--symbol', 'TWSE:2344', '--output', '/tmp/export',
+    ]);
+    assert.equal(missingEntity.exitCode, 1);
+    assert.equal(JSON.parse(missingEntity.stderr).code, 'STRATEGY_ENTITY_REQUIRED');
+    const missingSymbol = run([
+      'strategy', 'trading-export', 'strategy-1', '--output', '/tmp/export',
+    ]);
+    assert.equal(missingSymbol.exitCode, 1);
+    assert.equal(JSON.parse(missingSymbol.stderr).code, 'SYMBOL_REQUIRED');
+    const missingOutput = run([
+      'strategy', 'trading-export', 'strategy-1', '--symbol', 'TWSE:2344',
+    ]);
+    assert.equal(missingOutput.exitCode, 1);
+    assert.equal(JSON.parse(missingOutput.stderr).code, 'OUTPUT_WRITE_FAILED');
+    const invalidFormat = run([
+      'strategy', 'trading-export', 'strategy-1', '--symbol', 'TWSE:2344',
+      '--output', '/tmp/export', '--format', 'xlsx',
+    ]);
+    assert.equal(invalidFormat.exitCode, 1);
+    assert.equal(JSON.parse(invalidFormat.stderr).code, 'OUTPUT_FORMAT_UNSUPPORTED');
   });
 
   it('ohlcv --help shows options', () => {
