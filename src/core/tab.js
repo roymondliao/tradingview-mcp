@@ -14,13 +14,18 @@ import { getClient, reconnectTo, CDP_HOST, CDP_PORT } from '../connection.js';
 
 async function readTargetMetadata(targetId) {
   return withTarget(targetId, (evalIn) => evalIn(`
-    (function() {
+    new Promise(function(resolve) {
       var api = window.TradingViewApi || {};
       var cwc = api._chartWidgetCollection;
-      var saver = api._saveChartService && api._saveChartService._chartSaver;
+      var service = api._saveChartService || null;
+      var saver = service && service._chartSaver;
       var saved = saver && saver._prevChartState ? saver._prevChartState : null;
       var savedContent = null;
-      try { savedContent = saved && saved.content ? JSON.parse(saved.content) : null; } catch (e) {}
+      try {
+        savedContent = saved && typeof saved.content === 'string'
+          ? JSON.parse(saved.content)
+          : (saved && saved.content ? saved.content : null);
+      } catch (e) {}
       var savedCharts = savedContent && Array.isArray(savedContent.charts) ? savedContent.charts : [];
       var all = cwc && typeof cwc.getAll === 'function' ? cwc.getAll() : [];
       var active = api._activeChartWidgetWV && typeof api._activeChartWidgetWV.value === 'function'
@@ -44,18 +49,56 @@ async function readTargetMetadata(targetId) {
       }
       var layoutType = cwc && cwc._layoutType;
       if (layoutType && typeof layoutType.value === 'function') layoutType = layoutType.value();
-      return {
-        visibility: document.visibilityState,
-        focused: document.hasFocus(),
-        layout: {
-          layout_id: saved && saved.id != null ? saved.id : null,
-          layout_name: saved ? (saved.name || saved.description || null) : null,
-          pane_layout: layoutType || (savedContent && savedContent.layout) || null
-        },
-        panes: panes
-      };
-    })()
-  `));
+      var runtimeLayoutId = null;
+      try {
+        runtimeLayoutId = service && typeof service.layoutId === 'function' ? service.layoutId() : null;
+        if (runtimeLayoutId && typeof runtimeLayoutId.value === 'function') runtimeLayoutId = runtimeLayoutId.value();
+      } catch (e) {}
+      if (runtimeLayoutId == null) {
+        var urlMatch = window.location.pathname.match(/\/chart\/([^/]+)/);
+        if (urlMatch) runtimeLayoutId = urlMatch[1];
+      }
+
+      var settled = false;
+      function complete(catalog) {
+        if (settled) return;
+        settled = true;
+        var layouts = Array.isArray(catalog) ? catalog : [];
+        var match = null;
+        if (runtimeLayoutId != null) {
+          var matches = layouts.filter(function(item) { return String(item.url) === String(runtimeLayoutId); });
+          if (matches.length === 1) match = matches[0];
+        }
+        if (!match && saved && saved.id != null) {
+          var legacyMatches = layouts.filter(function(item) { return String(item.id) === String(saved.id); });
+          if (legacyMatches.length === 1) match = legacyMatches[0];
+        }
+        if (runtimeLayoutId == null && match && match.url != null) runtimeLayoutId = match.url;
+        resolve({
+          visibility: document.visibilityState,
+          focused: document.hasFocus(),
+          layout: {
+            layout_id: runtimeLayoutId == null ? null : String(runtimeLayoutId),
+            saved_layout_id: match && match.id != null
+              ? match.id
+              : (saved && saved.id != null ? saved.id : null),
+            layout_name: match
+              ? (match.name || match.title || null)
+              : (savedContent && savedContent.name ? savedContent.name : (saved ? (saved.name || saved.description || null) : null)),
+            pane_layout: layoutType || (savedContent && savedContent.layout) || null
+          },
+          panes: panes
+        });
+      }
+
+      if (typeof api.getSavedCharts === 'function') {
+        try { api.getSavedCharts(complete); } catch (e) { complete([]); }
+        setTimeout(function() { complete([]); }, 2000);
+      } else {
+        complete([]);
+      }
+    })
+  `, { awaitPromise: true }));
 }
 
 /**
@@ -108,8 +151,10 @@ export async function identifyTab(targetId) {
 }
 
 /** Attach the process-local CDP client to an explicit Tab without changing the visible Desktop tab. */
-export async function attachTab({ tab_index, url_chart_id, layout_id, _deps } = {}) {
-  const selectors = [tab_index != null, url_chart_id != null, layout_id != null].filter(Boolean).length;
+export async function attachTab({ tab_index, url_chart_id, layout_id, saved_layout_id, _deps } = {}) {
+  const selectors = [
+    tab_index != null, url_chart_id != null, layout_id != null, saved_layout_id != null,
+  ].filter(Boolean).length;
   if (selectors === 0) return null;
   const listTabs = _deps?.list || list;
   const reconnect = _deps?.reconnectTo || reconnectTo;
@@ -122,8 +167,13 @@ export async function attachTab({ tab_index, url_chart_id, layout_id, _deps } = 
   }
   if (url_chart_id != null) candidates = candidates.filter((tab) => tab.url_chart_id === String(url_chart_id));
   if (layout_id != null) candidates = candidates.filter((tab) => String(tab.layout?.layout_id) === String(layout_id));
+  if (saved_layout_id != null) {
+    candidates = candidates.filter(
+      (tab) => String(tab.layout?.saved_layout_id) === String(saved_layout_id),
+    );
+  }
   if (candidates.length !== 1) {
-    throw new Error(`Tab selector resolved ${candidates.length} matches; use tab list and provide a unique tab_index, url_chart_id, or layout_id.`);
+    throw new Error(`Tab selector resolved ${candidates.length} matches; use tab list and provide one unique tab_index, url_chart_id, layout_id, or saved_layout_id.`);
   }
   const selected = candidates[0];
   await reconnect(selected.target_id);
@@ -190,8 +240,12 @@ async function withTarget(targetId, fn) {
   let c = null;
   try {
     c = await CDP({ host: CDP_HOST, port: CDP_PORT, target: targetId });
-    return await fn(async (expression) => {
-      const { result } = await c.Runtime.evaluate({ expression, returnByValue: true });
+    return await fn(async (expression, options = {}) => {
+      const { result } = await c.Runtime.evaluate({
+        expression,
+        returnByValue: true,
+        awaitPromise: options.awaitPromise === true,
+      });
       return result?.value;
     });
   } finally {

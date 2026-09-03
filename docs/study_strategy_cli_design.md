@@ -61,14 +61,17 @@ Pane-scoped commands 可以透過明確的 Tab／Layout／Pane selector 避免�
 
 ```bash
 npm run tv -- tab list
-npm run tv -- state --layout-id 201414175 --pane-index 0
+npm run tv -- state --layout-id aQoXnpKX --pane-index 0
+npm run tv -- state --saved-layout-id 201414175 --pane-index 0
 npm run tv -- study list --tab-index 0 --pane-index 0
 npm run tv -- study list --url-chart-id aQoXnpKX --pane-index 0
 ```
 
 - `tab_index`：`tab list` 回傳的 Desktop Tab index。
-- `url_chart_id`：Tab URL `/chart/<token>/` 中的短碼。
-- `layout_id`／`layout_name`：Saved Layout 的穩定 ID 與可讀名稱。
+- `url_chart_id`：從 Tab URL `/chart/<token>/` 解析出的 Chart token。
+- `layout_id`：Desktop runtime／URL Layout ID；Desktop 3.4.0 由 `_saveChartService.layoutId()` 取得。
+- `saved_layout_id`：帳號 Saved Layout storage ID；由 Saved Layout catalog 的 `url` 映射至 `id`。
+- `layout_name`：Saved Layout 的可讀名稱。
 - `pane_index`／`pane_id`：選定 Layout 內的 Pane 位置與內部 ID。
 - 不定義 `pane_label`；Pane 直接回傳 Symbol、Resolution 與 Active State。
 - Selector 無法唯一解析時必須失敗，不可回退到第一個 Tab 或 Pane。

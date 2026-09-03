@@ -5,6 +5,7 @@ const SAFE_CONTEXT_FIELDS = Object.freeze([
   'target_id',
   'url_chart_id',
   'layout_id',
+  'saved_layout_id',
   'layout_name',
   'pane_layout',
   'pane_index',

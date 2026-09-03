@@ -122,6 +122,11 @@ describe('CLI — help and routing', () => {
     assert.ok(stdout.includes('--offset'));
     assert.ok(stdout.includes('--limit'));
     assert.ok(stdout.includes('--snapshot-id'));
+    assert.ok(stdout.includes('--format'));
+    assert.ok(stdout.includes('--output'));
+    assert.ok(stdout.includes('--force'));
+    assert.ok(stdout.includes('--layout-id'));
+    assert.ok(stdout.includes('--saved-layout-id'));
     assert.ok(stdout.includes('--pane-index'));
   });
 
@@ -141,6 +146,22 @@ describe('CLI — help and routing', () => {
     ]);
     assert.equal(invalidLimit.exitCode, 1);
     assert.equal(JSON.parse(invalidLimit.stderr).code, 'STRATEGY_RUNTIME_INVALID');
+    const unsupportedFormat = run([
+      'strategy', 'trading-data', 'strategy-1', '--symbol', 'TWSE:2344', '--format', 'xlsx',
+    ]);
+    assert.equal(unsupportedFormat.exitCode, 1);
+    assert.equal(JSON.parse(unsupportedFormat.stderr).code, 'OUTPUT_FORMAT_UNSUPPORTED');
+    const extensionMismatch = run([
+      'strategy', 'trading-data', 'strategy-1', '--symbol', 'TWSE:2344',
+      '--format', 'csv', '--output', 'trades.json',
+    ]);
+    assert.equal(extensionMismatch.exitCode, 1);
+    assert.equal(JSON.parse(extensionMismatch.stderr).code, 'OUTPUT_FORMAT_EXTENSION_MISMATCH');
+    const forceWithoutOutput = run([
+      'strategy', 'trading-data', 'strategy-1', '--symbol', 'TWSE:2344', '--force',
+    ]);
+    assert.equal(forceWithoutOutput.exitCode, 1);
+    assert.equal(JSON.parse(forceWithoutOutput.stderr).code, 'OUTPUT_WRITE_FAILED');
   });
 
   it('strategy trading-report help exposes required Symbol and context options', () => {
@@ -152,6 +173,7 @@ describe('CLI — help and routing', () => {
     assert.ok(stdout.includes('--timeout'));
     assert.ok(stdout.includes('--tab-index'));
     assert.ok(stdout.includes('--layout-id'));
+    assert.ok(stdout.includes('--saved-layout-id'));
     assert.ok(stdout.includes('--pane-index'));
   });
 
@@ -188,6 +210,7 @@ describe('CLI — help and routing', () => {
     assert.ok(stdout.includes('--output'));
     assert.ok(stdout.includes('--force'));
     assert.ok(stdout.includes('--layout-id'));
+    assert.ok(stdout.includes('--saved-layout-id'));
     assert.ok(stdout.includes('--pane-index'));
   });
 
@@ -197,6 +220,7 @@ describe('CLI — help and routing', () => {
     assert.ok(stdout.includes('--tab-index'));
     assert.ok(stdout.includes('--url-chart-id'));
     assert.ok(stdout.includes('--layout-id'));
+    assert.ok(stdout.includes('--saved-layout-id'));
     assert.ok(stdout.includes('--pane-index'));
   });
 

@@ -16,7 +16,7 @@
   - 一個 Tab 通常載入一個 Saved Layout，但也可能是 New Tab 頁面。
   - 由 `tab_list`、`tab_switch`、`tab_new` 與 `tab_close` 操作。
   - Tab 不等同於 Pane；一個 Tab 可以包含多個 Pane。
-  - 對外定位欄位使用 `tab_index` 或 CDP `target_id`；URL `/chart/<token>/` 中的短碼使用 `url_chart_id`，不可與 Saved Layout ID 混用。
+  - 對外定位欄位使用 `tab_index` 或 CDP `target_id`；URL `/chart/<token>/` 中的短碼使用 `url_chart_id`。
   - TradingView 頁面 Title 通常是通用文字，不應作為穩定的 Tab Name 或 Selector。
 
 - **Saved Layout（已儲存版面）**
@@ -24,7 +24,10 @@
   - 可包含商品、時間週期、指標與 Pane Layout 等設定。
   - 由 `layout_list` 與 `layout_switch` 操作。
   - 文件與 API 應使用 `saved_layout`，避免只使用意義不明確的 `layout`。
-  - 使用 `layout_id` 表示帳號中的數字 ID，使用 `layout_name` 表示可讀名稱；名稱可能被重新命名或重複，因此精確 Selector 應優先使用 `layout_id`。
+  - Desktop 3.4.0 的 runtime identity 使用 `layout_id`，值與 Chart URL `/chart/<token>/` 的短碼相同，例如 `LC43xk9j`。
+  - 帳號儲存層的數字 ID 使用 `saved_layout_id`，例如 `196567163`；它由 `getSavedCharts()` 中 `url === layout_id` 的項目映射取得。
+  - 使用 `layout_name` 表示可讀名稱。名稱可能被重新命名或重複，不可單獨作為精確 Selector。
+  - 未儲存、分享或非帳號擁有的 Layout 可能有 `layout_id`，但 `saved_layout_id` 為 `null`。
 
 - **Pane Layout / Grid Layout（圖表格線配置）**
   - 指一個 Tab 內的圖表排列方式。
@@ -298,8 +301,8 @@
 ## Canonical naming rules
 
 - 使用 `tab` 表示 TradingView Desktop 最上方的分頁。
-- 使用 `tab_index`／`target_id` 定位 Tab；使用 `url_chart_id` 表示 Tab URL 短碼。
-- 使用 `layout_id`／`layout_name` 表示 Saved Layout，不把 URL 短碼稱為 Layout ID。
+- 使用 `tab_index`／`target_id` 定位 Tab；使用 `url_chart_id` 表示 CDP target URL 中解析出的 Chart token。
+- 使用 `layout_id` 表示 TradingView runtime／URL Layout ID；使用 `saved_layout_id` 表示帳號儲存層數字 ID；使用 `layout_name` 表示可讀名稱。
 - 使用 `pane` 表示 Tab 內的一格圖表。
 - 使用 `pane_index`／`pane_id` 定位 Pane；不建立衍生 `pane_label`。
 - 使用 `chart` 表示 Pane 內的圖表元件。

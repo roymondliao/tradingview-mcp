@@ -43,7 +43,7 @@ strategy trading-export <entity-id> --watchlist active
 
 Repository 目前已有以下基礎能力：
 
-- 使用 `tab_index`、`url_chart_id`、`layout_id` 與 `pane_index` 定位操作 context。
+- 使用 `tab_index`、`url_chart_id`、runtime `layout_id`、account `saved_layout_id` 與 `pane_index` 定位操作 context。
 - 切換 Pane 的 Symbol／Timeframe 並等待 Chart ready。
 - 使用 Strategy Instance `entity_id` 選擇 Strategy Tester 的 Active Strategy。
 - 取得 Strategy Report、raw Orders、paired Trades，以及可用時的 Equity。
@@ -455,7 +455,7 @@ Output rules：
 | [`TASK-004`](./TASK-004-canonical-model-reconciliation.md) | Canonical model、identity 與 reconciliation | TASK-001, TASK-003 | `done` |
 | [`TASK-005`](./TASK-005-trading-report-cli.md) | `strategy active`／`trading-report` CLI vertical slice | TASK-002, TASK-003, TASK-004 | `done` |
 | [`TASK-006`](./TASK-006-trading-data-pagination-cli.md) | `trading-data` JSON pagination CLI vertical slice | TASK-002, TASK-003, TASK-004, TASK-005 | `done` |
-| [`TASK-007`](./TASK-007-formats-artifact-transaction.md) | JSON／JSONL／CSV encoders 與 artifact transaction | TASK-004, TASK-006 | `todo` |
+| [`TASK-007`](./TASK-007-formats-artifact-transaction.md) | JSON／JSONL／CSV encoders 與 artifact transaction | TASK-004, TASK-006 | `done` |
 | [`TASK-008`](./TASK-008-single-symbol-export.md) | Single-Symbol verified export | TASK-005, TASK-006, TASK-007 | `todo` |
 | [`TASK-009`](./TASK-009-watchlist-sequential-export.md) | Active Watchlist sequential export | TASK-008 | `todo` |
 | [`TASK-010`](./TASK-010-mcp-compatibility.md) | MCP parity 與 legacy compatibility | TASK-005, TASK-006, TASK-009 | `todo` |

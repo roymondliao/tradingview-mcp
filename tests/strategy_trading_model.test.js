@@ -31,7 +31,9 @@ function snapshotCandidate(overrides = {}) {
   return {
     schema_version: 1,
     normalization: 'strategy-runtime-candidate-v1',
-    context: { target_id: 'target-1', layout_id: 101, pane_id: '2' },
+    context: {
+      target_id: 'target-1', layout_id: 'chart-1', saved_layout_id: 101, pane_id: '2',
+    },
     entity_id: 'strategy-1',
     requested_symbol: 'TWSE:2344',
     resolved_symbol: 'TWSE_DLY:2344',
@@ -195,7 +197,9 @@ describe('canonical Trading Report and snapshot identity', () => {
     const first = createSnapshotIdentity(snapshotCandidate());
     const reordered = createSnapshotIdentity({
       ...snapshotCandidate(),
-      context: { pane_id: '2', target_id: 'target-1', layout_id: 101 },
+      context: {
+        pane_id: '2', saved_layout_id: 101, target_id: 'target-1', layout_id: 'chart-1',
+      },
     });
     assert.equal(first.available, true);
     assert.equal(first.snapshot_schema_version, 1);

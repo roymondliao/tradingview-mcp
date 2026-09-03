@@ -159,11 +159,13 @@ tv ohlcv --summary                 # price summary
 tv history --symbol NASDAQ:AAPL -t D  # load all available daily history metadata
 tv history --symbol NASDAQ:AAPL -t D --bars-per-request 1000 --max-requests 20 --max-bars 10000 --include-bars --output history.json
 tv history --symbol NASDAQ:AAPL -t D --include-bars --output history.json --force  # explicitly overwrite an existing file
-tv tab list                        # resolve Tab, Saved Layout names/IDs, and Pane IDs
-tv study list --layout-id 201414175 --pane-index 0  # read one explicit Pane
-tv strategy active --layout-id 201414175 --pane-index 0  # active Strategy + Report snapshot state
-tv strategy trading-report <entity-id> --symbol TWSE:2344 --layout-id 201414175 --pane-index 0
+tv tab list                        # resolve Tab, runtime/storage Layout IDs, and Pane IDs
+tv study list --layout-id LC43xk9j --pane-index 0  # select by Runtime/URL Layout ID
+tv strategy active --saved-layout-id 196567163 --pane-index 0  # select by account storage ID
+tv strategy trading-report <entity-id> --symbol TWSE:2344 --layout-id LC43xk9j --pane-index 0
 tv strategy trading-data <entity-id> --symbol TWSE:2344 --offset 0 --limit 500
+tv strategy trading-data <entity-id> --symbol TWSE:2344 --output trades.json
+tv strategy trading-data <entity-id> --symbol TWSE:2344 --format csv --output trades.csv
 tv screenshot -r chart             # capture chart
 tv pine compile                    # compile Pine Script
 tv pane layout 2x2                 # 4-chart grid
@@ -172,6 +174,8 @@ tv stream quote | jq '.close'      # monitor price changes
 ```
 
 For snapshot-complete Strategy workflows, use `strategy trading-report`. The existing `strategy select`, `strategy report`, and `strategy trades` commands remain deprecated compatibility surfaces and are not used by the new export workflow.
+
+`strategy trading-data` writes JSON by default and can infer JSON, JSONL, or CSV from a recognized output extension. File output is staged beside the destination and atomically published; an existing file requires `--force`. Its stdout remains a bounded JSON summary without the `trades` array. CSV uses stable English columns independent of the TradingView UI language and represents each paired Trade as exit/mark then entry rows.
 
 ### All Commands
 

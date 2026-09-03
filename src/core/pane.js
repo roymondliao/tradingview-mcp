@@ -33,8 +33,8 @@ const LAYOUT_NAMES = {
  * List all panes in the current layout with their symbols and index.
  */
 export async function list() {
-  const result = await evaluate(`
-    (function() {
+  const result = await evaluateAsync(`
+    new Promise(function(resolve) {
       var cwc = ${CWC};
       var layoutType = cwc._layoutType;
       if (typeof layoutType === 'object' && layoutType && typeof layoutType.value === 'function') layoutType = layoutType.value();
@@ -42,10 +42,15 @@ export async function list() {
       if (typeof count === 'object' && count && typeof count.value === 'function') count = count.value();
 
       var all = cwc.getAll();
-      var saver = window.TradingViewApi._saveChartService && window.TradingViewApi._saveChartService._chartSaver;
+      var service = window.TradingViewApi._saveChartService || null;
+      var saver = service && service._chartSaver;
       var saved = saver && saver._prevChartState ? saver._prevChartState : null;
       var savedContent = null;
-      try { savedContent = saved && saved.content ? JSON.parse(saved.content) : null; } catch (e) {}
+      try {
+        savedContent = saved && typeof saved.content === 'string'
+          ? JSON.parse(saved.content)
+          : (saved && saved.content ? saved.content : null);
+      } catch (e) {}
       var savedCharts = savedContent && Array.isArray(savedContent.charts) ? savedContent.charts : [];
       var panes = [];
       for (var i = 0; i < all.length; i++) {
@@ -75,24 +80,60 @@ export async function list() {
       }
 
       for (var k = 0; k < panes.length; k++) panes[k].active = panes[k].pane_index === activeIndex;
-      return {
-        layout: layoutType,
-        layout_id: saved && saved.id != null ? saved.id : null,
-        layout_name: saved ? (saved.name || saved.description || null) : null,
-        chart_count: count,
-        active_index: activeIndex,
-        panes: panes
-      };
-    })()
+      var runtimeLayoutId = null;
+      try {
+        runtimeLayoutId = service && typeof service.layoutId === 'function' ? service.layoutId() : null;
+        if (runtimeLayoutId && typeof runtimeLayoutId.value === 'function') runtimeLayoutId = runtimeLayoutId.value();
+      } catch (e) {}
+
+      var settled = false;
+      function complete(catalog) {
+        if (settled) return;
+        settled = true;
+        var layouts = Array.isArray(catalog) ? catalog : [];
+        var match = null;
+        if (runtimeLayoutId != null) {
+          var matches = layouts.filter(function(item) { return String(item.url) === String(runtimeLayoutId); });
+          if (matches.length === 1) match = matches[0];
+        }
+        if (!match && saved && saved.id != null) {
+          var legacyMatches = layouts.filter(function(item) { return String(item.id) === String(saved.id); });
+          if (legacyMatches.length === 1) match = legacyMatches[0];
+        }
+        if (runtimeLayoutId == null && match && match.url != null) runtimeLayoutId = match.url;
+        resolve({
+          layout: layoutType,
+          layout_id: runtimeLayoutId == null ? null : String(runtimeLayoutId),
+          saved_layout_id: match && match.id != null
+            ? match.id
+            : (saved && saved.id != null ? saved.id : null),
+          layout_name: match
+            ? (match.name || match.title || null)
+            : (savedContent && savedContent.name ? savedContent.name : (saved ? (saved.name || saved.description || null) : null)),
+          chart_count: count,
+          active_index: activeIndex,
+          panes: panes
+        });
+      }
+
+      if (typeof window.TradingViewApi.getSavedCharts === 'function') {
+        try { window.TradingViewApi.getSavedCharts(complete); } catch (e) { complete([]); }
+        setTimeout(function() { complete([]); }, 2000);
+      } else {
+        complete([]);
+      }
+    })
   `);
 
   const target = await getTargetInfo();
+  const urlChartId = target?.url?.match(/\/chart\/([^/?]+)/)?.[1] || null;
 
   return {
     success: true,
     target_id: target?.id || null,
-    url_chart_id: target?.url?.match(/\/chart\/([^/?]+)/)?.[1] || null,
-    layout_id: result.layout_id,
+    url_chart_id: urlChartId,
+    layout_id: result.layout_id || urlChartId,
+    saved_layout_id: result.saved_layout_id,
     layout_name: result.layout_name,
     pane_layout: result.layout,
     pane_layout_name: LAYOUT_NAMES[result.layout] || result.layout,
@@ -179,15 +220,23 @@ export async function focus({ index }) {
 }
 
 /** Resolve an explicit Tab/Layout/Pane selector and return the chosen context. */
-export async function prepareContext({ tab_index, url_chart_id, layout_id, pane_index, _deps } = {}) {
+export async function prepareContext({
+  tab_index, url_chart_id, layout_id, saved_layout_id, pane_index, _deps,
+} = {}) {
   const attach = _deps?.attachTab || attachTab;
   const identify = _deps?.identifyTab || identifyTab;
   const listPanes = _deps?.list || list;
   const focusPane = _deps?.focus || focus;
-  const attached = await attach({ tab_index, url_chart_id, layout_id });
+  const attached = await attach({ tab_index, url_chart_id, layout_id, saved_layout_id });
   let inventory = await listPanes();
   if (layout_id != null && String(inventory.layout_id) !== String(layout_id)) {
     throw new Error(`Attached Layout ${inventory.layout_id} does not match requested layout_id ${layout_id}`);
+  }
+  if (
+    saved_layout_id != null
+    && String(inventory.saved_layout_id) !== String(saved_layout_id)
+  ) {
+    throw new Error(`Attached Saved Layout ${inventory.saved_layout_id} does not match requested saved_layout_id ${saved_layout_id}`);
   }
   let selectedIndex;
   if (pane_index != null) {
@@ -209,6 +258,7 @@ export async function prepareContext({ tab_index, url_chart_id, layout_id, pane_
     target_id: inventory.target_id,
     url_chart_id: inventory.url_chart_id,
     layout_id: inventory.layout_id,
+    saved_layout_id: inventory.saved_layout_id,
     layout_name: inventory.layout_name,
     pane_layout: inventory.pane_layout,
     pane_index: selectedPane.pane_index,
@@ -255,6 +305,14 @@ function assertInventoryOwnership(context, inventory, phase) {
   }
   if (context.layout_id != null && String(inventory.layout_id) !== String(context.layout_id)) {
     throw contextChanged(`Chart Layout changed from ${context.layout_id} to ${inventory.layout_id || 'unresolved'}.`, {
+      context, phase,
+    });
+  }
+  if (
+    context.saved_layout_id != null
+    && String(inventory.saved_layout_id) !== String(context.saved_layout_id)
+  ) {
+    throw contextChanged(`Saved Layout changed from ${context.saved_layout_id} to ${inventory.saved_layout_id || 'unresolved'}.`, {
       context, phase,
     });
   }
@@ -312,6 +370,7 @@ export async function activatePaneContext({ context, phase = 'pane_context', act
       target_id: inventory.target_id,
       url_chart_id: inventory.url_chart_id,
       layout_id: inventory.layout_id,
+      saved_layout_id: inventory.saved_layout_id,
       pane_layout: inventory.pane_layout,
       pane_index: pane.pane_index,
       pane_id: pane.pane_id,

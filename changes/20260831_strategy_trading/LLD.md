@@ -44,6 +44,7 @@ Target CLI 不包含 `strategy select`。每個需要 Strategy Data 的 command 
 --tab-index
 --url-chart-id
 --layout-id
+--saved-layout-id
 --pane-index
 ```
 
@@ -223,7 +224,7 @@ assertPaneContext(expectedContext)
 activatePaneContext(expectedContext)
 ```
 
-`activatePaneContext()` 以 resolved `target_id` 重新 attach，驗證 `url_chart_id`、`layout_id`、Pane Layout 與 `pane_id`／`pane_index` ownership；若使用者只切到相同 Layout 的另一個 Pane，會重新 focus 原 Pane並驗證 readback。Tab ordinal 只用於初次解析，解析後不再驗證，因為關閉其他 Tab 可能使 ordinal 改變但 target identity 不變。
+`activatePaneContext()` 以 resolved `target_id` 重新 attach，驗證 `url_chart_id`、runtime／URL `layout_id`、可用時的 account `saved_layout_id`、Pane Layout 與 `pane_id`／`pane_index` ownership；若使用者只切到相同 Layout 的另一個 Pane，會重新 focus 原 Pane並驗證 readback。Tab ordinal 只用於初次解析，解析後不再驗證，因為關閉其他 Tab 可能使 ordinal 改變但 target identity 不變。
 
 `assertPaneContext()` 在相同 structural identity 上額外驗證 Symbol／Timeframe。Target 消失、Layout 改變、Pane ownership 改變或 expected Pane 的 Symbol／Timeframe 被外部操作改變，皆回傳 `PANE_CONTEXT_CHANGED`，不靜默採用新 context。
 
@@ -413,7 +414,7 @@ Desktop 3.3.0 沒有可用 generation ID，因此 snapshot schema version 1 固�
 
 ```text
 snapshot schema version / normalization rules
-target_id / layout_id / pane_id
+target_id / layout_id / saved_layout_id? / pane_id
 strategy entity_id
 requested symbol / resolved symbol / timeframe
 backtest mode / test range

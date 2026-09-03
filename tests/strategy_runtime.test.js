@@ -17,7 +17,8 @@ import { CoreOperationError } from '../src/core/errors.js';
 const context = Object.freeze({
   target_id: 'target-1',
   url_chart_id: 'chart-1',
-  layout_id: 101,
+  layout_id: 'chart-1',
+  saved_layout_id: 101,
   pane_layout: '2h',
   pane_index: 1,
   pane_id: '2',
@@ -185,6 +186,8 @@ describe('bounded Report state and snapshot candidates', () => {
     });
     assert.equal(result.report.trade_count, 3);
     assert.equal(result.snapshot_candidate.context.pane_id, '2');
+    assert.equal(result.snapshot_candidate.context.layout_id, 'chart-1');
+    assert.equal(result.snapshot_candidate.context.saved_layout_id, 101);
     assert.equal(result.snapshot_candidate.requested_symbol, 'TWSE:2344');
     assert.equal(result.snapshot_candidate.resolved_symbol, 'TWSE_DLY:2344');
     assert.equal(result.snapshot_candidate.metrics.winning_trades, 1);

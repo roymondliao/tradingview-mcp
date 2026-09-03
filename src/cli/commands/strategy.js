@@ -1,6 +1,8 @@
 import { register } from '../router.js';
 import * as core from '../../core/strategy.js';
 import * as trading from '../../core/strategy-trading.js';
+import { writeTradingDataArtifact } from '../../core/artifacts.js';
+import { resolveTradingDataFormat } from '../../core/strategy-trading-format.js';
 import { prepareContext } from '../../core/pane.js';
 import { CoreOperationError } from '../../core/errors.js';
 import {
@@ -96,14 +98,23 @@ register('strategy', {
         offset: { type: 'string', description: 'Oldest-first Trade offset (default 0)' },
         limit: { type: 'string', description: 'Maximum paired Trades (default 500, max 5000)' },
         'snapshot-id': { type: 'string', description: 'Required previous snapshot ID when offset > 0' },
+        format: { type: 'string', description: 'Output format: json (default), jsonl, or csv' },
+        output: { type: 'string', short: 'o', description: 'Atomically write this batch to a file' },
+        force: { type: 'boolean', description: 'Atomically replace an existing output file' },
         timeout: { type: 'string', description: 'Per-phase timeout in milliseconds (default 20000)' },
       },
       handler: async (opts, positionals) => {
         const entityId = positionals[0];
         requireStrategySymbolArgs(entityId, opts.symbol, opts.timeout, 'trading-data');
         const pagination = requireTradingDataPagination(opts.offset, opts.limit, opts['snapshot-id']);
+        const format = resolveTradingDataFormat({ format: opts.format, output: opts.output });
+        if (opts.force && !opts.output) {
+          throw new CoreOperationError('--force requires --output.', {
+            code: 'OUTPUT_WRITE_FAILED', phase: 'output_validation',
+          });
+        }
         const context = await prepareContext(paneContextArgs(opts));
-        return trading.getStrategyTradingData({
+        const result = await trading.getStrategyTradingData({
           entity_id: entityId,
           symbol: opts.symbol,
           timeframe: opts.timeframe,
@@ -113,6 +124,11 @@ register('strategy', {
           timeout_ms: opts.timeout ? Number(opts.timeout) : undefined,
           context,
         });
+        return opts.output
+          ? writeTradingDataArtifact({
+            result, output: opts.output, format, force: opts.force,
+          })
+          : result;
       },
     }],
     ['select', {

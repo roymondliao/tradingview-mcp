@@ -177,7 +177,7 @@ Switch + restore 共觀察到 `reportChanged` 與 `statusChanged` events。還�
 本次 build 沒有 generation ID，因此 v1 使用 stable canonical JSON 的 SHA-256 derived signature。欄位固定為：
 
 ```text
-target_id / layout_id / pane_id
+target_id / runtime layout_id / optional saved_layout_id / pane_id
 Strategy entity_id
 requested symbol / resolved symbol
 timeframe

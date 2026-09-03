@@ -400,6 +400,7 @@ function snapshotFields(input) {
     context: {
       target_id: candidate.context?.target_id ?? null,
       layout_id: candidate.context?.layout_id ?? null,
+      saved_layout_id: candidate.context?.saved_layout_id ?? null,
       pane_id: candidate.context?.pane_id ?? null,
     },
     entity_id: candidate.entity_id ?? null,

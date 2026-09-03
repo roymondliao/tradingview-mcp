@@ -333,6 +333,7 @@ export function createSnapshotCandidate({ entity_id, session, context, raw }) {
     context: {
       target_id: safeContext.target_id ?? null,
       layout_id: safeContext.layout_id ?? null,
+      saved_layout_id: safeContext.saved_layout_id ?? null,
       pane_id: safeContext.pane_id ?? null,
     },
     entity_id,

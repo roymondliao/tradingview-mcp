@@ -4,7 +4,8 @@ import { prepareContext } from '../core/pane.js';
 export const paneContextSchema = Object.freeze({
   tab_index: z.coerce.number().optional().describe('TradingView Desktop Tab index from tab_list'),
   url_chart_id: z.string().optional().describe('Short Chart token from the TradingView Tab URL'),
-  layout_id: z.union([z.string(), z.coerce.number()]).optional().describe('Saved Chart Layout ID'),
+  layout_id: z.string().optional().describe('Runtime/URL Chart Layout ID'),
+  saved_layout_id: z.union([z.string(), z.coerce.number()]).optional().describe('Account Saved Layout storage ID'),
   pane_index: z.coerce.number().optional().describe('Chart Pane index within the selected Layout'),
 });
 
@@ -13,6 +14,7 @@ export function paneContextArgs(args = {}) {
     tab_index: args.tab_index,
     url_chart_id: args.url_chart_id,
     layout_id: args.layout_id,
+    saved_layout_id: args.saved_layout_id,
     pane_index: args.pane_index,
   };
 }

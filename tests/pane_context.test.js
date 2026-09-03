@@ -12,29 +12,46 @@ const tabs = {
       target_id: 'target-dev',
       url_chart_id: 'short-dev',
       is_chart: true,
-      layout: { layout_id: 101, layout_name: 'dev', pane_layout: '2h' },
+      layout: {
+        layout_id: 'short-dev', saved_layout_id: 101, layout_name: 'dev', pane_layout: '2h',
+      },
     },
     {
       tab_index: 1,
       target_id: 'target-basic',
       url_chart_id: 'short-basic',
       is_chart: true,
-      layout: { layout_id: 202, layout_name: 'basic', pane_layout: 's' },
+      layout: {
+        layout_id: 'short-basic', saved_layout_id: 202, layout_name: 'basic', pane_layout: 's',
+      },
     },
   ],
 };
 
 describe('Tab selector', () => {
-  it('attaches by stable Saved Layout ID', async () => {
+  it('attaches by the Runtime/URL Layout ID', async () => {
     let attachedTarget = null;
     const selected = await attachTab({
-      layout_id: 101,
+      layout_id: 'short-dev',
       _deps: {
         list: async () => tabs,
         reconnectTo: async (targetId) => { attachedTarget = targetId; },
       },
     });
     assert.equal(selected.layout.layout_name, 'dev');
+    assert.equal(attachedTarget, 'target-dev');
+  });
+
+  it('attaches by the account Saved Layout storage ID', async () => {
+    let attachedTarget = null;
+    const selected = await attachTab({
+      saved_layout_id: 101,
+      _deps: {
+        list: async () => tabs,
+        reconnectTo: async (targetId) => { attachedTarget = targetId; },
+      },
+    });
+    assert.equal(selected.layout.layout_id, 'short-dev');
     assert.equal(attachedTarget, 'target-dev');
   });
 
@@ -52,7 +69,8 @@ describe('Pane context selector', () => {
     const inventory = () => ({
       target_id: 'target-dev',
       url_chart_id: 'short-dev',
-      layout_id: 101,
+      layout_id: 'short-dev',
+      saved_layout_id: 101,
       layout_name: 'dev',
       pane_layout: '2h',
       active_index: activeIndex,
@@ -62,7 +80,7 @@ describe('Pane context selector', () => {
       ],
     });
     const context = await prepareContext({
-      layout_id: 101,
+      layout_id: 'short-dev',
       pane_index: 1,
       _deps: {
         attachTab: async () => tabs.tabs[0],
@@ -75,7 +93,8 @@ describe('Pane context selector', () => {
       tab_index: 0,
       target_id: 'target-dev',
       url_chart_id: 'short-dev',
-      layout_id: 101,
+      layout_id: 'short-dev',
+      saved_layout_id: 101,
       layout_name: 'dev',
       pane_layout: '2h',
       pane_index: 1,

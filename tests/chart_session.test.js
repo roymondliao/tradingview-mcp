@@ -20,7 +20,8 @@ const context = Object.freeze({
   tab_index: 0,
   target_id: 'target-dev',
   url_chart_id: 'short-dev',
-  layout_id: 101,
+  layout_id: 'short-dev',
+  saved_layout_id: 101,
   layout_name: 'dev',
   pane_layout: '2h',
   pane_index: 1,
@@ -34,7 +35,8 @@ function paneHarness() {
     activeIndex: 0,
     targetId: 'target-dev',
     urlChartId: 'short-dev',
-    layoutId: 101,
+    layoutId: 'short-dev',
+    savedLayoutId: 101,
     paneLayout: '2h',
     paneId: '2',
     symbol: 'NASDAQ:MSFT',
@@ -47,6 +49,7 @@ function paneHarness() {
     target_id: state.targetId,
     url_chart_id: state.urlChartId,
     layout_id: state.layoutId,
+    saved_layout_id: state.savedLayoutId,
     pane_layout: state.paneLayout,
     active_index: state.activeIndex,
     panes: [
@@ -84,6 +87,7 @@ describe('resolved Symbol identity', () => {
       context: { ...context, cookie: 'must-not-leak', nested: { private: true } },
     });
     assert.equal(error.context.target_id, 'target-dev');
+    assert.equal(error.context.saved_layout_id, 101);
     assert.equal('cookie' in error.context, false);
     assert.equal('nested' in error.context, false);
   });
@@ -118,10 +122,17 @@ describe('immutable Pane context reacquire and ownership', () => {
 
   it('rejects Layout and Pane ownership changes', async () => {
     const layout = paneHarness();
-    layout.state.layoutId = 999;
+    layout.state.layoutId = 'changed-layout';
     await assert.rejects(
       activatePaneContext({ context, phase: 'report_read', _deps: layout.deps }),
       (error) => error.code === 'PANE_CONTEXT_CHANGED' && /Layout changed/.test(error.message),
+    );
+
+    const savedLayout = paneHarness();
+    savedLayout.state.savedLayoutId = 999;
+    await assert.rejects(
+      activatePaneContext({ context, phase: 'report_read', _deps: savedLayout.deps }),
+      (error) => error.code === 'PANE_CONTEXT_CHANGED' && /Saved Layout changed/.test(error.message),
     );
 
     const pane = paneHarness();

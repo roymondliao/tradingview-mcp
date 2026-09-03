@@ -35,7 +35,7 @@ describe('Study and Strategy MCP registration inventory', () => {
     ]) {
       assert.equal(typeof tools.get(name)?.handler, 'function', `${name} registered`);
     }
-    for (const key of ['tab_index', 'url_chart_id', 'layout_id', 'pane_index']) {
+    for (const key of ['tab_index', 'url_chart_id', 'layout_id', 'saved_layout_id', 'pane_index']) {
       assert.ok(tools.get('study_list')?.schema?.[key], `study_list exposes ${key}`);
     }
   });
@@ -48,7 +48,7 @@ describe('Study and Strategy MCP registration inventory', () => {
     ]) {
       assert.equal(typeof tools.get(name)?.handler, 'function', `${name} registered`);
     }
-    for (const key of ['tab_index', 'url_chart_id', 'layout_id', 'pane_index']) {
+    for (const key of ['tab_index', 'url_chart_id', 'layout_id', 'saved_layout_id', 'pane_index']) {
       assert.ok(tools.get('strategy_get_report')?.schema?.[key], `strategy_get_report exposes ${key}`);
     }
   });
