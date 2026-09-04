@@ -37,6 +37,42 @@ function requireStrategySymbolArgs(entityId, symbol, timeout, command) {
   }
 }
 
+function requireStrategyExportArgs(entityId, { symbol, watchlist, timeout, failFast }) {
+  if (!entityId) {
+    throw new CoreOperationError('entity_id is required. Use study list --type strategy.', {
+      code: 'STRATEGY_ENTITY_REQUIRED', phase: 'request_validation',
+    });
+  }
+  if (Boolean(symbol) === Boolean(watchlist)) {
+    throw new CoreOperationError('Provide exactly one of --symbol or --watchlist active.', {
+      code: 'TRADING_EXPORT_SCOPE_INVALID', phase: 'request_validation', entity_id: entityId,
+    });
+  }
+  if (watchlist && watchlist !== 'active') {
+    throw new CoreOperationError('--watchlist currently supports only active.', {
+      code: 'WATCHLIST_SCOPE_UNSUPPORTED', phase: 'request_validation', entity_id: entityId,
+    });
+  }
+  if (symbol && !/^[^:\s]+:[^:\s]+$/.test(String(symbol).trim())) {
+    throw new CoreOperationError('--symbol must use exchange:symbol format.', {
+      code: 'SYMBOL_INVALID', phase: 'request_validation', entity_id: entityId, symbol,
+    });
+  }
+  if (failFast && !watchlist) {
+    throw new CoreOperationError('--fail-fast requires --watchlist active.', {
+      code: 'TRADING_EXPORT_SCOPE_INVALID', phase: 'request_validation', entity_id: entityId,
+    });
+  }
+  if (timeout != null) {
+    const value = Number(timeout);
+    if (!Number.isInteger(value) || value < 100 || value > 60000) {
+      throw new CoreOperationError('--timeout must be an integer from 100 to 60000.', {
+        code: 'STRATEGY_RUNTIME_INVALID', phase: 'request_validation', entity_id: entityId, symbol,
+      });
+    }
+  }
+}
+
 function requireTradingDataPagination(offset, limit, snapshotId) {
   const parsedOffset = offset == null ? 0 : Number(offset);
   const parsedLimit = limit == null ? 500 : Number(limit);
@@ -132,20 +168,27 @@ register('strategy', {
       },
     }],
     ['trading-export', {
-      description: 'Export one verified Strategy Report and complete Trading Data artifact set',
+      description: 'Export verified Strategy artifacts for one Symbol or the Active Watchlist',
       usage: '<entity-id>',
       options: {
         ...PANE_CONTEXT_OPTIONS,
-        symbol: { type: 'string', description: 'Required exchange:symbol identity' },
+        symbol: { type: 'string', description: 'One exchange:symbol identity (exclusive with --watchlist)' },
+        watchlist: { type: 'string', description: 'Export the immutable Active Watchlist snapshot: active' },
         timeframe: { type: 'string', description: 'Chart resolution (default current Pane timeframe)' },
         output: { type: 'string', short: 'o', description: 'Required parent directory for the atomic run output' },
         format: { type: 'string', description: 'Trading Data format: json (default), jsonl, or csv' },
         force: { type: 'boolean', description: 'Atomically replace an existing run ID directory' },
+        'fail-fast': { type: 'boolean', description: 'Stop after the first failed Watchlist Symbol' },
         timeout: { type: 'string', description: 'Per-phase timeout in milliseconds (default 20000)' },
       },
       handler: async (opts, positionals) => {
         const entityId = positionals[0];
-        requireStrategySymbolArgs(entityId, opts.symbol, opts.timeout, 'trading-export');
+        requireStrategyExportArgs(entityId, {
+          symbol: opts.symbol,
+          watchlist: opts.watchlist,
+          timeout: opts.timeout,
+          failFast: opts['fail-fast'],
+        });
         if (!opts.output) {
           throw new CoreOperationError('--output directory is required for strategy trading-export.', {
             code: 'OUTPUT_WRITE_FAILED', phase: 'output_validation',
@@ -154,13 +197,15 @@ register('strategy', {
         }
         const format = resolveTradingDataFormat({ format: opts.format });
         const context = await prepareContext(paneContextArgs(opts));
-        return trading.exportStrategySymbol({
+        return trading.exportStrategyTrading({
           entity_id: entityId,
           symbol: opts.symbol,
+          watchlist: opts.watchlist,
           timeframe: opts.timeframe,
           output_directory: opts.output,
           format,
           force: opts.force,
+          fail_fast: opts['fail-fast'],
           timeout_ms: opts.timeout ? Number(opts.timeout) : undefined,
           context,
         });

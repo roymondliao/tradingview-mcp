@@ -12,6 +12,11 @@ export function register(name, config) {
   commands.set(name, config);
 }
 
+export function resultExitCode(result) {
+  if (result?.success !== false) return 0;
+  return result.failure_kind === 'cdp_connection' ? 2 : 1;
+}
+
 function printHelp() {
   console.log('Usage: tv <command> [options]\n');
   console.log('Commands:');
@@ -137,7 +142,13 @@ export async function run(argv) {
 async function execute(handler, values, positionals) {
   try {
     const result = await handler(values, positionals);
-    console.log(JSON.stringify(result, null, 2));
+    const serialized = JSON.stringify(result, null, 2);
+    const exitCode = resultExitCode(result);
+    if (exitCode !== 0) {
+      console.error(serialized);
+      process.exit(exitCode);
+    }
+    console.log(serialized);
     process.exit(0);
   } catch (err) {
     handleError(err);

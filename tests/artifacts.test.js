@@ -169,6 +169,24 @@ describe('Atomic artifact set transaction', () => {
     assert.deepEqual(readdirSync(directory), ['run-1']);
   });
 
+  it('replaces an incremental manifest and removes one failed Symbol subtree', async () => {
+    const directory = temporaryDirectory();
+    const transaction = await createArtifactSetTransaction({
+      output_directory: directory, run_id: 'run-incremental',
+    });
+    await transaction.replaceJson('manifest.json', { status: 'running', completed: 0 });
+    await transaction.writeJson('symbols/GOOD/report.json', { success: true });
+    await transaction.writeJson('symbols/FAILED/report.json', { partial: true });
+    await transaction.removePath('symbols/FAILED');
+    await transaction.replaceJson('manifest.json', { status: 'partial', completed: 2 });
+    const publication = await transaction.publish();
+    assert.deepEqual(
+      JSON.parse(readFileSync(join(publication.path, 'manifest.json'), 'utf8')),
+      { status: 'partial', completed: 2 },
+    );
+    assert.deepEqual(readdirSync(join(publication.path, 'symbols')), ['GOOD']);
+  });
+
   it('preserves an existing run by default and replaces it only with force', async () => {
     const directory = temporaryDirectory();
     const initial = await createArtifactSetTransaction({

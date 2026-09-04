@@ -438,6 +438,7 @@ Output rules：
 11. Safe live validation，包括 localized Desktop CSV sample 與 runtime raw payload discovery。
 12. Canonical Strategy Trading Data model 與 JSON／JSONL／CSV streaming encoders。
 13. Single-Symbol verified export、完整Trade batching、五項reconciliation與atomic run artifact tree。
+14. Immutable Active Watchlist snapshot、sequential multi-Symbol export、partial/fail-fast policy與單次Chart restore。
 
 ## Deferred scope
 
@@ -466,7 +467,7 @@ Output rules：
 | [`TASK-006`](./TASK-006-trading-data-pagination-cli.md) | `trading-data` JSON pagination CLI vertical slice | TASK-002, TASK-003, TASK-004, TASK-005 | `done` |
 | [`TASK-007`](./TASK-007-formats-artifact-transaction.md) | JSON／JSONL／CSV encoders 與 artifact transaction | TASK-004, TASK-006 | `done` |
 | [`TASK-008`](./TASK-008-single-symbol-export.md) | Single-Symbol verified export | TASK-005, TASK-006, TASK-007 | `done` |
-| [`TASK-009`](./TASK-009-watchlist-sequential-export.md) | Active Watchlist sequential export | TASK-008 | `todo` |
+| [`TASK-009`](./TASK-009-watchlist-sequential-export.md) | Active Watchlist sequential export | TASK-008 | `done` |
 | [`TASK-010`](./TASK-010-mcp-compatibility.md) | MCP parity 與 legacy compatibility | TASK-005, TASK-006, TASK-009 | `todo` |
 | [`TASK-011`](./TASK-011-regression-delivery-gate.md) | Regression、live evidence、docs 與 release gate | TASK-010 | `todo` |
 

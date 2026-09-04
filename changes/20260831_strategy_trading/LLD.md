@@ -163,6 +163,7 @@ Contract：
 - 第一版不平行操作 Symbols。
 - Watchlist mode 預設記錄單一 Symbol failure 並繼續下一個；run 完成後只要有 failure，CLI exit code 為非零。
 - `--fail-fast` 會在第一個 Symbol failure 後停止，未處理項目記為 skipped；domain／partial failure exit code 為 `1`，CDP connection failure維持 `2`。
+- Snapshot內重複Symbol採stable first-occurrence-wins；第一次照原順序執行，後續重複項以`duplicate_symbol`記為skipped，避免artifact path碰撞。
 - 每個成功 Symbol 必須通過 complete pagination、Report A/B snapshot stability 與五項 reconciliation。
 - Command／run 在 `finally` 恢復原始 Symbol／Timeframe；Watchlist run 只在整個 run 結束時恢復一次。第一版不提供 `--no-restore`。
 

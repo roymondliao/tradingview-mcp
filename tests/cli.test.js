@@ -11,6 +11,7 @@ import { execFileSync, execSync } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { readFileSync, writeFileSync, unlinkSync } from 'fs';
+import { resultExitCode } from '../src/cli/router.js';
 
 function require_fs() { return { writeFileSync, unlinkSync }; }
 
@@ -37,6 +38,12 @@ function run(args, opts = {}) {
 }
 
 describe('CLI — help and routing', () => {
+  it('maps partial and CDP result summaries to stable process exit codes', () => {
+    assert.equal(resultExitCode({ success: true }), 0);
+    assert.equal(resultExitCode({ success: false, failure_kind: 'partial' }), 1);
+    assert.equal(resultExitCode({ success: false, failure_kind: 'cdp_connection' }), 2);
+  });
+
   it('--help shows command list', () => {
     const { stdout, exitCode } = run(['--help']);
     assert.equal(exitCode, 0);
@@ -195,15 +202,17 @@ describe('CLI — help and routing', () => {
     assert.equal(JSON.parse(invalidTimeout.stderr).code, 'STRATEGY_RUNTIME_INVALID');
   });
 
-  it('strategy trading-export help exposes single-Symbol artifact options', () => {
+  it('strategy trading-export help exposes Symbol and Active Watchlist options', () => {
     const { stdout, exitCode } = run(['strategy', 'trading-export', '--help']);
     assert.equal(exitCode, 0);
     assert.ok(stdout.includes('<entity-id>'));
     assert.ok(stdout.includes('--symbol'));
+    assert.ok(stdout.includes('--watchlist'));
     assert.ok(stdout.includes('--timeframe'));
     assert.ok(stdout.includes('--output'));
     assert.ok(stdout.includes('--format'));
     assert.ok(stdout.includes('--force'));
+    assert.ok(stdout.includes('--fail-fast'));
     assert.ok(stdout.includes('--timeout'));
     assert.ok(stdout.includes('--layout-id'));
     assert.ok(stdout.includes('--pane-index'));
@@ -215,11 +224,11 @@ describe('CLI — help and routing', () => {
     ]);
     assert.equal(missingEntity.exitCode, 1);
     assert.equal(JSON.parse(missingEntity.stderr).code, 'STRATEGY_ENTITY_REQUIRED');
-    const missingSymbol = run([
+    const missingScope = run([
       'strategy', 'trading-export', 'strategy-1', '--output', '/tmp/export',
     ]);
-    assert.equal(missingSymbol.exitCode, 1);
-    assert.equal(JSON.parse(missingSymbol.stderr).code, 'SYMBOL_REQUIRED');
+    assert.equal(missingScope.exitCode, 1);
+    assert.equal(JSON.parse(missingScope.stderr).code, 'TRADING_EXPORT_SCOPE_INVALID');
     const missingOutput = run([
       'strategy', 'trading-export', 'strategy-1', '--symbol', 'TWSE:2344',
     ]);
@@ -231,6 +240,27 @@ describe('CLI — help and routing', () => {
     ]);
     assert.equal(invalidFormat.exitCode, 1);
     assert.equal(JSON.parse(invalidFormat.stderr).code, 'OUTPUT_FORMAT_UNSUPPORTED');
+
+    const conflictingScope = run([
+      'strategy', 'trading-export', 'strategy-1', '--symbol', 'TWSE:2344',
+      '--watchlist', 'active', '--output', '/tmp/export',
+    ]);
+    assert.equal(conflictingScope.exitCode, 1);
+    assert.equal(JSON.parse(conflictingScope.stderr).code, 'TRADING_EXPORT_SCOPE_INVALID');
+
+    const unsupportedWatchlist = run([
+      'strategy', 'trading-export', 'strategy-1', '--watchlist', 'favorites',
+      '--output', '/tmp/export',
+    ]);
+    assert.equal(unsupportedWatchlist.exitCode, 1);
+    assert.equal(JSON.parse(unsupportedWatchlist.stderr).code, 'WATCHLIST_SCOPE_UNSUPPORTED');
+
+    const misplacedFailFast = run([
+      'strategy', 'trading-export', 'strategy-1', '--symbol', 'TWSE:2344',
+      '--output', '/tmp/export', '--fail-fast',
+    ]);
+    assert.equal(misplacedFailFast.exitCode, 1);
+    assert.equal(JSON.parse(misplacedFailFast.stderr).code, 'TRADING_EXPORT_SCOPE_INVALID');
   });
 
   it('ohlcv --help shows options', () => {

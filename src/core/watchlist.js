@@ -12,6 +12,8 @@ import {
   getClient as _getClient,
 } from '../connection.js';
 import { openPanel as _openPanel } from './ui.js';
+import { CoreOperationError } from './errors.js';
+import { unixMillisecondsToIso } from './time.js';
 
 const _sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -142,6 +144,35 @@ export async function getWatchlist({ _deps } = {}) {
     ...(listInfo && { list_id: listInfo.id, list_name: listInfo.name }),
     symbols: data?.symbols || [],
   };
+}
+
+/** Capture one immutable, ordered Active Watchlist snapshot for long workflows. */
+export async function captureActiveWatchlistSnapshot({ _deps } = {}) {
+  const getCurrentWatchlist = _deps?.getWatchlist || getWatchlist;
+  const now = _deps?.now || Date.now;
+  const current = await getCurrentWatchlist({ _deps });
+  if (!current?.success || !Array.isArray(current.symbols)) {
+    throw new CoreOperationError('Active Watchlist could not be captured.', {
+      code: 'WATCHLIST_SNAPSHOT_UNAVAILABLE', phase: 'watchlist_snapshot',
+    });
+  }
+  const capturedAt = now();
+  const symbols = current.symbols.map((entry, index) => {
+    const symbol = String(entry?.symbol ?? '').trim();
+    if (!symbol) {
+      throw new CoreOperationError(`Active Watchlist item ${index + 1} has no Symbol identity.`, {
+        code: 'WATCHLIST_SYMBOL_INVALID', phase: 'watchlist_snapshot',
+      });
+    }
+    return Object.freeze({ symbol });
+  });
+  return Object.freeze({
+    list_id: current.list_id ?? null,
+    list_name: current.list_name ?? null,
+    symbols: Object.freeze(symbols),
+    captured_at: capturedAt,
+    captured_at_iso: unixMillisecondsToIso(capturedAt),
+  });
 }
 
 export async function listWatchlists({ use_function = false, _deps } = {}) {

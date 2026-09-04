@@ -188,6 +188,33 @@ export async function createArtifactSetTransaction({
       return artifactPath;
     },
 
+    async replaceJson(relativePath, value) {
+      if (state !== 'open') throw new Error(`Artifact set transaction is ${state}.`);
+      const { artifactPath } = stagingArtifactPath(relativePath);
+      const temporaryPath = `${artifactPath}.${deps.uuid()}.tmp`;
+      await deps.mkdir(dirname(artifactPath), { recursive: true });
+      try {
+        await deps.writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, {
+          encoding: 'utf8', flag: 'wx',
+        });
+        await deps.rename(temporaryPath, artifactPath);
+      } catch (error) {
+        try {
+          await deps.rm(temporaryPath, { force: true });
+        } catch {
+          // Preserve the primary write error.
+        }
+        throw error;
+      }
+      return artifactPath;
+    },
+
+    async removePath(relativePath) {
+      if (state !== 'open') throw new Error(`Artifact set transaction is ${state}.`);
+      const { artifactPath } = stagingArtifactPath(relativePath);
+      await deps.rm(artifactPath, { recursive: true, force: true });
+    },
+
     async artifactInfo(relativePath) {
       const { safeRelative, artifactPath } = stagingArtifactPath(relativePath);
       const info = await deps.stat(artifactPath);

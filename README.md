@@ -167,6 +167,8 @@ tv strategy trading-data <entity-id> --symbol TWSE:2344 --offset 0 --limit 500
 tv strategy trading-data <entity-id> --symbol TWSE:2344 --output trades.json
 tv strategy trading-data <entity-id> --symbol TWSE:2344 --format csv --output trades.csv
 tv strategy trading-export <entity-id> --symbol TWSE:2344 --output ./exports --format json
+tv strategy trading-export <entity-id> --watchlist active --output ./exports --format json
+tv strategy trading-export <entity-id> --watchlist active --output ./exports --fail-fast
 tv screenshot -r chart             # capture chart
 tv pine compile                    # compile Pine Script
 tv pane layout 2x2                 # 4-chart grid
@@ -178,7 +180,7 @@ For snapshot-complete Strategy workflows, use `strategy trading-report`. The exi
 
 `strategy trading-data` writes JSON by default and can infer JSON, JSONL, or CSV from a recognized output extension. File output is staged beside the destination and atomically published; an existing file requires `--force`. Its stdout remains a bounded JSON summary without the `trades` array. CSV uses stable English columns independent of the TradingView UI language and represents each paired Trade as exit/mark then entry rows.
 
-`strategy trading-export` creates one run directory containing `manifest.json` plus the selected Symbol's `report.json`, complete `trades.json|jsonl|csv`, and `reconciliation.json`. Report A, every Trade batch, and Report B must share one snapshot; all five reconciliation metrics and Chart restoration must succeed before the run directory is atomically published.
+`strategy trading-export` creates one run directory containing `manifest.json` plus each successful Symbol's `report.json`, complete `trades.json|jsonl|csv`, and `reconciliation.json`. Use exactly one of `--symbol` or `--watchlist active`. Watchlist mode captures the Active Watchlist once, processes it sequentially, continues after Symbol failures by default, and restores the original Chart once at the end; `--fail-fast` marks all remaining items skipped. Duplicate Symbols keep their first occurrence and later entries are recorded as skipped. A partial run is published with bounded failure details and exits `1` (`2` for CDP connection failures).
 
 ### All Commands
 

@@ -4,6 +4,8 @@ import {
   restoreSymbolSession as _restoreSymbolSession,
   withChartSession as _withChartSession,
 } from './chart-session.js';
+import { symbolIdentitiesMatch } from './pane.js';
+import { captureActiveWatchlistSnapshot as _captureActiveWatchlistSnapshot } from './watchlist.js';
 import {
   ensureStrategyActive as _ensureStrategyActive,
   inspectStrategySource as _inspectStrategySource,
@@ -34,12 +36,21 @@ import {
 import { CoreOperationError, sanitizeCoreContext } from './errors.js';
 import { unixMillisecondsToIso } from './time.js';
 
-function validateStrategySymbolRequest({ entity_id, symbol, context, command }) {
+function validateStrategyContextRequest({ entity_id, context }) {
   if (!entity_id || !String(entity_id).trim()) {
     throw new CoreOperationError('entity_id is required. Use study list --type strategy.', {
       code: 'STRATEGY_ENTITY_REQUIRED', phase: 'request_validation', context,
     });
   }
+  if (!context || typeof context !== 'object') {
+    throw new CoreOperationError('Resolved Pane context is required.', {
+      code: 'CHART_SESSION_INVALID', phase: 'request_validation', entity_id,
+    });
+  }
+}
+
+function validateStrategySymbolRequest({ entity_id, symbol, context, command }) {
+  validateStrategyContextRequest({ entity_id, context });
   if (!symbol || !String(symbol).trim()) {
     throw new CoreOperationError(`--symbol is required for ${command}.`, {
       code: 'SYMBOL_REQUIRED', phase: 'request_validation', entity_id, context,
@@ -48,11 +59,6 @@ function validateStrategySymbolRequest({ entity_id, symbol, context, command }) 
   if (!/^[^:\s]+:[^:\s]+$/.test(String(symbol).trim())) {
     throw new CoreOperationError('--symbol must use exchange:symbol format.', {
       code: 'SYMBOL_INVALID', phase: 'request_validation', entity_id, symbol, context,
-    });
-  }
-  if (!context || typeof context !== 'object') {
-    throw new CoreOperationError('Resolved Pane context is required.', {
-      code: 'CHART_SESSION_INVALID', phase: 'request_validation', entity_id, symbol,
     });
   }
 }
@@ -141,7 +147,7 @@ function canonicalReportResult({ entity_id, inspected, session, observation, con
   return { report, snapshot };
 }
 
-async function withFreshStrategySymbol({
+async function executeFreshStrategySymbol({
   entity_id,
   symbol,
   timeframe,
@@ -153,61 +159,86 @@ async function withFreshStrategySymbol({
   validateStrategySymbolRequest({ entity_id, symbol, context, command });
   const requestedEntityId = String(entity_id).trim();
   const requestedSymbol = String(symbol).trim();
-  const withChartSession = _deps?.withChartSession || _withChartSession;
   const inspectStrategySource = _deps?.inspectStrategySource || _inspectStrategySource;
   const ensureStrategyActive = _deps?.ensureStrategyActive || _ensureStrategyActive;
   const readRawReportState = _deps?.readRawReportState || _readRawReportState;
   const prepareSymbolSession = _deps?.prepareSymbolSession || _prepareSymbolSession;
   const waitForFreshTradingReport = _deps?.waitForFreshTradingReport || _waitForFreshTradingReport;
-  const restoreSymbolSession = _deps?.restoreSymbolSession || _restoreSymbolSession;
+  // Ownership/type validation deliberately precedes all Chart mutation.
+  const inspected = await inspectStrategySource({
+    entity_id: requestedEntityId, context, _deps,
+  });
+  await ensureStrategyActive({
+    entity_id: requestedEntityId, context, timeout_ms, _deps,
+  });
+  const before = await readRawReportState({
+    entity_id: requestedEntityId,
+    context,
+    phase: `${command}_before`,
+    _deps,
+  });
+  const symbolSession = await prepareSymbolSession({
+    context,
+    entity_id: requestedEntityId,
+    symbol: requestedSymbol,
+    timeframe,
+    timeout_ms,
+    _deps,
+  });
+  const onSymbolSession = _deps?.onSymbolSession;
+  if (onSymbolSession) await onSymbolSession(symbolSession);
+  const observation = await waitForFreshTradingReport({
+    entity_id: requestedEntityId,
+    session: symbolSession,
+    before,
+    mutated: symbolSession.symbol_changed || symbolSession.timeframe_changed,
+    timeout_ms,
+    _deps,
+  });
+  const result = await operation({
+    entity_id: requestedEntityId,
+    requested_symbol: requestedSymbol,
+    inspected,
+    session: symbolSession,
+    observation,
+  });
+  return { result, symbol_session: symbolSession };
+}
 
-  return withChartSession({ context, _deps }, async () => {
+async function withFreshStrategySymbol(options, operation) {
+  validateStrategySymbolRequest({
+    entity_id: options?.entity_id,
+    symbol: options?.symbol,
+    context: options?.context,
+    command: options?.command,
+  });
+  const withChartSession = options?._deps?.withChartSession || _withChartSession;
+  const restoreSymbolSession = options?._deps?.restoreSymbolSession || _restoreSymbolSession;
+  return withChartSession({ context: options.context, _deps: options._deps }, async () => {
+    let execution = null;
     let symbolSession = null;
-    let result;
+    const originalOnSymbolSession = options?._deps?.onSymbolSession;
+    const executionOptions = {
+      ...options,
+      _deps: {
+        ...options._deps,
+        onSymbolSession: async (session) => {
+          symbolSession = session;
+          if (originalOnSymbolSession) await originalOnSymbolSession(session);
+        },
+      },
+    };
     try {
-      // Ownership/type validation deliberately precedes all Chart mutation.
-      const inspected = await inspectStrategySource({
-        entity_id: requestedEntityId, context, _deps,
-      });
-      await ensureStrategyActive({
-        entity_id: requestedEntityId, context, timeout_ms, _deps,
-      });
-      const before = await readRawReportState({
-        entity_id: requestedEntityId,
-        context,
-        phase: `${command}_before`,
-        _deps,
-      });
-      symbolSession = await prepareSymbolSession({
-        context,
-        entity_id: requestedEntityId,
-        symbol: requestedSymbol,
-        timeframe,
-        timeout_ms,
-        _deps,
-      });
-      const observation = await waitForFreshTradingReport({
-        entity_id: requestedEntityId,
-        session: symbolSession,
-        before,
-        mutated: symbolSession.symbol_changed || symbolSession.timeframe_changed,
-        timeout_ms,
-        _deps,
-      });
-      result = await operation({
-        entity_id: requestedEntityId,
-        requested_symbol: requestedSymbol,
-        inspected,
-        session: symbolSession,
-        observation,
-      });
+      execution = await executeFreshStrategySymbol(executionOptions, operation);
+      return execution.result;
     } finally {
       if (symbolSession) {
-        const restore = await restoreSymbolSession(symbolSession, { timeout_ms, _deps });
-        if (result) result.chart_restore = restore;
+        const restore = await restoreSymbolSession(symbolSession, {
+          timeout_ms: options.timeout_ms, _deps: options._deps,
+        });
+        if (execution?.result) execution.result.chart_restore = restore;
       }
     }
-    return result;
   });
 }
 
@@ -439,85 +470,91 @@ function completeTradingDataMetadata({ report, snapshot, batchLimit, total }) {
   };
 }
 
-/**
- * Export one Strategy/Symbol run. Nothing is published until Report A, every
- * Trade batch, Report B, reconciliation, and Chart restoration all succeed.
- */
-export async function exportStrategySymbol({
+function symbolArtifactPaths(symbol, format) {
+  const symbolDirectory = `symbols/${safeSymbolPathSegment(symbol)}`;
+  return {
+    directory: symbolDirectory,
+    report: `${symbolDirectory}/report.json`,
+    trades: `${symbolDirectory}/trades.${format}`,
+    reconciliation: `${symbolDirectory}/reconciliation.json`,
+  };
+}
+
+function manifestSymbolSuccess(exported) {
+  return {
+    requested_symbol: exported.requested_symbol,
+    resolved_symbol: exported.resolved_symbol,
+    status: 'succeeded',
+    phase: 'completed',
+    snapshot_id: exported.snapshot_id,
+    total_trades: exported.total_trades,
+    batch_count: exported.batch_count,
+    diagnostics: [],
+    artifacts: Object.fromEntries(Object.entries(exported.artifacts).map(([name, info]) => (
+      [name, info.relative_path]
+    ))),
+  };
+}
+
+function boundedSymbolError(error) {
+  return {
+    code: String(error?.code || 'CORE_OPERATION_FAILED').slice(0, 100),
+    message: String(error?.message || error || 'Unknown error').slice(0, 500),
+    phase: String(error?.phase || 'unknown').slice(0, 100),
+    retryable: error?.retryable === true,
+  };
+}
+
+function summaryForSymbols(symbols, requested = symbols.length) {
+  return {
+    requested,
+    succeeded: symbols.filter((item) => item.status === 'succeeded').length,
+    failed: symbols.filter((item) => item.status === 'failed').length,
+    skipped: symbols.filter((item) => item.status === 'skipped').length,
+  };
+}
+
+async function exportStrategySymbolIntoRun({
   entity_id,
   symbol,
   timeframe,
   context,
-  output_directory,
   format,
-  force = false,
   batch_limit,
-  run_id,
   timeout_ms,
+  transaction,
   _deps,
-} = {}) {
+}) {
   validateStrategySymbolRequest({
     entity_id, symbol, context, command: 'strategy trading-export',
   });
-  if (output_directory == null || !String(output_directory).trim()) {
-    throw new CoreOperationError('--output directory is required for strategy trading-export.', {
-      code: 'OUTPUT_WRITE_FAILED', phase: 'output_validation', entity_id, symbol, context,
-    });
-  }
+  if (!transaction) throw new TypeError('A run artifact transaction is required.');
   const resolvedFormat = resolveTradingDataFormat({ format });
   const pagination = paginationValues({ offset: 0, limit: batch_limit });
-  const createTransaction = _deps?.createArtifactSetTransaction || createArtifactSetTransaction;
-  const transaction = await createTransaction({
-    output_directory,
-    run_id,
-    force,
-    _deps: _deps?.artifactDeps,
-  });
-  const safeSymbol = safeSymbolPathSegment(symbol);
-  const symbolDirectory = `symbols/${safeSymbol}`;
-  const relativePaths = {
-    manifest: 'manifest.json',
-    report: `${symbolDirectory}/report.json`,
-    trades: `${symbolDirectory}/trades.${resolvedFormat}`,
-    reconciliation: `${symbolDirectory}/reconciliation.json`,
-  };
-  const now = _deps?.now || Date.now;
+  const relativePaths = symbolArtifactPaths(symbol, resolvedFormat);
   const createEncoder = _deps?.createTradingDataEncoder || createTradingDataEncoder;
   const createAccumulator = _deps?.createTradingDataMetricsAccumulator
     || createTradingDataMetricsAccumulator;
   const reconcile = _deps?.reconcileTradingReport || reconcileTradingReport;
   const readRawTradingReport = _deps?.readRawTradingReport || _readRawTradingReport;
-  const startedAt = now();
   let encoder = null;
-
   try {
-    const exported = await withFreshStrategySymbol({
+    const execution = await executeFreshStrategySymbol({
       entity_id, symbol, timeframe, context, timeout_ms,
       command: 'trading_export', _deps,
     }, async ({ entity_id: requestedEntityId, inspected, session, observation }) => {
       const reportA = canonicalReportResult({
-        entity_id: requestedEntityId,
-        inspected,
-        session,
-        observation,
-        context,
+        entity_id: requestedEntityId, inspected, session, observation, context,
         phase: 'trading_export_report_a_snapshot',
       });
       const total = Number(observation.snapshot_candidate?.trade_count);
       const metadata = completeTradingDataMetadata({
-        report: reportA.report,
-        snapshot: reportA.snapshot,
-        batchLimit: pagination.limit,
-        total,
+        report: reportA.report, snapshot: reportA.snapshot,
+        batchLimit: pagination.limit, total,
       });
-      let writable;
       try {
-        writable = await transaction.openArtifact(relativePaths.trades);
-        encoder = createEncoder({
-          format: resolvedFormat,
-          metadata,
-          writable,
-        });
+        const writable = await transaction.openArtifact(relativePaths.trades);
+        encoder = createEncoder({ format: resolvedFormat, metadata, writable });
         await encoder.start();
       } catch (error) {
         throw artifactWriteError(error, {
@@ -532,15 +569,9 @@ export async function exportStrategySymbol({
       let writtenTrades = 0;
       while (true) {
         const batch = await readTradingDataBatchForSession({
-          entity_id: requestedEntityId,
-          inspected,
-          session,
-          observation,
-          offset,
-          limit: pagination.limit,
-          snapshot_id: reportA.snapshot.snapshot_id,
-          context,
-          _deps,
+          entity_id: requestedEntityId, inspected, session, observation, offset,
+          limit: pagination.limit, snapshot_id: reportA.snapshot.snapshot_id,
+          context, _deps,
         });
         if (batch.total !== total || batch.offset !== offset) {
           throw new CoreOperationError('Strategy Trade pagination changed during export.', {
@@ -585,24 +616,17 @@ export async function exportStrategySymbol({
       }
 
       const reportBObservation = await readRawTradingReport({
-        entity_id: requestedEntityId,
-        session,
-        phase: 'trading_export_report_b',
-        _deps,
+        entity_id: requestedEntityId, session,
+        phase: 'trading_export_report_b', _deps,
       });
       const reportB = canonicalReportResult({
-        entity_id: requestedEntityId,
-        inspected,
-        session,
-        observation: reportBObservation,
-        context,
+        entity_id: requestedEntityId, inspected, session,
+        observation: reportBObservation, context,
         phase: 'trading_export_report_b_snapshot',
       });
       assertMatchingSnapshot(reportA.snapshot, reportB.snapshot, {
-        entity_id: requestedEntityId,
-        symbol: session.requested_symbol,
-        context,
-        phase: 'trading_export_report_b_snapshot',
+        entity_id: requestedEntityId, symbol: session.requested_symbol,
+        context, phase: 'trading_export_report_b_snapshot',
       });
 
       const tradingDataMetrics = accumulator.finish();
@@ -621,8 +645,7 @@ export async function exportStrategySymbol({
       }
 
       const reportArtifact = {
-        success: true,
-        ...reportB.report,
+        success: true, ...reportB.report,
         snapshot: publicSnapshot(reportB.snapshot),
         snapshot_id: reportB.snapshot.snapshot_id,
       };
@@ -673,11 +696,71 @@ export async function exportStrategySymbol({
         encoder: encoderResult,
         reconciliation,
         artifacts: {
-          report: reportInfo,
-          trades: tradesInfo,
-          reconciliation: reconciliationInfo,
+          report: reportInfo, trades: tradesInfo, reconciliation: reconciliationInfo,
         },
       };
+    });
+    return { ...execution.result, symbol_session: execution.symbol_session };
+  } catch (error) {
+    try {
+      await encoder?.abort();
+    } catch {
+      // Keep the workflow failure as the primary error.
+    }
+    throw error;
+  }
+}
+
+/**
+ * Export one Strategy/Symbol. An internal run transaction lets the Watchlist
+ * orchestrator reuse this exact workflow without nested publication/restores.
+ */
+export async function exportStrategySymbol(options = {}) {
+  if (options?._run?.transaction) {
+    return exportStrategySymbolIntoRun({ ...options, transaction: options._run.transaction });
+  }
+  const {
+    entity_id, symbol, timeframe, context, output_directory, format, force = false,
+    batch_limit, run_id, timeout_ms, _deps,
+  } = options;
+  validateStrategySymbolRequest({
+    entity_id, symbol, context, command: 'strategy trading-export',
+  });
+  if (output_directory == null || !String(output_directory).trim()) {
+    throw new CoreOperationError('--output directory is required for strategy trading-export.', {
+      code: 'OUTPUT_WRITE_FAILED', phase: 'output_validation', entity_id, symbol, context,
+    });
+  }
+  const resolvedFormat = resolveTradingDataFormat({ format });
+  paginationValues({ offset: 0, limit: batch_limit });
+  const createTransaction = _deps?.createArtifactSetTransaction || createArtifactSetTransaction;
+  const transaction = await createTransaction({
+    output_directory, run_id, force, _deps: _deps?.artifactDeps,
+  });
+  const now = _deps?.now || Date.now;
+  const withChartSession = _deps?.withChartSession || _withChartSession;
+  const restoreSymbolSession = _deps?.restoreSymbolSession || _restoreSymbolSession;
+  const startedAt = now();
+  let symbolSession = null;
+  try {
+    const exported = await withChartSession({ context, _deps }, async () => {
+      let result;
+      try {
+        result = await exportStrategySymbolIntoRun({
+          entity_id, symbol, timeframe, context, format: resolvedFormat,
+          batch_limit, timeout_ms, transaction,
+          _deps: {
+            ..._deps,
+            onSymbolSession: async (session) => { symbolSession = session; },
+          },
+        });
+        return result;
+      } finally {
+        if (symbolSession) {
+          const restore = await restoreSymbolSession(symbolSession, { timeout_ms, _deps });
+          if (result) result.chart_restore = restore;
+        }
+      }
     });
 
     const completedAt = now();
@@ -704,54 +787,24 @@ export async function exportStrategySymbol({
       completed_at: completedAt,
       completed_at_iso: unixMillisecondsToIso(completedAt),
       summary: { requested: 1, succeeded: 1, failed: 0, skipped: 0 },
-      symbols: [{
-        requested_symbol: exported.requested_symbol,
-        resolved_symbol: exported.resolved_symbol,
-        status: 'succeeded',
-        snapshot_id: exported.snapshot_id,
-        total_trades: exported.total_trades,
-        batch_count: exported.batch_count,
-        artifacts: Object.fromEntries(Object.entries(exported.artifacts).map(([name, info]) => (
-          [name, info.relative_path]
-        ))),
-      }],
+      symbols: [manifestSymbolSuccess(exported)],
       chart_restore: exported.chart_restore,
     };
-    try {
-      await transaction.writeJson(relativePaths.manifest, manifest);
-    } catch (error) {
-      throw artifactWriteError(error, {
-        entity_id, symbol, context, phase: 'artifact_write',
-      });
-    }
-    const manifestInfo = await transaction.artifactInfo(relativePaths.manifest);
+    await transaction.writeJson('manifest.json', manifest);
+    const manifestInfo = await transaction.artifactInfo('manifest.json');
     const publication = await transaction.publish();
+    const { symbol_session: _symbolSession, ...publicExported } = exported;
     return {
+      ...publicExported,
       success: true,
       run_id: transaction.run_id,
       mode: 'single_symbol',
       status: 'succeeded',
       output: publication,
-      context: exported.context,
-      strategy: exported.strategy,
-      requested_symbol: exported.requested_symbol,
-      resolved_symbol: exported.resolved_symbol,
-      symbol: exported.symbol,
-      timeframe: exported.timeframe,
-      format: resolvedFormat,
-      snapshot_id: exported.snapshot_id,
-      total_trades: exported.total_trades,
-      batch_count: exported.batch_count,
       reconciliation: { success: true },
       artifacts: { manifest: manifestInfo, ...exported.artifacts },
-      chart_restore: exported.chart_restore,
     };
   } catch (error) {
-    try {
-      await encoder?.abort();
-    } catch {
-      // Keep the workflow failure as the primary error.
-    }
     try {
       await transaction.abort();
     } catch {
@@ -759,4 +812,237 @@ export async function exportStrategySymbol({
     }
     throw error;
   }
+}
+
+function contextAtCurrentChart(context, session) {
+  if (!session) return context;
+  return Object.freeze({
+    ...context,
+    symbol: session.resolved_symbol,
+    resolution: session.timeframe,
+  });
+}
+
+function finalRestoreSession(lastSession, chartSession) {
+  return Object.freeze({
+    ...lastSession,
+    original_symbol: chartSession.original_symbol,
+    original_timeframe: chartSession.original_timeframe,
+    symbol_changed: !symbolIdentitiesMatch(lastSession.resolved_symbol, chartSession.original_symbol),
+    timeframe_changed: String(lastSession.timeframe) !== String(chartSession.original_timeframe),
+  });
+}
+
+/** Export the immutable Active Watchlist sequentially in one Chart/run transaction. */
+export async function exportStrategyWatchlist({
+  entity_id,
+  watchlist = 'active',
+  timeframe,
+  context,
+  output_directory,
+  format,
+  force = false,
+  fail_fast = false,
+  batch_limit,
+  run_id,
+  timeout_ms,
+  _deps,
+} = {}) {
+  validateStrategyContextRequest({ entity_id, context });
+  if (watchlist !== 'active') {
+    throw new CoreOperationError('--watchlist currently supports only active.', {
+      code: 'WATCHLIST_SCOPE_UNSUPPORTED', phase: 'request_validation', entity_id, context,
+    });
+  }
+  if (output_directory == null || !String(output_directory).trim()) {
+    throw new CoreOperationError('--output directory is required for strategy trading-export.', {
+      code: 'OUTPUT_WRITE_FAILED', phase: 'output_validation', entity_id, context,
+    });
+  }
+  const resolvedFormat = resolveTradingDataFormat({ format });
+  paginationValues({ offset: 0, limit: batch_limit });
+  const captureWatchlist = _deps?.captureActiveWatchlistSnapshot
+    || _captureActiveWatchlistSnapshot;
+  const snapshot = await captureWatchlist({ _deps });
+  if (snapshot.symbols.length === 0) {
+    throw new CoreOperationError('Active Watchlist is empty.', {
+      code: 'WATCHLIST_EMPTY', phase: 'watchlist_snapshot', entity_id, context,
+    });
+  }
+  const createTransaction = _deps?.createArtifactSetTransaction || createArtifactSetTransaction;
+  const transaction = await createTransaction({
+    output_directory, run_id, force, _deps: _deps?.artifactDeps,
+  });
+  const now = _deps?.now || Date.now;
+  const withChartSession = _deps?.withChartSession || _withChartSession;
+  const restoreSymbolSession = _deps?.restoreSymbolSession || _restoreSymbolSession;
+  const exportSymbol = _deps?.exportStrategySymbol || exportStrategySymbol;
+  const startedAt = now();
+  const symbolResults = [];
+  const seen = new Map();
+  let lastSession = null;
+  let chartRestore = null;
+  let strategy = null;
+  let inputsFingerprint = null;
+  let schemaVersions = null;
+
+  const manifest = (status, completedAt = null) => ({
+    schema_version: 1,
+    run_id: transaction.run_id,
+    mode: 'active_watchlist',
+    status,
+    context: sanitizeCoreContext(context),
+    strategy: strategy || { entity_id: String(entity_id).trim(), type: 'strategy' },
+    inputs_fingerprint: inputsFingerprint,
+    watchlist: snapshot,
+    requested_symbols: snapshot.symbols.map((item) => item.symbol),
+    timeframe: timeframe == null ? context.resolution : String(timeframe),
+    format: resolvedFormat,
+    schema_versions: schemaVersions || {
+      manifest: 1, trading_report: null, trading_data: null,
+      reconciliation: 1, snapshot: null,
+    },
+    duplicate_policy: 'first_occurrence_wins_later_entries_skipped',
+    started_at: startedAt,
+    started_at_iso: unixMillisecondsToIso(startedAt),
+    ...(completedAt != null && {
+      completed_at: completedAt,
+      completed_at_iso: unixMillisecondsToIso(completedAt),
+    }),
+    summary: summaryForSymbols(symbolResults, snapshot.symbols.length),
+    symbols: symbolResults,
+    ...(chartRestore && { chart_restore: chartRestore }),
+  });
+
+  try {
+    await transaction.replaceJson('manifest.json', manifest('running'));
+    await withChartSession({ context, _deps }, async (chartSession) => {
+      let stop = false;
+      try {
+        for (let index = 0; index < snapshot.symbols.length; index += 1) {
+          const requestedSymbol = snapshot.symbols[index].symbol;
+          if (stop) {
+            symbolResults.push({
+              index, requested_symbol: requestedSymbol, status: 'skipped',
+              phase: 'not_started', reason: 'fail_fast',
+              diagnostics: [{ code: 'FAIL_FAST', message: 'Skipped after an earlier Symbol failed.' }],
+            });
+            await transaction.replaceJson('manifest.json', manifest('running'));
+            continue;
+          }
+          const duplicateOf = seen.get(requestedSymbol);
+          if (duplicateOf != null) {
+            symbolResults.push({
+              index, requested_symbol: requestedSymbol, status: 'skipped',
+              phase: 'not_started', reason: 'duplicate_symbol', duplicate_of_index: duplicateOf,
+              diagnostics: [{
+                code: 'DUPLICATE_SYMBOL',
+                message: `First occurrence at Watchlist index ${duplicateOf}.`,
+              }],
+            });
+            await transaction.replaceJson('manifest.json', manifest('running'));
+            continue;
+          }
+          seen.set(requestedSymbol, index);
+          const currentContext = contextAtCurrentChart(context, lastSession);
+          try {
+            const exported = await exportSymbol({
+              entity_id, symbol: requestedSymbol, timeframe,
+              context: currentContext, format: resolvedFormat,
+              batch_limit, timeout_ms, _run: { transaction },
+              _deps: {
+                ..._deps,
+                onSymbolSession: async (session) => { lastSession = session; },
+              },
+            });
+            lastSession = exported.symbol_session || lastSession;
+            if (
+              inputsFingerprint
+              && JSON.stringify(exported.inputs_fingerprint) !== JSON.stringify(inputsFingerprint)
+            ) {
+              throw new CoreOperationError('Strategy inputs changed during the Watchlist export.', {
+                code: 'STRATEGY_INPUTS_CHANGED', phase: 'watchlist_strategy_validation',
+                entity_id, symbol: requestedSymbol, context: currentContext,
+              });
+            }
+            strategy = strategy || exported.strategy;
+            inputsFingerprint = inputsFingerprint || exported.inputs_fingerprint;
+            schemaVersions = schemaVersions || {
+              manifest: 1,
+              trading_report: exported.report_schema_version,
+              trading_data: exported.trading_data_schema_version,
+              reconciliation: 1,
+              snapshot: exported.snapshot_schema_version,
+            };
+            symbolResults.push({ index, ...manifestSymbolSuccess(exported) });
+          } catch (error) {
+            await transaction.removePath(symbolArtifactPaths(requestedSymbol, resolvedFormat).directory);
+            symbolResults.push({
+              index,
+              requested_symbol: requestedSymbol,
+              status: 'failed',
+              phase: error?.phase || 'unknown',
+              error: boundedSymbolError(error),
+              diagnostics: [boundedSymbolError(error)],
+            });
+            if (fail_fast) stop = true;
+          }
+          await transaction.replaceJson('manifest.json', manifest('running'));
+        }
+      } finally {
+        if (lastSession) {
+          chartRestore = await restoreSymbolSession(
+            finalRestoreSession(lastSession, chartSession),
+            { timeout_ms, _deps },
+          );
+        } else {
+          chartRestore = {
+            success: true, restored: false,
+            symbol: chartSession.original_symbol,
+            timeframe: chartSession.original_timeframe,
+          };
+        }
+      }
+    });
+
+    const summary = summaryForSymbols(symbolResults, snapshot.symbols.length);
+    const status = summary.failed > 0 ? 'partial' : 'succeeded';
+    const completedAt = now();
+    await transaction.replaceJson('manifest.json', manifest(status, completedAt));
+    const manifestInfo = await transaction.artifactInfo('manifest.json');
+    const publication = await transaction.publish();
+    const hasCdpFailure = symbolResults.some((item) => (
+      item.status === 'failed' && String(item.error?.code || '').startsWith('CDP_')
+    ));
+    return {
+      success: summary.failed === 0,
+      run_id: transaction.run_id,
+      mode: 'active_watchlist',
+      status,
+      output: publication,
+      context: sanitizeCoreContext(context),
+      strategy: strategy || { entity_id: String(entity_id).trim(), type: 'strategy' },
+      watchlist: snapshot,
+      timeframe: timeframe == null ? context.resolution : String(timeframe),
+      format: resolvedFormat,
+      summary,
+      symbols: symbolResults,
+      artifacts: { manifest: manifestInfo },
+      chart_restore: chartRestore,
+      ...(hasCdpFailure && { failure_kind: 'cdp_connection' }),
+    };
+  } catch (error) {
+    try {
+      await transaction.abort();
+    } catch {
+      // Keep the workflow failure as the primary error.
+    }
+    throw error;
+  }
+}
+
+/** Dispatch the stable trading-export contract to one Symbol or Active Watchlist. */
+export async function exportStrategyTrading(options = {}) {
+  if (options.watchlist != null) return exportStrategyWatchlist(options);
+  return exportStrategySymbol(options);
 }
