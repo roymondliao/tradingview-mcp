@@ -39,8 +39,9 @@ function printCommandHelp(name, cmd) {
   if (cmd.subcommands) {
     console.log(`Usage: tv ${name} <subcommand> [options]\n`);
     console.log('Subcommands:');
+    const maxLen = Math.max(...[...cmd.subcommands.keys()].map(sub => sub.length));
     for (const [sub, subConf] of cmd.subcommands) {
-      console.log(`  ${sub.padEnd(12)}${subConf.description}`);
+      console.log(`  ${sub.padEnd(maxLen + 2)}${subConf.description}`);
     }
   } else {
     console.log(`Usage: tv ${name} [options]\n`);

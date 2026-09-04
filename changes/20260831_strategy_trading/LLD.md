@@ -1,6 +1,6 @@
 # Strategy Trading Data LLD
 
-Status: `planned`
+Status: `done`
 
 ## Purpose
 

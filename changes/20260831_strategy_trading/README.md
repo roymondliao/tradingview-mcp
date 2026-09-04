@@ -1,7 +1,7 @@
 ---
 id: FEATURE-20260831-STRATEGY-TRADING
 title: Strategy Trading Data Workflow
-status: planned
+status: done
 created: 2026-08-31
 scope:
   - watchlist
@@ -14,7 +14,7 @@ scope:
 
 # Strategy Trading Data Workflow
 
-Status: `planned`
+Status: `done`
 
 ## Objective
 
@@ -23,6 +23,8 @@ Status: `planned`
 此文件是本 feature 的需求與資料 contract。Implementation Tasks 與 LLD 必須以本文件為依據，不得回到依賴固定延遲、隱式 Strategy 選擇或只讀取最近 N 筆 Trades 的舊流程。
 
 Core module boundaries、dependency direction、CLI response／output semantics 與 testing architecture 定義於 [`LLD.md`](./LLD.md)。Tasks 已依 vertical slices 與 dependency 拆分；[`TASK-001`](./TASK-001-runtime-contract-discovery.md) 已完成 live contract discovery，結果固定於 [`RUNTIME_CONTRACT.md`](./RUNTIME_CONTRACT.md)。
+
+最終Desktop 3.4.0 regression與live結果見[`DELIVERY_EVIDENCE.md`](./DELIVERY_EVIDENCE.md)；v1.2.0使用者可見變更見[`RELEASE_NOTES.md`](./RELEASE_NOTES.md)。
 
 ## Approved CLI contract
 
@@ -470,7 +472,7 @@ Output rules：
 | [`TASK-008`](./TASK-008-single-symbol-export.md) | Single-Symbol verified export | TASK-005, TASK-006, TASK-007 | `done` |
 | [`TASK-009`](./TASK-009-watchlist-sequential-export.md) | Active Watchlist sequential export | TASK-008 | `done` |
 | [`TASK-010`](./TASK-010-mcp-compatibility.md) | MCP parity 與 legacy compatibility | TASK-005, TASK-006, TASK-009 | `done` |
-| [`TASK-011`](./TASK-011-regression-delivery-gate.md) | Regression、live evidence、docs 與 release gate | TASK-010 | `todo` |
+| [`TASK-011`](./TASK-011-regression-delivery-gate.md) | Regression、live evidence、docs 與 release gate | TASK-010 | `done` |
 
 Dependency flow：
 
@@ -507,22 +509,22 @@ TASK-001 Runtime discovery
 
 ## Acceptance criteria
 
-- [ ] 使用者能指定 Tab／Layout／Pane、Strategy `entity_id`、Watchlist 與輸出目錄。
-- [ ] Run 開始時固定 Watchlist Snapshot，並依其順序逐一處理所有 Symbols。
-- [ ] 每個 Symbol 都在 readback 確認切換成功且 Strategy fresh calculation 完成後才開始讀取資料。
-- [ ] Report 與所有 Trade batches 可證明屬於相同 snapshot。
-- [ ] Strategy Trading Data 不受固定 5,000 筆 tail limit 截斷，且 incomplete result 不會回報成功。
-- [ ] Trade batching 只切分同一份 Strategy Report results，不呼叫 Chart History Loader，也不把 `bar_index` 當成 Offset／Cursor。
-- [ ] Default JSON 與 JSONL／CSV outputs 都由同一 canonical Trade model 產生，不經 file-to-file reparse conversion。
-- [ ] CSV projection 覆蓋 Desktop sample 的資料語意；欄名不受 TradingView UI locale 影響。
-- [ ] Unix timestamp 保留，並附帶對應 UTC ISO 8601 欄位。
-- [ ] Reconciliation 只 gate 總損益、勝率、總交易次數、獲利次數與虧損次數。
-- [ ] Open Trade 浮動損益不納入五項 metrics、已收 commission 正確調整總損益；breakeven 規則明確且有測試。
-- [ ] 未通過 snapshot、completeness 或 reconciliation 的 Symbol 不會發布正式 artifacts。
-- [ ] Manifest 能分辨每個 Symbol 的成功、失敗、錯誤 phase 與 artifact 狀態。
+- [x] 使用者能指定 Tab／Layout／Pane、Strategy `entity_id`、Watchlist 與輸出目錄。
+- [x] Run 開始時固定 Watchlist Snapshot，並依其順序逐一處理所有 Symbols。
+- [x] 每個 Symbol 都在 readback 確認切換成功且 Strategy fresh calculation 完成後才開始讀取資料。
+- [x] Report 與所有 Trade batches 可證明屬於相同 snapshot。
+- [x] Strategy Trading Data 不受固定 5,000 筆 tail limit 截斷，且 incomplete result 不會回報成功。
+- [x] Trade batching 只切分同一份 Strategy Report results，不呼叫 Chart History Loader，也不把 `bar_index` 當成 Offset／Cursor。
+- [x] Default JSON 與 JSONL／CSV outputs 都由同一 canonical Trade model 產生，不經 file-to-file reparse conversion。
+- [x] CSV projection 覆蓋 Desktop sample 的資料語意；欄名不受 TradingView UI locale 影響。
+- [x] Unix timestamp 保留，並附帶對應 UTC ISO 8601 欄位。
+- [x] Reconciliation 只 gate 總損益、勝率、總交易次數、獲利次數與虧損次數。
+- [x] Open Trade 浮動損益不納入五項 metrics、已收 commission 正確調整總損益；breakeven 規則明確且有測試。
+- [x] 未通過 snapshot、completeness 或 reconciliation 的 Symbol 不會發布正式 artifacts。
+- [x] Manifest 能分辨每個 Symbol 的成功、失敗、錯誤 phase 與 artifact 狀態。
 - [x] CLI、MCP 與 Core 使用相同 canonical schemas 與 error semantics。
-- [ ] Deterministic tests 與受控 live validation 都通過，且不依賴 UI download clicks。
-- [ ] 文件與 response 明確表示 Strategy Trading Data 是 Broker Emulator 的回測交易結果，不是 OHLCV 或 Broker Account 實際成交。
+- [x] Deterministic tests 與受控 live validation 都通過，且不依賴 UI download clicks。
+- [x] 文件與 response 明確表示 Strategy Trading Data 是 Broker Emulator 的回測交易結果，不是 OHLCV 或 Broker Account 實際成交。
 
 ## Feature completion rule
 

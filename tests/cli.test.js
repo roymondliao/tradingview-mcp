@@ -120,6 +120,7 @@ describe('CLI — help and routing', () => {
     assert.ok(stdout.includes('orders'));
     assert.ok(stdout.includes('trades'));
     assert.ok(stdout.includes('equity'));
+    assert.doesNotMatch(stdout, /trading-(?:report|data|export)(?:Get|Export)/);
   });
 
   it('strategy trading-data help exposes Offset/Limit/Snapshot pagination', () => {

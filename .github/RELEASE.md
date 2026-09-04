@@ -47,7 +47,7 @@ Check the current version state with:
 ```bash
 npm run release:check-version
 npm run --silent release:print-tag
-tv --version
+npm run --silent tv -- --version
 ```
 
 Versions follow Semantic Versioning:
@@ -63,13 +63,13 @@ Create a release branch from the latest `fork-main`:
 ```bash
 git switch fork-main
 git pull --ff-only origin fork-main
-git switch -c release/v1.1.0
+git switch -c release/v1.2.0
 ```
 
 Update `package.json` and `package-lock.json` without creating a local Git tag:
 
 ```bash
-npm version 1.1.0 --no-git-tag-version
+npm version 1.2.0 --no-git-tag-version
 ```
 
 Validate the release locally:
@@ -85,14 +85,14 @@ Commit and push the release branch:
 
 ```bash
 git add package.json package-lock.json
-git commit -m "chore: release v1.1.0"
-git push -u origin release/v1.1.0
+git commit -m "chore: release v1.2.0"
+git push -u origin release/v1.2.0
 ```
 
 Open a pull request with this target:
 
 ```text
-release/v1.1.0 -> fork-main
+release/v1.2.0 -> fork-main
 ```
 
 Do not create the version tag manually. CI must pass before the release pull

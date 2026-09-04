@@ -1,5 +1,6 @@
 data/*
 docs/*
+!docs/guildeline.md
 !docs/terminology.md
 !docs/study_strategy_cli_design.md
 screenshots/
