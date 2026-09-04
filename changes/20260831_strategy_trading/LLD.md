@@ -737,6 +737,17 @@ started_at / completed_at with ISO companions
 
 MCP tool schema 可以使用 snake_case，但必須維持與 CLI 相同 required fields、defaults、format semantics、snapshot rules 與 Core errors。
 
+Mapping：
+
+| CLI | MCP |
+| --- | --- |
+| `strategy active` | `strategy_get_active` |
+| `strategy trading-report` | `strategy_get_trading_report` |
+| `strategy trading-data` | `strategy_get_trading_data` |
+| `strategy trading-export` | `strategy_export_trading` |
+
+`strategy_select`、`strategy_get_report`、`strategy_get_trades`、`data_get_strategy_results`及`data_get_trades`保留為deprecated compatibility surface，response明示非snapshot-complete；新tools不得呼叫它們。
+
 ## Concurrency and interference
 
 - Watchlist Symbols 永遠 sequential。

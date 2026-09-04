@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { jsonResult } from './_format.js';
+import { coreErrorResult, jsonResult } from './_format.js';
 import * as core from '../core/data.js';
 import * as strategyCore from '../core/strategy.js';
 import { paneContextSchema, withPaneContext } from './pane-context.js';
@@ -37,25 +37,36 @@ export function registerDataTools(server) {
   });
 
   server.tool('data_get_strategy_results', 'Deprecated alias: get strategy performance metrics by explicit entity ID.', {
+    ...paneContextSchema,
     entity_id: z.string().describe('Strategy Instance entity ID'),
-  }, async ({ entity_id }) => {
-    try { return jsonResult(await strategyCore.getStrategyReport({ entity_id })); }
-    catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+  }, async (args) => {
+    try {
+      const result = await withPaneContext(args, () => strategyCore.getStrategyReport({ entity_id: args.entity_id }));
+      return jsonResult({ ...result, deprecated: true, snapshot_complete: false });
+    } catch (err) { return coreErrorResult(err, { deprecated: true, snapshot_complete: false }); }
   });
 
   server.tool('data_get_trades', 'Deprecated alias: get paired Strategy trades by explicit entity ID.', {
+    ...paneContextSchema,
     entity_id: z.string().describe('Strategy Instance entity ID'),
     max_trades: z.coerce.number().optional().describe('Maximum trades to return'),
-  }, async ({ entity_id, max_trades }) => {
-    try { return jsonResult(await strategyCore.getStrategyTrades({ entity_id, limit: max_trades })); }
-    catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+  }, async (args) => {
+    try {
+      const result = await withPaneContext(args, () => strategyCore.getStrategyTrades({
+        entity_id: args.entity_id, limit: args.max_trades,
+      }));
+      return jsonResult({ ...result, deprecated: true, snapshot_complete: false });
+    } catch (err) { return coreErrorResult(err, { deprecated: true, snapshot_complete: false }); }
   });
 
   server.tool('data_get_equity', 'Deprecated alias: get Strategy equity by explicit entity ID.', {
+    ...paneContextSchema,
     entity_id: z.string().describe('Strategy Instance entity ID'),
-  }, async ({ entity_id }) => {
-    try { return jsonResult(await strategyCore.getStrategyEquity({ entity_id })); }
-    catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+  }, async (args) => {
+    try {
+      const result = await withPaneContext(args, () => strategyCore.getStrategyEquity({ entity_id: args.entity_id }));
+      return jsonResult({ ...result, deprecated: true });
+    } catch (err) { return coreErrorResult(err, { deprecated: true }); }
   });
 
   server.tool('quote_get', 'Get real-time quote data for a symbol (price, OHLC, volume). If symbol is provided and differs from the current chart, the chart is briefly switched to fetch the quote and then restored — adds ~1-2s and serializes parallel calls.', {

@@ -238,7 +238,7 @@ Claude reads [`CLAUDE.md`](CLAUDE.md) automatically when working in this project
 | "Draw a level at 24500" | `draw_shape` (horizontal_line) |
 | "Take a screenshot" | `capture_screenshot` |
 
-## Tool Reference (78 MCP tools)
+## Tool Reference (106 MCP tools)
 
 ### Chart Reading
 
@@ -251,6 +251,17 @@ Claude reads [`CLAUDE.md`](CLAUDE.md) automatically when working in this project
 | `data_get_history` | Load older OHLCV batches until `from` or the available-history boundary. Metadata by default | Varies |
 
 Unix timestamp fields are preserved for programmatic use and include UTC ISO 8601 companions, such as `time` + `time_iso` and `period.from` + `period.from_iso`. Logical indexes such as `bar_index` are not timestamps.
+
+### Strategy Backtesting
+
+| CLI command | MCP tool | Purpose |
+|------|------|------|
+| `strategy active` | `strategy_get_active` | Read the resolved Pane's active Strategy, Report state, and safe snapshot metadata |
+| `strategy trading-report` | `strategy_get_trading_report` | Get a fresh canonical Report for an explicit `entity_id` and Symbol |
+| `strategy trading-data` | `strategy_get_trading_data` | Get one oldest-first Offset/Limit batch, or atomically write it and return a bounded summary |
+| `strategy trading-export` | `strategy_export_trading` | Export verified artifacts for one Symbol or the immutable Active Watchlist snapshot |
+
+The new tools require explicit Strategy and Symbol identities where applicable and expose the same Tab/Layout/Pane selectors as the CLI. `strategy_select`, `strategy_get_report`, `strategy_get_trades`, `data_get_strategy_results`, and `data_get_trades` remain deprecated compatibility surfaces; their results are not snapshot-complete and are not used by the export workflow.
 
 ### Custom Indicator Data (Pine Drawings)
 
@@ -377,7 +388,7 @@ npm test
 Claude Code  ←→  MCP Server (stdio)  ←→  CDP (port 9222)  ←→  TradingView Desktop (Electron)
 ```
 
-- **Transport**: MCP over stdio (85 tools) + CLI (`tv` command, 31 commands with 66 subcommands)
+- **Transport**: MCP over stdio (106 tools) + CLI (`tv` command)
 - **Connection**: Chrome DevTools Protocol on localhost:9222
 - **Streaming**: Poll-and-diff loop with deduplication, JSONL output to stdout
 - **No dependencies** beyond `@modelcontextprotocol/sdk` and `chrome-remote-interface`

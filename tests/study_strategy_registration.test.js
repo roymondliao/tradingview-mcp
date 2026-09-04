@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { registerPineTools } from '../src/tools/pine.js';
 import { registerStudyTools } from '../src/tools/studies.js';
 import { registerStrategyTools } from '../src/tools/strategy.js';
+import { registerDataTools } from '../src/tools/data.js';
 
 function collectTools(registerGroup) {
   const tools = new Map();
@@ -43,13 +44,35 @@ describe('Study and Strategy MCP registration inventory', () => {
   it('registers explicit Strategy selection and data commands', () => {
     const tools = collectTools(registerStrategyTools);
     for (const name of [
-      'strategy_get_active', 'strategy_select', 'strategy_get_report',
+      'strategy_get_active', 'strategy_get_trading_report',
+      'strategy_get_trading_data', 'strategy_export_trading',
+      'strategy_select', 'strategy_get_report',
       'strategy_get_orders', 'strategy_get_trades', 'strategy_get_equity',
     ]) {
       assert.equal(typeof tools.get(name)?.handler, 'function', `${name} registered`);
     }
     for (const key of ['tab_index', 'url_chart_id', 'layout_id', 'saved_layout_id', 'pane_index']) {
-      assert.ok(tools.get('strategy_get_report')?.schema?.[key], `strategy_get_report exposes ${key}`);
+      assert.ok(tools.get('strategy_get_trading_report')?.schema?.[key], `strategy_get_trading_report exposes ${key}`);
+    }
+    for (const key of ['entity_id', 'symbol', 'timeframe', 'offset', 'limit', 'snapshot_id', 'format', 'output', 'force', 'timeout_ms']) {
+      assert.ok(tools.get('strategy_get_trading_data')?.schema?.[key], `strategy_get_trading_data exposes ${key}`);
+    }
+    for (const key of ['entity_id', 'symbol', 'watchlist', 'timeframe', 'output_directory', 'format', 'force', 'fail_fast', 'timeout_ms']) {
+      assert.ok(tools.get('strategy_export_trading')?.schema?.[key], `strategy_export_trading exposes ${key}`);
+    }
+    assert.match(tools.get('strategy_select').description, /Deprecated/);
+    assert.match(tools.get('strategy_get_report').description, /Deprecated/);
+    assert.match(tools.get('strategy_get_trades').description, /Deprecated/);
+  });
+
+  it('keeps legacy Data aliases explicit and Pane-addressable', () => {
+    const tools = collectTools(registerDataTools);
+    for (const name of ['data_get_strategy_results', 'data_get_trades', 'data_get_equity']) {
+      assert.match(tools.get(name).description, /Deprecated/);
+      assert.ok(tools.get(name).schema.entity_id);
+      for (const key of ['tab_index', 'layout_id', 'saved_layout_id', 'pane_index']) {
+        assert.ok(tools.get(name).schema[key], `${name} exposes ${key}`);
+      }
     }
   });
 });

@@ -25,7 +25,7 @@ const server = new McpServer(
     description: 'AI-assisted TradingView chart analysis and Pine Script development via Chrome DevTools Protocol',
   },
   {
-    instructions: `TradingView MCP — 85 tools for reading and controlling a live TradingView Desktop chart.
+    instructions: `TradingView MCP — 106 tools for reading and controlling a live TradingView Desktop chart.
 
 TOOL SELECTION GUIDE — use this to pick the right tool:
 
@@ -43,6 +43,13 @@ Reading custom Pine indicator output (line.new/label.new/table.new/box.new drawi
 - data_get_pine_boxes → price zones as {high, low} pairs
 - ALWAYS pass study_filter to target a specific indicator by name (e.g., study_filter="Profiler")
 - Indicators must be VISIBLE on chart for these to work
+
+Strategy backtesting:
+- strategy_get_active → inspect the active-pane Strategy and safe snapshot metadata
+- strategy_get_trading_report → fresh canonical Report for explicit entity_id + symbol
+- strategy_get_trading_data → one oldest-first Offset/Limit batch, or a bounded file summary
+- strategy_export_trading → verified single-Symbol or sequential Active Watchlist artifact run
+- strategy_select, strategy_get_report, strategy_get_trades, data_get_strategy_results, and data_get_trades are deprecated compatibility tools; do not use them for snapshot-complete exports
 
 Changing the chart:
 - chart_set_symbol, chart_set_timeframe, chart_set_type → change ticker/resolution/style

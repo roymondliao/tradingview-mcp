@@ -439,6 +439,7 @@ Output rules：
 12. Canonical Strategy Trading Data model 與 JSON／JSONL／CSV streaming encoders。
 13. Single-Symbol verified export、完整Trade batching、五項reconciliation與atomic run artifact tree。
 14. Immutable Active Watchlist snapshot、sequential multi-Symbol export、partial/fail-fast policy與單次Chart restore。
+15. Active／Trading Report／Trading Data／Trading Export MCP parity、bounded responses與明確legacy deprecation。
 
 ## Deferred scope
 
@@ -468,7 +469,7 @@ Output rules：
 | [`TASK-007`](./TASK-007-formats-artifact-transaction.md) | JSON／JSONL／CSV encoders 與 artifact transaction | TASK-004, TASK-006 | `done` |
 | [`TASK-008`](./TASK-008-single-symbol-export.md) | Single-Symbol verified export | TASK-005, TASK-006, TASK-007 | `done` |
 | [`TASK-009`](./TASK-009-watchlist-sequential-export.md) | Active Watchlist sequential export | TASK-008 | `done` |
-| [`TASK-010`](./TASK-010-mcp-compatibility.md) | MCP parity 與 legacy compatibility | TASK-005, TASK-006, TASK-009 | `todo` |
+| [`TASK-010`](./TASK-010-mcp-compatibility.md) | MCP parity 與 legacy compatibility | TASK-005, TASK-006, TASK-009 | `done` |
 | [`TASK-011`](./TASK-011-regression-delivery-gate.md) | Regression、live evidence、docs 與 release gate | TASK-010 | `todo` |
 
 Dependency flow：
@@ -519,7 +520,7 @@ TASK-001 Runtime discovery
 - [ ] Open Trade 浮動損益不納入五項 metrics、已收 commission 正確調整總損益；breakeven 規則明確且有測試。
 - [ ] 未通過 snapshot、completeness 或 reconciliation 的 Symbol 不會發布正式 artifacts。
 - [ ] Manifest 能分辨每個 Symbol 的成功、失敗、錯誤 phase 與 artifact 狀態。
-- [ ] CLI、MCP 與 Core 使用相同 canonical schemas 與 error semantics。
+- [x] CLI、MCP 與 Core 使用相同 canonical schemas 與 error semantics。
 - [ ] Deterministic tests 與受控 live validation 都通過，且不依賴 UI download clicks。
 - [ ] 文件與 response 明確表示 Strategy Trading Data 是 Broker Emulator 的回測交易結果，不是 OHLCV 或 Broker Account 實際成交。
 

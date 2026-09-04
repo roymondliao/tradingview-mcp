@@ -196,7 +196,8 @@
 - **Trade（交易）**
   - 專指 Entry 與 Exit 配對後的交易紀錄。
   - 一筆 Trade 通常包含 Entry、Exit、Profit 與 Quantity 等資料。
-  - `strategy_get_orders` 回傳原始 Orders；`strategy_get_trades` 回傳配對後的 Trades，兩者不可混稱。
+  - `strategy_get_orders` 回傳原始 Orders；deprecated `strategy_get_trades` 回傳tail-only配對 Trades，兩者不可混稱。
+  - Snapshot-complete的新介面使用`strategy_get_trading_report`、`strategy_get_trading_data`與`strategy_export_trading`；不得以legacy tools結果冒充完整匯出。
 
 - **Strategy Trading Data（策略回測交易資料）**
   - 指 TradingView 根據 Historical Market Data、Pine Strategy、Strategy Inputs 與 Strategy Properties，透過 Broker Emulator 計算出的回測交易紀錄。

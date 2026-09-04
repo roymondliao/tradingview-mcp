@@ -1,7 +1,6 @@
 import { register } from '../router.js';
 import * as core from '../../core/strategy.js';
 import * as trading from '../../core/strategy-trading.js';
-import { writeTradingDataArtifact } from '../../core/artifacts.js';
 import { resolveTradingDataFormat } from '../../core/strategy-trading-format.js';
 import { prepareContext } from '../../core/pane.js';
 import { CoreOperationError } from '../../core/errors.js';
@@ -38,31 +37,9 @@ function requireStrategySymbolArgs(entityId, symbol, timeout, command) {
 }
 
 function requireStrategyExportArgs(entityId, { symbol, watchlist, timeout, failFast }) {
-  if (!entityId) {
-    throw new CoreOperationError('entity_id is required. Use study list --type strategy.', {
-      code: 'STRATEGY_ENTITY_REQUIRED', phase: 'request_validation',
-    });
-  }
-  if (Boolean(symbol) === Boolean(watchlist)) {
-    throw new CoreOperationError('Provide exactly one of --symbol or --watchlist active.', {
-      code: 'TRADING_EXPORT_SCOPE_INVALID', phase: 'request_validation', entity_id: entityId,
-    });
-  }
-  if (watchlist && watchlist !== 'active') {
-    throw new CoreOperationError('--watchlist currently supports only active.', {
-      code: 'WATCHLIST_SCOPE_UNSUPPORTED', phase: 'request_validation', entity_id: entityId,
-    });
-  }
-  if (symbol && !/^[^:\s]+:[^:\s]+$/.test(String(symbol).trim())) {
-    throw new CoreOperationError('--symbol must use exchange:symbol format.', {
-      code: 'SYMBOL_INVALID', phase: 'request_validation', entity_id: entityId, symbol,
-    });
-  }
-  if (failFast && !watchlist) {
-    throw new CoreOperationError('--fail-fast requires --watchlist active.', {
-      code: 'TRADING_EXPORT_SCOPE_INVALID', phase: 'request_validation', entity_id: entityId,
-    });
-  }
+  trading.validateStrategyTradingExportScope({
+    entity_id: entityId, symbol, watchlist, fail_fast: failFast,
+  });
   if (timeout != null) {
     const value = Number(timeout);
     if (!Number.isInteger(value) || value < 100 || value > 60000) {
@@ -143,12 +120,12 @@ register('strategy', {
         const entityId = positionals[0];
         requireStrategySymbolArgs(entityId, opts.symbol, opts.timeout, 'trading-data');
         const pagination = requireTradingDataPagination(opts.offset, opts.limit, opts['snapshot-id']);
-        const format = resolveTradingDataFormat({ format: opts.format, output: opts.output });
         if (opts.force && !opts.output) {
           throw new CoreOperationError('--force requires --output.', {
             code: 'OUTPUT_WRITE_FAILED', phase: 'output_validation',
           });
         }
+        const format = resolveTradingDataFormat({ format: opts.format, output: opts.output });
         const context = await prepareContext(paneContextArgs(opts));
         const result = await trading.getStrategyTradingData({
           entity_id: entityId,
@@ -157,14 +134,13 @@ register('strategy', {
           offset: pagination.offset,
           limit: pagination.limit,
           snapshot_id: opts['snapshot-id'],
+          format,
+          output: opts.output,
+          force: opts.force,
           timeout_ms: opts.timeout ? Number(opts.timeout) : undefined,
           context,
         });
-        return opts.output
-          ? writeTradingDataArtifact({
-            result, output: opts.output, format, force: opts.force,
-          })
-          : result;
+        return result;
       },
     }],
     ['trading-export', {

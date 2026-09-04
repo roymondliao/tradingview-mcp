@@ -28,6 +28,7 @@ import {
 import {
   createArtifactSetTransaction,
   safeSymbolPathSegment,
+  writeTradingDataArtifact,
 } from './artifacts.js';
 import {
   createTradingDataEncoder,
@@ -412,6 +413,9 @@ export async function getStrategyTradingData({
   offset,
   limit,
   snapshot_id,
+  format,
+  output,
+  force = false,
   context,
   timeout_ms,
   _deps,
@@ -419,8 +423,14 @@ export async function getStrategyTradingData({
   validateStrategySymbolRequest({
     entity_id, symbol, context, command: 'strategy trading-data',
   });
+  const resolvedFormat = resolveTradingDataFormat({ format, output });
+  if (force && !output) {
+    throw new CoreOperationError('--force requires --output.', {
+      code: 'OUTPUT_WRITE_FAILED', phase: 'output_validation', entity_id, symbol, context,
+    });
+  }
   const pagination = paginationValues({ offset, limit, snapshot_id });
-  return withFreshStrategySymbol({
+  const result = await withFreshStrategySymbol({
     entity_id, symbol, timeframe, context, timeout_ms,
     command: 'trading_data', _deps,
   }, ({ entity_id: requestedEntityId, inspected, session, observation }) => (
@@ -436,6 +446,40 @@ export async function getStrategyTradingData({
       _deps,
     })
   ));
+  return output
+    ? writeTradingDataArtifact({
+      result, output, format: resolvedFormat, force, _deps: _deps?.artifactDeps,
+    })
+    : result;
+}
+
+/** Validate the mutually-exclusive trading-export source before context discovery. */
+export function validateStrategyTradingExportScope({ entity_id, symbol, watchlist, fail_fast } = {}) {
+  if (!entity_id || !String(entity_id).trim()) {
+    throw new CoreOperationError('entity_id is required. Use study list --type strategy.', {
+      code: 'STRATEGY_ENTITY_REQUIRED', phase: 'request_validation',
+    });
+  }
+  if (Boolean(symbol) === Boolean(watchlist)) {
+    throw new CoreOperationError('Provide exactly one of --symbol or --watchlist active.', {
+      code: 'TRADING_EXPORT_SCOPE_INVALID', phase: 'request_validation', entity_id,
+    });
+  }
+  if (watchlist && watchlist !== 'active') {
+    throw new CoreOperationError('--watchlist currently supports only active.', {
+      code: 'WATCHLIST_SCOPE_UNSUPPORTED', phase: 'request_validation', entity_id,
+    });
+  }
+  if (symbol && !/^[^:\s]+:[^:\s]+$/.test(String(symbol).trim())) {
+    throw new CoreOperationError('--symbol must use exchange:symbol format.', {
+      code: 'SYMBOL_INVALID', phase: 'request_validation', entity_id, symbol,
+    });
+  }
+  if (fail_fast && !watchlist) {
+    throw new CoreOperationError('--fail-fast requires --watchlist active.', {
+      code: 'TRADING_EXPORT_SCOPE_INVALID', phase: 'request_validation', entity_id,
+    });
+  }
 }
 
 function artifactWriteError(error, { entity_id, symbol, context, phase = 'artifact_write' }) {
@@ -1043,6 +1087,7 @@ export async function exportStrategyWatchlist({
 
 /** Dispatch the stable trading-export contract to one Symbol or Active Watchlist. */
 export async function exportStrategyTrading(options = {}) {
+  validateStrategyTradingExportScope(options);
   if (options.watchlist != null) return exportStrategyWatchlist(options);
   return exportStrategySymbol(options);
 }
