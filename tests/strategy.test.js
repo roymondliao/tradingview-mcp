@@ -32,6 +32,79 @@ describe('Strategy Tester active Strategy read model', () => {
     assert.equal(result.strategy_count, 2);
   });
 
+  it('expands active readback with Report state and safe snapshot metadata', async () => {
+    const context = {
+      target_id: 'target-1', layout_id: 101, pane_id: '1', pane_index: 0,
+      symbol: 'TWSE_DLY:2344', resolution: '1D',
+    };
+    const report = {
+      currency: 'TWD',
+      firstTradeIndex: 0,
+      trade_count: 0,
+      settings: {
+        dateRange: {
+          backtest: { from: 1609459200000, to: 1706745600000 },
+          trade: { from: 1704067200000, to: 1706745600000 },
+        },
+      },
+      performance: {
+        all: {
+          netProfit: 0, percentProfitable: 0, totalTrades: 0, totalOpenTrades: 0,
+          numberOfWiningTrades: 0, numberOfLosingTrades: 0,
+        },
+      },
+      calculation_mode: { available: false, value: 'unknown' },
+    };
+    const result = await getActiveStrategy({
+      context,
+      _deps: {
+        getActivePaneState: async () => ({
+          symbol: 'TWSE_DLY:2344', resolution: '1D', studies: [
+            {
+              entity_id: 'strategy-1', name: 'Strategy', type: 'strategy',
+              is_active_strategy: true, report_ready: true,
+            },
+          ],
+        }),
+        readRawReportState: async () => ({
+          symbol: 'TWSE_DLY:2344',
+          timeframe: '1D',
+          status_type: 2,
+          status_error: null,
+          report_available: true,
+          report_error: null,
+          report,
+          snapshot_candidate: {
+            context: { target_id: 'target-1', layout_id: 101, pane_id: '1' },
+            entity_id: 'strategy-1',
+            requested_symbol: 'TWSE_DLY:2344',
+            resolved_symbol: 'TWSE_DLY:2344',
+            timeframe: '1D',
+            inputs_fingerprint: { available: true, value: 'inputs' },
+            calculation_mode: report.calculation_mode,
+            date_range: report.settings.dateRange,
+            currency: 'TWD',
+            first_trade_index: 0,
+            trade_count: 0,
+            closed_trades: 0,
+            open_trades: 0,
+            metrics: {
+              total_net_profit: 0, win_rate_percent: 0, total_trades: 0,
+              winning_trades: 0, losing_trades: 0,
+            },
+            first_trade_identity: null,
+            last_trade_identity: null,
+          },
+        }),
+      },
+    });
+    assert.equal(result.report_state.status, 'ready');
+    assert.equal(result.report_state.report_available, true);
+    assert.equal(result.snapshot.available, true);
+    assert.match(result.snapshot_id, /^sha256:[a-f0-9]{64}$/);
+    assert.equal(result.reconciliation_metrics.total_trades, 0);
+  });
+
   it('does not guess when Strategies exist but no report is ready', async () => {
     const result = await getActiveStrategy({
       _deps: { getActivePaneState: async () => ({ studies: [
@@ -75,18 +148,28 @@ describe('Strategy Instance selection', () => {
 
   it('selects an explicit Strategy and verifies active/report readback', async () => {
     let stateCall = 0;
-    let expression = '';
+    let activationCalled = false;
     const result = await selectStrategy({
       entity_id: 'strategy', timeout_ms: 100,
       _deps: {
         getActivePaneState: async () => (++stateCall === 1 ? pending : ready),
-        evaluate: async (source) => { expression = source; return { method: 'activeStrategySource.setValue' }; },
+        callPageFunction: async (fn) => {
+          if (fn.name === 'activateSourcePage') {
+            activationCalled = true;
+            return { method: 'activeStrategySource.setValue' };
+          }
+          return {
+            source_found: true,
+            active_source: stateCall > 1,
+            capabilities: { report_data: true, status: true },
+          };
+        },
         delay: async () => {},
       },
     });
     assert.equal(result.active_strategy.entity_id, 'strategy');
     assert.equal(result.selection_method, 'activeStrategySource.setValue');
-    assert.match(expression, /setActiveStrategySource/);
+    assert.equal(activationCalled, true);
   });
 
   it('makes a hidden Strategy visible and reports the change', async () => {
@@ -98,7 +181,11 @@ describe('Strategy Instance selection', () => {
           studies: [{ ...pending.studies[0], visible: false }],
         },
         toggleStudyVisibility: async () => { toggled = true; return { success: true }; },
-        evaluate: async () => ({ method: 'already_active' }),
+        callPageFunction: async () => ({
+          source_found: true,
+          active_source: true,
+          capabilities: { report_data: true, status: true },
+        }),
         delay: async () => {},
       },
     });
@@ -109,7 +196,7 @@ describe('Strategy Instance selection', () => {
     let evaluated = false;
     const deps = {
       getActivePaneState: async () => pending,
-      evaluate: async () => { evaluated = true; },
+      callPageFunction: async () => { evaluated = true; },
     };
     await assert.rejects(() => selectStrategy({ entity_id: 'indicator', _deps: deps }), /not a strategy/);
     await assert.rejects(() => selectStrategy({ entity_id: 'missing', _deps: deps }), /not found/);
@@ -121,7 +208,13 @@ describe('Strategy Instance selection', () => {
       entity_id: 'strategy', timeout_ms: 100,
       _deps: {
         getActivePaneState: async () => pending,
-        evaluate: async () => ({ error: 'TradingView build does not expose a Strategy selection adapter' }),
+        callPageFunction: async (fn) => fn.name === 'activateSourcePage'
+          ? { error: 'TradingView build does not expose a Strategy selection adapter', error_code: 'STRATEGY_ACTIVATION_FAILED' }
+          : {
+              source_found: true,
+              active_source: false,
+              capabilities: { report_data: true, status: true },
+            },
       },
     }), /does not expose/);
   });

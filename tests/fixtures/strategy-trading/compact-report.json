@@ -1,0 +1,77 @@
+{
+  "fixture_schema_version": 1,
+  "origin": "sanitized Desktop 3.3.0 compact runtime shape",
+  "calculation_mode": {
+    "available": false,
+    "value": "unknown"
+  },
+  "report": {
+    "firstTradeIndex": 0,
+    "currency": "USD",
+    "settings": {
+      "dateRange": {
+        "backtest": {
+          "from": 1609459200000,
+          "to": 1706745600000
+        },
+        "trade": {
+          "from": 1704067200000,
+          "to": 1706745600000
+        }
+      }
+    },
+    "performance": {
+      "all": {
+        "netProfit": 25,
+        "percentProfitable": 0.5,
+        "totalTrades": 2,
+        "totalOpenTrades": 1,
+        "numberOfWiningTrades": 1,
+        "numberOfLosingTrades": 1
+      }
+    },
+    "trades": [
+      {
+        "e": { "b": 10, "c": "Long", "p": 100, "tm": 1704067200000, "tp": "le" },
+        "x": { "b": 15, "c": "Take profit", "p": 110, "tm": 1704499200000, "tp": "lx" },
+        "q": 2,
+        "v": 200,
+        "tp": { "v": 19, "p": 0.095 },
+        "cm": 1,
+        "rn": { "v": 24, "p": 0.12 },
+        "dd": { "v": 4, "p": 0.02 },
+        "cp": { "v": 19, "p": 0.095 }
+      },
+      {
+        "e": { "b": 20, "c": "Long", "p": 120, "tm": 1704931200000, "tp": "le" },
+        "x": { "b": 24, "c": "Stop", "p": 110, "tm": 1705276800000, "tp": "lx" },
+        "q": 1,
+        "v": 120,
+        "tp": { "v": -10.5, "p": -0.0875 },
+        "cm": 0.5,
+        "rn": { "v": 3, "p": 0.025 },
+        "dd": { "v": 12, "p": 0.1 },
+        "cp": { "v": 8.5, "p": 0.0283333333 }
+      },
+      {
+        "e": { "b": 30, "c": "Long", "p": 90, "tm": 1706745600000, "tp": "le" },
+        "x": { "b": 31, "c": "", "p": 92, "tm": 1706832000000, "tp": "lx" },
+        "q": 2,
+        "v": 180,
+        "tp": { "v": 3, "p": 0.0166666667 },
+        "cm": 1,
+        "rn": { "v": 6, "p": 0.0333333333 },
+        "dd": { "v": 2, "p": 0.0111111111 },
+        "cp": { "v": 11.5, "p": 0.0383333333 }
+      }
+    ]
+  },
+  "freshness_evidence": {
+    "status_type_sequence": [2, 1, 2],
+    "report_available_sequence": [true, false, true],
+    "report_changed_events_observed": true,
+    "status_changed_events_observed": true,
+    "calculation_time_changed": false,
+    "resolved_symbol_alias_observed": true
+  }
+}

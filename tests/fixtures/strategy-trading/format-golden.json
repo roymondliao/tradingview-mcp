@@ -1,0 +1,87 @@
+{
+  "metadata": {
+    "success": true,
+    "schema_version": 1,
+    "snapshot_id": "sha256:golden",
+    "symbol": "TWSE_DLY:2344",
+    "timeframe": "1D",
+    "currency": "TWD",
+    "ordering": "oldest_first",
+    "total": 2,
+    "offset": 0,
+    "limit": 2,
+    "returned": 2,
+    "next_offset": null,
+    "has_more": false,
+    "complete": true
+  },
+  "trades": [
+    {
+      "schema_version": 1,
+      "report_index": 0,
+      "trade_number": 1,
+      "status": "closed",
+      "entry": {
+        "label": "進場,\"A\"\nnext",
+        "direction": "long",
+        "price": 100,
+        "time": 1704067200000,
+        "time_iso": "2024-01-01T00:00:00.000Z",
+        "bar_index": 10,
+        "type": "le"
+      },
+      "exit": {
+        "label": "Exit",
+        "direction": "long",
+        "price": 110,
+        "time": 1704499200000,
+        "time_iso": "2024-01-06T00:00:00.000Z",
+        "bar_index": 15,
+        "type": "lx"
+      },
+      "mark": null,
+      "quantity": 1,
+      "position_value": 100,
+      "profit": { "value": 9, "percent": 9 },
+      "commission": 1,
+      "run_up": { "value": 12, "percent": 12 },
+      "drawdown": { "value": 2, "percent": 2 },
+      "cumulative_profit": { "value": 9, "percent": 9 },
+      "duration_bars": 5,
+      "currency": "TWD"
+    },
+    {
+      "schema_version": 1,
+      "report_index": 1,
+      "trade_number": 2,
+      "status": "open",
+      "entry": {
+        "label": "Open",
+        "direction": "short",
+        "price": 120,
+        "time": 1704931200000,
+        "time_iso": "2024-01-11T00:00:00.000Z",
+        "bar_index": 20,
+        "type": "se"
+      },
+      "exit": null,
+      "mark": {
+        "direction": "short",
+        "price": 115,
+        "time": 1705276800000,
+        "time_iso": "2024-01-15T00:00:00.000Z",
+        "bar_index": 24,
+        "type": "sx"
+      },
+      "quantity": 2,
+      "position_value": 240,
+      "profit": { "value": 8, "percent": 3.3333333333 },
+      "commission": 1.5,
+      "run_up": { "value": 10, "percent": 4.1666666667 },
+      "drawdown": { "value": null, "percent": null },
+      "cumulative_profit": { "value": 17, "percent": 12.3333333333 },
+      "duration_bars": 4,
+      "currency": "TWD"
+    }
+  ]
+}

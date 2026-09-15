@@ -2,8 +2,10 @@
  * Core pane/layout management logic.
  * Controls multi-chart layouts (split panes) in TradingView.
  */
-import { evaluate, evaluateAsync, getTargetInfo, safeString } from '../connection.js';
+import { evaluate, evaluateAsync, getTargetInfo, reconnectTo, safeString } from '../connection.js';
 import { attachTab, identifyTab } from './tab.js';
+import { CoreOperationError } from './errors.js';
+import { chartRuntimeMetadataExpression } from './layout-identity.js';
 
 const CWC = 'window.TradingViewApi._chartWidgetCollection';
 
@@ -32,66 +34,26 @@ const LAYOUT_NAMES = {
  * List all panes in the current layout with their symbols and index.
  */
 export async function list() {
-  const result = await evaluate(`
-    (function() {
-      var cwc = ${CWC};
-      var layoutType = cwc._layoutType;
-      if (typeof layoutType === 'object' && layoutType && typeof layoutType.value === 'function') layoutType = layoutType.value();
-      var count = cwc.inlineChartsCount;
-      if (typeof count === 'object' && count && typeof count.value === 'function') count = count.value();
-
-      var all = cwc.getAll();
-      var saver = window.TradingViewApi._saveChartService && window.TradingViewApi._saveChartService._chartSaver;
-      var saved = saver && saver._prevChartState ? saver._prevChartState : null;
-      var savedContent = null;
-      try { savedContent = saved && saved.content ? JSON.parse(saved.content) : null; } catch (e) {}
-      var savedCharts = savedContent && Array.isArray(savedContent.charts) ? savedContent.charts : [];
-      var panes = [];
-      for (var i = 0; i < all.length; i++) {
-        try {
-          var c = all[i];
-          var model = c.model ? c.model() : null;
-          var mainSeries = model ? model.mainSeries() : null;
-          var sym = mainSeries ? mainSeries.symbol() : 'unknown';
-          var res = mainSeries ? mainSeries.interval() : null;
-          panes.push({
-            index: i,
-            pane_index: i,
-            pane_id: savedCharts[i] && savedCharts[i].chartId != null ? String(savedCharts[i].chartId) : null,
-            symbol: sym,
-            resolution: res || null
-          });
-        } catch(e) { panes.push({ index: i, pane_index: i, pane_id: null, error: e.message }); }
-      }
-
-      // Check which pane is active
-      var activeChart = window.TradingViewApi._activeChartWidgetWV.value();
-      var activeIndex = null;
-      for (var j = 0; j < all.length; j++) {
-        try {
-          if (all[j].model && activeChart._chartWidget && all[j] === activeChart._chartWidget) { activeIndex = j; break; }
-        } catch(e) {}
-      }
-
-      for (var k = 0; k < panes.length; k++) panes[k].active = panes[k].pane_index === activeIndex;
-      return {
-        layout: layoutType,
-        layout_id: saved && saved.id != null ? saved.id : null,
-        layout_name: saved ? (saved.name || saved.description || null) : null,
-        chart_count: count,
-        active_index: activeIndex,
-        panes: panes
-      };
-    })()
-  `);
+  const metadata = await evaluateAsync(chartRuntimeMetadataExpression());
+  const result = {
+    layout: metadata.layout?.pane_layout ?? null,
+    layout_id: metadata.layout?.layout_id ?? null,
+    saved_layout_id: metadata.layout?.saved_layout_id ?? null,
+    layout_name: metadata.layout?.layout_name ?? null,
+    chart_count: metadata.chart_count,
+    active_index: metadata.active_index,
+    panes: metadata.panes,
+  };
 
   const target = await getTargetInfo();
+  const urlChartId = target?.url?.match(/\/chart\/([^/?]+)/)?.[1] || null;
 
   return {
     success: true,
     target_id: target?.id || null,
-    url_chart_id: target?.url?.match(/\/chart\/([^/?]+)/)?.[1] || null,
-    layout_id: result.layout_id,
+    url_chart_id: urlChartId,
+    layout_id: result.layout_id || urlChartId,
+    saved_layout_id: result.saved_layout_id,
     layout_name: result.layout_name,
     pane_layout: result.layout,
     pane_layout_name: LAYOUT_NAMES[result.layout] || result.layout,
@@ -178,15 +140,23 @@ export async function focus({ index }) {
 }
 
 /** Resolve an explicit Tab/Layout/Pane selector and return the chosen context. */
-export async function prepareContext({ tab_index, url_chart_id, layout_id, pane_index, _deps } = {}) {
+export async function prepareContext({
+  tab_index, url_chart_id, layout_id, saved_layout_id, pane_index, _deps,
+} = {}) {
   const attach = _deps?.attachTab || attachTab;
   const identify = _deps?.identifyTab || identifyTab;
   const listPanes = _deps?.list || list;
   const focusPane = _deps?.focus || focus;
-  const attached = await attach({ tab_index, url_chart_id, layout_id });
+  const attached = await attach({ tab_index, url_chart_id, layout_id, saved_layout_id });
   let inventory = await listPanes();
   if (layout_id != null && String(inventory.layout_id) !== String(layout_id)) {
     throw new Error(`Attached Layout ${inventory.layout_id} does not match requested layout_id ${layout_id}`);
+  }
+  if (
+    saved_layout_id != null
+    && String(inventory.saved_layout_id) !== String(saved_layout_id)
+  ) {
+    throw new Error(`Attached Saved Layout ${inventory.saved_layout_id} does not match requested saved_layout_id ${saved_layout_id}`);
   }
   let selectedIndex;
   if (pane_index != null) {
@@ -208,6 +178,7 @@ export async function prepareContext({ tab_index, url_chart_id, layout_id, pane_
     target_id: inventory.target_id,
     url_chart_id: inventory.url_chart_id,
     layout_id: inventory.layout_id,
+    saved_layout_id: inventory.saved_layout_id,
     layout_name: inventory.layout_name,
     pane_layout: inventory.pane_layout,
     pane_index: selectedPane.pane_index,
@@ -215,6 +186,156 @@ export async function prepareContext({ tab_index, url_chart_id, layout_id, pane_
     symbol: selectedPane.symbol,
     resolution: selectedPane.resolution,
   };
+}
+
+/** Normalize only runtime aliases verified by live Strategy Trading discovery. */
+export function normalizeSymbolIdentity(symbol) {
+  if (symbol == null) return null;
+  const normalized = String(symbol).trim().toUpperCase();
+  const separator = normalized.indexOf(':');
+  if (separator < 1 || separator === normalized.length - 1) return normalized;
+  const exchange = normalized.slice(0, separator).replace(/_DLY$/, '');
+  return `${exchange}:${normalized.slice(separator + 1)}`;
+}
+
+export function symbolIdentitiesMatch(expected, actual) {
+  if (expected == null || actual == null) return false;
+  return normalizeSymbolIdentity(expected) === normalizeSymbolIdentity(actual);
+}
+
+function contextChanged(message, { context, phase, symbol, cause } = {}) {
+  return new CoreOperationError(message, {
+    code: 'PANE_CONTEXT_CHANGED',
+    phase,
+    symbol,
+    retryable: false,
+    context,
+    cause,
+  });
+}
+
+function assertInventoryOwnership(context, inventory, phase) {
+  if (inventory.target_id !== context.target_id) {
+    throw contextChanged(`Chart target changed from ${context.target_id} to ${inventory.target_id || 'unresolved'}.`, {
+      context, phase,
+    });
+  }
+  if (context.url_chart_id != null && String(inventory.url_chart_id) !== String(context.url_chart_id)) {
+    throw contextChanged(`Chart URL identity changed for target ${context.target_id}.`, { context, phase });
+  }
+  if (context.layout_id != null && String(inventory.layout_id) !== String(context.layout_id)) {
+    throw contextChanged(`Chart Layout changed from ${context.layout_id} to ${inventory.layout_id || 'unresolved'}.`, {
+      context, phase,
+    });
+  }
+  if (
+    context.saved_layout_id != null
+    && String(inventory.saved_layout_id) !== String(context.saved_layout_id)
+  ) {
+    throw contextChanged(`Saved Layout changed from ${context.saved_layout_id} to ${inventory.saved_layout_id || 'unresolved'}.`, {
+      context, phase,
+    });
+  }
+  if (context.pane_layout != null && String(inventory.pane_layout) !== String(context.pane_layout)) {
+    throw contextChanged(`Pane Layout changed from ${context.pane_layout} to ${inventory.pane_layout || 'unresolved'}.`, {
+      context, phase,
+    });
+  }
+  const pane = (inventory.panes || []).find((item) => item.pane_index === context.pane_index);
+  if (!pane) {
+    throw contextChanged(`Pane index ${context.pane_index} no longer exists in the resolved Layout.`, { context, phase });
+  }
+  if (context.pane_id != null && String(pane.pane_id) !== String(context.pane_id)) {
+    throw contextChanged(`Pane ownership changed at index ${context.pane_index}.`, { context, phase });
+  }
+  return pane;
+}
+
+/**
+ * Reacquire one immutable target/layout/pane identity and optionally focus it.
+ * Tab index is deliberately not revalidated after resolution because closing a
+ * different Desktop Tab can change ordinals without changing target identity.
+ */
+export async function activatePaneContext({ context, phase = 'pane_context', activate = true, reacquire = true, _deps } = {}) {
+  if (!context?.target_id || !Number.isInteger(context?.pane_index)) {
+    throw new CoreOperationError('Resolved context requires target_id and pane_index.', {
+      code: 'CHART_SESSION_INVALID', phase, context,
+    });
+  }
+  const identify = _deps?.identifyTab || identifyTab;
+  const reconnect = _deps?.reconnectTo || reconnectTo;
+  const listPanes = _deps?.list || list;
+  const focusPane = _deps?.focus || focus;
+  try {
+    if (reacquire) {
+      const tab = await identify(context.target_id);
+      if (!tab) throw contextChanged(`Chart target is closed or unavailable: ${context.target_id}`, { context, phase });
+      if (context.url_chart_id != null && String(tab.url_chart_id) !== String(context.url_chart_id)) {
+        throw contextChanged(`Chart URL identity changed for target ${context.target_id}.`, { context, phase });
+      }
+      await reconnect(context.target_id);
+    }
+
+    let inventory = await listPanes();
+    let pane = assertInventoryOwnership(context, inventory, phase);
+    if (activate && inventory.active_index !== context.pane_index) {
+      await focusPane({ index: context.pane_index });
+      inventory = await listPanes();
+      pane = assertInventoryOwnership(context, inventory, phase);
+      if (inventory.active_index !== context.pane_index) {
+        throw contextChanged(`Pane focus readback failed for index ${context.pane_index}.`, { context, phase });
+      }
+    }
+    return {
+      target_id: inventory.target_id,
+      url_chart_id: inventory.url_chart_id,
+      layout_id: inventory.layout_id,
+      saved_layout_id: inventory.saved_layout_id,
+      pane_layout: inventory.pane_layout,
+      pane_index: pane.pane_index,
+      pane_id: pane.pane_id,
+      symbol: pane.symbol,
+      resolution: pane.resolution,
+      active: inventory.active_index === pane.pane_index,
+    };
+  } catch (error) {
+    if (error instanceof CoreOperationError) throw error;
+    if (error?.code === 'CDP_TARGET_NOT_FOUND') {
+      throw contextChanged(`Chart target is closed or unavailable: ${context.target_id}`, {
+        context, phase, cause: error,
+      });
+    }
+    if (!String(error?.code || '').startsWith('CDP_')) {
+      throw contextChanged(`Unable to reacquire the expected Pane context: ${error?.message || String(error)}`, {
+        context, phase, cause: error,
+      });
+    }
+    throw error;
+  }
+}
+
+/** Reacquire and verify structural ownership plus expected Symbol/Timeframe. */
+export async function assertPaneContext({
+  context,
+  symbol = context?.symbol,
+  timeframe = context?.resolution,
+  phase = 'pane_context',
+  activate = true,
+  reacquire = true,
+  _deps,
+} = {}) {
+  const readback = await activatePaneContext({ context, phase, activate, reacquire, _deps });
+  if (symbol != null && !symbolIdentitiesMatch(symbol, readback.symbol)) {
+    throw contextChanged(`Pane Symbol changed from ${symbol} to ${readback.symbol || 'unresolved'}.`, {
+      context, phase, symbol,
+    });
+  }
+  if (timeframe != null && String(readback.resolution) !== String(timeframe)) {
+    throw contextChanged(`Pane Timeframe changed from ${timeframe} to ${readback.resolution || 'unresolved'}.`, {
+      context, phase, symbol,
+    });
+  }
+  return readback;
 }
 
 /**

@@ -11,6 +11,7 @@ import { execFileSync, execSync } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { readFileSync, writeFileSync, unlinkSync } from 'fs';
+import { resultExitCode } from '../src/cli/router.js';
 
 function require_fs() { return { writeFileSync, unlinkSync }; }
 
@@ -37,6 +38,12 @@ function run(args, opts = {}) {
 }
 
 describe('CLI — help and routing', () => {
+  it('maps partial and CDP result summaries to stable process exit codes', () => {
+    assert.equal(resultExitCode({ success: true }), 0);
+    assert.equal(resultExitCode({ success: false, failure_kind: 'partial' }), 1);
+    assert.equal(resultExitCode({ success: false, failure_kind: 'cdp_connection' }), 2);
+  });
+
   it('--help shows command list', () => {
     const { stdout, exitCode } = run(['--help']);
     assert.equal(exitCode, 0);
@@ -105,11 +112,156 @@ describe('CLI — help and routing', () => {
     const { stdout, exitCode } = run(['strategy', '--help']);
     assert.equal(exitCode, 0);
     assert.ok(stdout.includes('active'));
+    assert.ok(stdout.includes('trading-report'));
+    assert.ok(stdout.includes('trading-data'));
+    assert.ok(stdout.includes('trading-export'));
     assert.ok(stdout.includes('select'));
     assert.ok(stdout.includes('report'));
     assert.ok(stdout.includes('orders'));
     assert.ok(stdout.includes('trades'));
     assert.ok(stdout.includes('equity'));
+    assert.doesNotMatch(stdout, /trading-(?:report|data|export)(?:Get|Export)/);
+  });
+
+  it('strategy trading-data help exposes Offset/Limit/Snapshot pagination', () => {
+    const { stdout, exitCode } = run(['strategy', 'trading-data', '--help']);
+    assert.equal(exitCode, 0);
+    assert.ok(stdout.includes('<entity-id>'));
+    assert.ok(stdout.includes('--symbol'));
+    assert.ok(stdout.includes('--offset'));
+    assert.ok(stdout.includes('--limit'));
+    assert.ok(stdout.includes('--snapshot-id'));
+    assert.ok(stdout.includes('--format'));
+    assert.ok(stdout.includes('--output'));
+    assert.ok(stdout.includes('--force'));
+    assert.ok(stdout.includes('--layout-id'));
+    assert.ok(stdout.includes('--saved-layout-id'));
+    assert.ok(stdout.includes('--pane-index'));
+  });
+
+  it('strategy trading-data validates pagination before CDP discovery', () => {
+    const missingSnapshot = run([
+      'strategy', 'trading-data', 'strategy-1', '--symbol', 'TWSE:2344', '--offset', '1',
+    ]);
+    assert.equal(missingSnapshot.exitCode, 1);
+    assert.equal(JSON.parse(missingSnapshot.stderr).code, 'STALE_STRATEGY_SNAPSHOT');
+    const invalidOffset = run([
+      'strategy', 'trading-data', 'strategy-1', '--symbol', 'TWSE:2344', '--offset', '-1',
+    ]);
+    assert.equal(invalidOffset.exitCode, 1);
+    assert.equal(JSON.parse(invalidOffset.stderr).code, 'STRATEGY_RUNTIME_INVALID');
+    const invalidLimit = run([
+      'strategy', 'trading-data', 'strategy-1', '--symbol', 'TWSE:2344', '--limit', '5001',
+    ]);
+    assert.equal(invalidLimit.exitCode, 1);
+    assert.equal(JSON.parse(invalidLimit.stderr).code, 'STRATEGY_RUNTIME_INVALID');
+    const unsupportedFormat = run([
+      'strategy', 'trading-data', 'strategy-1', '--symbol', 'TWSE:2344', '--format', 'xlsx',
+    ]);
+    assert.equal(unsupportedFormat.exitCode, 1);
+    assert.equal(JSON.parse(unsupportedFormat.stderr).code, 'OUTPUT_FORMAT_UNSUPPORTED');
+    const extensionMismatch = run([
+      'strategy', 'trading-data', 'strategy-1', '--symbol', 'TWSE:2344',
+      '--format', 'csv', '--output', 'trades.json',
+    ]);
+    assert.equal(extensionMismatch.exitCode, 1);
+    assert.equal(JSON.parse(extensionMismatch.stderr).code, 'OUTPUT_FORMAT_EXTENSION_MISMATCH');
+    const forceWithoutOutput = run([
+      'strategy', 'trading-data', 'strategy-1', '--symbol', 'TWSE:2344', '--force',
+    ]);
+    assert.equal(forceWithoutOutput.exitCode, 1);
+    assert.equal(JSON.parse(forceWithoutOutput.stderr).code, 'OUTPUT_WRITE_FAILED');
+  });
+
+  it('strategy trading-report help exposes required Symbol and context options', () => {
+    const { stdout, exitCode } = run(['strategy', 'trading-report', '--help']);
+    assert.equal(exitCode, 0);
+    assert.ok(stdout.includes('<entity-id>'));
+    assert.ok(stdout.includes('--symbol'));
+    assert.ok(stdout.includes('--timeframe'));
+    assert.ok(stdout.includes('--timeout'));
+    assert.ok(stdout.includes('--tab-index'));
+    assert.ok(stdout.includes('--layout-id'));
+    assert.ok(stdout.includes('--saved-layout-id'));
+    assert.ok(stdout.includes('--pane-index'));
+  });
+
+  it('strategy trading-report rejects missing required inputs before CDP discovery', () => {
+    const missingEntity = run(['strategy', 'trading-report', '--symbol', 'TWSE:2344']);
+    assert.equal(missingEntity.exitCode, 1);
+    assert.equal(JSON.parse(missingEntity.stderr).code, 'STRATEGY_ENTITY_REQUIRED');
+    const missingSymbol = run(['strategy', 'trading-report', 'strategy-1']);
+    assert.equal(missingSymbol.exitCode, 1);
+    assert.equal(JSON.parse(missingSymbol.stderr).code, 'SYMBOL_REQUIRED');
+    const invalidSymbol = run(['strategy', 'trading-report', 'strategy-1', '--symbol', '2344']);
+    assert.equal(invalidSymbol.exitCode, 1);
+    assert.equal(JSON.parse(invalidSymbol.stderr).code, 'SYMBOL_INVALID');
+    const invalidTimeout = run([
+      'strategy', 'trading-report', 'strategy-1', '--symbol', 'TWSE:2344', '--timeout', 'forever',
+    ]);
+    assert.equal(invalidTimeout.exitCode, 1);
+    assert.equal(JSON.parse(invalidTimeout.stderr).code, 'STRATEGY_RUNTIME_INVALID');
+  });
+
+  it('strategy trading-export help exposes Symbol and Active Watchlist options', () => {
+    const { stdout, exitCode } = run(['strategy', 'trading-export', '--help']);
+    assert.equal(exitCode, 0);
+    assert.ok(stdout.includes('<entity-id>'));
+    assert.ok(stdout.includes('--symbol'));
+    assert.ok(stdout.includes('--watchlist'));
+    assert.ok(stdout.includes('--timeframe'));
+    assert.ok(stdout.includes('--output'));
+    assert.ok(stdout.includes('--format'));
+    assert.ok(stdout.includes('--force'));
+    assert.ok(stdout.includes('--fail-fast'));
+    assert.ok(stdout.includes('--timeout'));
+    assert.ok(stdout.includes('--layout-id'));
+    assert.ok(stdout.includes('--pane-index'));
+  });
+
+  it('strategy trading-export validates required inputs before CDP discovery', () => {
+    const missingEntity = run([
+      'strategy', 'trading-export', '--symbol', 'TWSE:2344', '--output', '/tmp/export',
+    ]);
+    assert.equal(missingEntity.exitCode, 1);
+    assert.equal(JSON.parse(missingEntity.stderr).code, 'STRATEGY_ENTITY_REQUIRED');
+    const missingScope = run([
+      'strategy', 'trading-export', 'strategy-1', '--output', '/tmp/export',
+    ]);
+    assert.equal(missingScope.exitCode, 1);
+    assert.equal(JSON.parse(missingScope.stderr).code, 'TRADING_EXPORT_SCOPE_INVALID');
+    const missingOutput = run([
+      'strategy', 'trading-export', 'strategy-1', '--symbol', 'TWSE:2344',
+    ]);
+    assert.equal(missingOutput.exitCode, 1);
+    assert.equal(JSON.parse(missingOutput.stderr).code, 'OUTPUT_WRITE_FAILED');
+    const invalidFormat = run([
+      'strategy', 'trading-export', 'strategy-1', '--symbol', 'TWSE:2344',
+      '--output', '/tmp/export', '--format', 'xlsx',
+    ]);
+    assert.equal(invalidFormat.exitCode, 1);
+    assert.equal(JSON.parse(invalidFormat.stderr).code, 'OUTPUT_FORMAT_UNSUPPORTED');
+
+    const conflictingScope = run([
+      'strategy', 'trading-export', 'strategy-1', '--symbol', 'TWSE:2344',
+      '--watchlist', 'active', '--output', '/tmp/export',
+    ]);
+    assert.equal(conflictingScope.exitCode, 1);
+    assert.equal(JSON.parse(conflictingScope.stderr).code, 'TRADING_EXPORT_SCOPE_INVALID');
+
+    const unsupportedWatchlist = run([
+      'strategy', 'trading-export', 'strategy-1', '--watchlist', 'favorites',
+      '--output', '/tmp/export',
+    ]);
+    assert.equal(unsupportedWatchlist.exitCode, 1);
+    assert.equal(JSON.parse(unsupportedWatchlist.stderr).code, 'WATCHLIST_SCOPE_UNSUPPORTED');
+
+    const misplacedFailFast = run([
+      'strategy', 'trading-export', 'strategy-1', '--symbol', 'TWSE:2344',
+      '--output', '/tmp/export', '--fail-fast',
+    ]);
+    assert.equal(misplacedFailFast.exitCode, 1);
+    assert.equal(JSON.parse(misplacedFailFast.stderr).code, 'TRADING_EXPORT_SCOPE_INVALID');
   });
 
   it('ohlcv --help shows options', () => {
@@ -128,6 +280,7 @@ describe('CLI — help and routing', () => {
     assert.ok(stdout.includes('--output'));
     assert.ok(stdout.includes('--force'));
     assert.ok(stdout.includes('--layout-id'));
+    assert.ok(stdout.includes('--saved-layout-id'));
     assert.ok(stdout.includes('--pane-index'));
   });
 
@@ -137,6 +290,7 @@ describe('CLI — help and routing', () => {
     assert.ok(stdout.includes('--tab-index'));
     assert.ok(stdout.includes('--url-chart-id'));
     assert.ok(stdout.includes('--layout-id'));
+    assert.ok(stdout.includes('--saved-layout-id'));
     assert.ok(stdout.includes('--pane-index'));
   });
 

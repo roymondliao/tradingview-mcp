@@ -158,7 +158,18 @@ export async function layoutList() {
       try {
         window.TradingViewApi.getSavedCharts(function(charts) {
           if (!charts || !Array.isArray(charts)) { resolve({layouts: [], source: 'internal_api', error: 'getSavedCharts returned no data'}); return; }
-          var result = charts.map(function(c) { return { id: c.id || c.chartId || null, name: c.name || c.title || 'Untitled', symbol: c.symbol || null, resolution: c.resolution || null, modified: c.timestamp || c.modified || null }; });
+          var result = charts.map(function(c) {
+            var savedId = c.id || c.chartId || null;
+            return {
+              id: savedId,
+              layout_id: c.url == null ? null : String(c.url),
+              saved_layout_id: savedId,
+              name: c.name || c.title || 'Untitled',
+              symbol: c.symbol || null,
+              resolution: c.resolution || null,
+              modified: c.timestamp || c.modified || null
+            };
+          });
           resolve({layouts: result, source: 'internal_api'});
         });
         setTimeout(function() { resolve({layouts: [], source: 'internal_api', error: 'getSavedCharts timed out'}); }, 5000);
@@ -178,16 +189,42 @@ export async function layoutSwitch({ name }) {
     new Promise(function(resolve) {
       try {
         var target = ${escaped};
-        if (/^\\d+$/.test(target)) { window.TradingViewApi.loadChartFromServer(target); resolve({success: true, method: 'loadChartFromServer', id: target, source: 'internal_api'}); return; }
+        var byStorageId = /^\\d+$/.test(target);
         window.TradingViewApi.getSavedCharts(function(charts) {
-          if (!charts || !Array.isArray(charts)) { resolve({success: false, error: 'getSavedCharts returned no data', source: 'internal_api'}); return; }
+          if (!charts || !Array.isArray(charts)) {
+            if (byStorageId) {
+              window.TradingViewApi.loadChartFromServer(target);
+              resolve({success:true, method:'loadChartFromServer', id:target, url:null, source:'internal_api'});
+              return;
+            }
+            resolve({success:false, error:'getSavedCharts returned no data', source:'internal_api'});
+            return;
+          }
           var match = null;
-          for (var i = 0; i < charts.length; i++) { var cname = charts[i].name || charts[i].title || ''; if (cname === target || cname.toLowerCase() === target.toLowerCase()) { match = charts[i]; break; } }
-          if (!match) { for (var j = 0; j < charts.length; j++) { var cn = (charts[j].name || charts[j].title || '').toLowerCase(); if (cn.indexOf(target.toLowerCase()) !== -1) { match = charts[j]; break; } } }
+          if (byStorageId) {
+            for (var i = 0; i < charts.length; i++) {
+              if (String(charts[i].id || charts[i].chartId) === target) { match = charts[i]; break; }
+            }
+          } else {
+            for (var j = 0; j < charts.length; j++) { var cname = charts[j].name || charts[j].title || ''; if (cname === target || cname.toLowerCase() === target.toLowerCase()) { match = charts[j]; break; } }
+            if (!match) { for (var k = 0; k < charts.length; k++) { var cn = (charts[k].name || charts[k].title || '').toLowerCase(); if (cn.indexOf(target.toLowerCase()) !== -1) { match = charts[k]; break; } } }
+          }
+          if (!match && byStorageId) {
+            window.TradingViewApi.loadChartFromServer(target);
+            resolve({success:true, method:'loadChartFromServer', id:target, url:null, source:'internal_api'});
+            return;
+          }
           if (!match) { resolve({success: false, error: 'Layout "' + target + '" not found.', source: 'internal_api'}); return; }
           var chartId = match.id || match.chartId;
           window.TradingViewApi.loadChartFromServer(chartId);
-          resolve({success: true, method: 'loadChartFromServer', id: chartId, name: match.name || match.title, source: 'internal_api'});
+          resolve({
+            success: true,
+            method: 'loadChartFromServer',
+            id: chartId,
+            url: match.url == null ? null : String(match.url),
+            name: match.name || match.title,
+            source: 'internal_api'
+          });
         });
         setTimeout(function() { resolve({success: false, error: 'getSavedCharts timed out', source: 'internal_api'}); }, 5000);
       } catch(e) { resolve({success: false, error: e.message, source: 'internal_api'}); }
@@ -212,7 +249,15 @@ export async function layoutSwitch({ name }) {
   `);
 
   if (dismissed) await new Promise(r => setTimeout(r, 1000));
-  return { success: true, layout: result.name || name, layout_id: result.id, source: result.source, action: 'switched', unsaved_dialog_dismissed: dismissed };
+  return {
+    success: true,
+    layout: result.name || name,
+    layout_id: result.url || null,
+    saved_layout_id: result.id,
+    source: result.source,
+    action: 'switched',
+    unsaved_dialog_dismissed: dismissed,
+  };
 }
 
 export async function keyboard({ key, modifiers }) {

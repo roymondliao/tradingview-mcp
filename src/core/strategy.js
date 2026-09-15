@@ -2,13 +2,17 @@
  * Strategy Tester operations that act on explicit Active Pane Strategy Instances.
  */
 import { getActivePaneState as _getActivePaneState } from './studies.js';
-import { toggleStudyVisibility as _toggleStudyVisibility } from './studies.js';
 import { evaluate as _evaluate, safeString } from '../connection.js';
 import { unixSecondsToIso } from './time.js';
+import {
+  ensureStrategyActive as _ensureStrategyActive,
+  readRawReportState as _readRawReportState,
+} from './strategy-runtime.js';
+import { createSnapshotIdentity, normalizeTradingReport } from './strategy-trading-model.js';
 
 const CHART_API = 'window.TradingViewApi._activeChartWidgetWV.value()';
 
-export async function getActiveStrategy({ _deps } = {}) {
+export async function getActiveStrategy({ context, _deps } = {}) {
   const getState = _deps?.getActivePaneState || _getActivePaneState;
   const state = await getState({ _deps });
   const strategies = (state.studies || []).filter((study) => study.type === 'strategy');
@@ -18,94 +22,98 @@ export async function getActiveStrategy({ _deps } = {}) {
     throw new Error(`Strategy Tester active Strategy readback is ambiguous (${active.length} report-ready Strategies).`);
   }
 
-  return {
+  const base = {
     success: true,
     symbol: state.symbol,
+    timeframe: state.resolution,
     resolution: state.resolution,
     strategy_count: strategies.length,
     status: active.length === 1 ? 'ready' : (strategies.length ? 'not_ready' : 'no_strategy'),
     active_strategy: active[0] || null,
   };
+  if (!context || active.length !== 1) {
+    return {
+      ...base,
+      report_state: {
+        status: strategies.length ? 'not_selected' : 'no_strategy',
+        report_available: false,
+      },
+      snapshot: null,
+    };
+  }
+
+  const readRawReportState = _deps?.readRawReportState || _readRawReportState;
+  const observation = await readRawReportState({
+    entity_id: active[0].entity_id,
+    context,
+    phase: 'active_strategy_state',
+    _deps,
+  });
+  const reportStatus = observation.status_error
+    ? 'error'
+    : observation.status_type === 1
+      ? 'calculating'
+      : observation.report_available
+        ? 'ready'
+        : 'unavailable';
+  const snapshot = createSnapshotIdentity(observation.snapshot_candidate);
+  const report = observation.report_available
+    ? normalizeTradingReport(observation, {
+      context,
+      entity_id: active[0].entity_id,
+      strategy_name: active[0].name,
+      requested_symbol: state.symbol,
+      resolved_symbol: observation.symbol,
+      timeframe: observation.timeframe,
+      calculation_mode: observation.snapshot_candidate?.calculation_mode,
+    })
+    : null;
+  return {
+    ...base,
+    status: reportStatus === 'ready' ? 'ready' : 'not_ready',
+    report_state: {
+      status: reportStatus,
+      status_type: observation.status_type,
+      report_available: observation.report_available,
+      error: observation.status_error || observation.report_error || null,
+    },
+    calculation: report?.calculation ?? null,
+    reconciliation_metrics: report?.reconciliation_metrics ?? null,
+    snapshot: {
+      available: snapshot.available,
+      snapshot_schema_version: snapshot.snapshot_schema_version,
+      snapshot_id: snapshot.snapshot_id,
+      algorithm: snapshot.algorithm,
+      missing_fields: snapshot.missing_fields,
+    },
+    ...(snapshot.available && { snapshot_id: snapshot.snapshot_id }),
+  };
 }
 
 export async function selectStrategy({ entity_id, timeout_ms = 20000, _deps } = {}) {
-  if (!entity_id) throw new Error('entity_id is required. Use study list --type strategy.');
-  if (!Number.isInteger(timeout_ms) || timeout_ms < 100 || timeout_ms > 60000) {
-    throw new Error('timeout_ms must be an integer from 100 to 60000');
-  }
+  const ensureStrategyActive = _deps?.ensureStrategyActive || _ensureStrategyActive;
+  const activation = await ensureStrategyActive({ entity_id, timeout_ms, _deps });
+  if (activation.active_strategy?.report_ready === true) return activation;
+
   const getState = _deps?.getActivePaneState || _getActivePaneState;
-  const before = await getState({ _deps });
-  const target = (before.studies || []).find((study) => study.entity_id === entity_id);
-  if (!target) throw new Error(`Strategy not found in the active pane: ${entity_id}`);
-  if (target.type !== 'strategy') throw new Error(`Entity ${entity_id} is ${target.type}, not a strategy.`);
-
-  let visibilityChanged = false;
-  if (target.visible === false) {
-    const toggle = _deps?.toggleStudyVisibility || _toggleStudyVisibility;
-    await toggle({ entity_id, visible: true, _deps });
-    visibilityChanged = true;
-  }
-
-  const runEvaluate = _deps?.evaluate || _evaluate;
-  const selection = await runEvaluate(`
-    (function() {
-      var chart = ${CHART_API};
-      var chartModel = chart._chartWidget.model();
-      var internalModel = chartModel.model();
-      var sources = internalModel.dataSources() || [];
-      var target = null;
-      for (var i = 0; i < sources.length; i++) {
-        var id = null;
-        try { id = typeof sources[i].id === 'function' ? sources[i].id() : sources[i].id; } catch (e) {}
-        if (String(id) === ${safeString(entity_id)}) { target = sources[i]; break; }
-      }
-      if (!target) return { error: 'Strategy source not found in active pane model' };
-      try {
-        var bwb = window.TradingView && window.TradingView.bottomWidgetBar;
-        if (bwb && typeof bwb.showWidget === 'function') bwb.showWidget('backtesting');
-      } catch (e) {}
-      var holder = null;
-      if (typeof internalModel.activeStrategySource === 'function') holder = internalModel.activeStrategySource();
-      else if (typeof chartModel.activeStrategySource === 'function') holder = chartModel.activeStrategySource();
-      var current = holder && typeof holder.value === 'function' ? holder.value() : holder;
-      if (current === target) return { method: 'already_active' };
-      if (typeof internalModel.setActiveStrategySource === 'function') {
-        internalModel.setActiveStrategySource(target);
-        return { method: 'internalModel.setActiveStrategySource' };
-      }
-      if (typeof chartModel.setActiveStrategySource === 'function') {
-        chartModel.setActiveStrategySource(target);
-        return { method: 'chartModel.setActiveStrategySource' };
-      }
-      if (holder && typeof holder.setValue === 'function') {
-        holder.setValue(target);
-        return { method: 'activeStrategySource.setValue' };
-      }
-      return { error: 'TradingView build does not expose a Strategy selection adapter' };
-    })()
-  `);
-  if (selection?.error) throw new Error(selection.error);
-
-  const delay = _deps?.delay || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
-  const deadline = Date.now() + timeout_ms;
-  let readback = target;
-  while (Date.now() < deadline) {
+  const delay = _deps?.delay || ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+  const now = _deps?.now || Date.now;
+  const deadline = now() + timeout_ms;
+  while (now() <= deadline) {
     const state = await getState({ _deps });
-    readback = (state.studies || []).find((study) => study.entity_id === entity_id) || null;
+    const readback = (state.studies || []).find((study) => study.entity_id === entity_id);
     if (readback?.is_active_strategy === true && readback?.report_ready === true) {
       return {
-        success: true,
+        ...activation,
         status: 'ready',
         symbol: state.symbol,
         resolution: state.resolution,
-        selection_method: selection?.method || 'unknown',
-        visibility_changed: visibilityChanged,
         active_strategy: readback,
       };
     }
     await delay(400);
   }
-  throw new Error(`Strategy selection timed out after ${timeout_ms}ms for ${entity_id}; visibility_changed=${visibilityChanged}`);
+  throw new Error(`Strategy selection timed out after ${timeout_ms}ms for ${entity_id}; visibility_changed=${activation.visibility_changed}`);
 }
 
 function validateLimit(limit, defaultValue = 200) {

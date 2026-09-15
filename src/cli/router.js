@@ -12,6 +12,11 @@ export function register(name, config) {
   commands.set(name, config);
 }
 
+export function resultExitCode(result) {
+  if (result?.success !== false) return 0;
+  return result.failure_kind === 'cdp_connection' ? 2 : 1;
+}
+
 function printHelp() {
   console.log('Usage: tv <command> [options]\n');
   console.log('Commands:');
@@ -34,8 +39,9 @@ function printCommandHelp(name, cmd) {
   if (cmd.subcommands) {
     console.log(`Usage: tv ${name} <subcommand> [options]\n`);
     console.log('Subcommands:');
+    const maxLen = Math.max(...[...cmd.subcommands.keys()].map(sub => sub.length));
     for (const [sub, subConf] of cmd.subcommands) {
-      console.log(`  ${sub.padEnd(12)}${subConf.description}`);
+      console.log(`  ${sub.padEnd(maxLen + 2)}${subConf.description}`);
     }
   } else {
     console.log(`Usage: tv ${name} [options]\n`);
@@ -98,7 +104,7 @@ export async function run(argv) {
         strict: false,
       });
       if (values.help) {
-        console.log(`Usage: tv ${cmdName} ${subName} [options]\n`);
+        console.log(`Usage: tv ${cmdName} ${subName}${sub.usage ? ` ${sub.usage}` : ''} [options]\n`);
         console.log(sub.description);
         if (Object.keys(options).length > 0) {
           console.log('\nOptions:');
@@ -137,7 +143,13 @@ export async function run(argv) {
 async function execute(handler, values, positionals) {
   try {
     const result = await handler(values, positionals);
-    console.log(JSON.stringify(result, null, 2));
+    const serialized = JSON.stringify(result, null, 2);
+    const exitCode = resultExitCode(result);
+    if (exitCode !== 0) {
+      console.error(serialized);
+      process.exit(exitCode);
+    }
+    console.log(serialized);
     process.exit(0);
   } catch (err) {
     handleError(err);
@@ -151,6 +163,11 @@ function handleError(err) {
     ...(err.code && { code: err.code }),
     error: message,
     ...(err.stage && { stage: err.stage }),
+    ...(err.phase && { phase: err.phase }),
+    ...(err.entity_id && { entity_id: err.entity_id }),
+    ...(err.symbol && { symbol: err.symbol }),
+    ...(err.retryable !== undefined && { retryable: err.retryable === true }),
+    ...(err.context && { context: err.context }),
     ...(err.timeout_ms !== undefined && { timeout_ms: err.timeout_ms }),
     ...(err.target_id && { target_id: err.target_id }),
     ...(err.chart_id && { chart_id: err.chart_id }),

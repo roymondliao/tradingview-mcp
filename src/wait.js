@@ -1,4 +1,5 @@
 import { evaluate } from './connection.js';
+import { symbolIdentitiesMatch } from './core/pane.js';
 
 const DEFAULT_TIMEOUT = 10000;
 const POLL_INTERVAL = 200;
@@ -29,7 +30,20 @@ export async function waitForChartReady(expectedSymbol = null, expectedTf = null
           || document.querySelector('[class*="title"] [class*="apply-common-tooltip"]');
         var currentSymbol = symbolEl ? symbolEl.textContent.trim() : '';
 
-        return { isLoading: !!isLoading, barCount: barCount, currentSymbol: currentSymbol };
+        var apiSymbol = '', apiResolution = '';
+        try {
+          var chart = window.TradingViewApi._activeChartWidgetWV.value();
+          apiSymbol = chart.symbol() || '';
+          apiResolution = chart.resolution() || '';
+        } catch {}
+
+        return {
+          isLoading: !!isLoading,
+          barCount: barCount,
+          currentSymbol: currentSymbol,
+          apiSymbol: apiSymbol,
+          apiResolution: apiResolution
+        };
       })()
     `);
 
@@ -46,7 +60,12 @@ export async function waitForChartReady(expectedSymbol = null, expectedTf = null
     }
 
     // Check symbol match if expected
-    if (expectedSymbol && state.currentSymbol && !state.currentSymbol.toUpperCase().includes(expectedSymbol.toUpperCase())) {
+    if (expectedSymbol && (!state.apiSymbol || !symbolIdentitiesMatch(expectedSymbol, state.apiSymbol))) {
+      stableCount = 0;
+      await new Promise(r => setTimeout(r, POLL_INTERVAL));
+      continue;
+    }
+    if (expectedTf && (!state.apiResolution || String(state.apiResolution) !== String(expectedTf))) {
       stableCount = 0;
       await new Promise(r => setTimeout(r, POLL_INTERVAL));
       continue;
@@ -67,7 +86,7 @@ export async function waitForChartReady(expectedSymbol = null, expectedTf = null
     await new Promise(r => setTimeout(r, POLL_INTERVAL));
   }
 
-  // Timeout — return true anyway, caller should verify
+  // Timeout — callers must treat this as a failed mutation.
   return false;
 }
 

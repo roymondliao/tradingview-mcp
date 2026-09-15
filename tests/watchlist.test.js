@@ -5,7 +5,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
-import { getWatchlist, listWatchlists, addBulk, remove } from '../src/core/watchlist.js';
+import {
+  captureActiveWatchlistSnapshot, getWatchlist, listWatchlists, addBulk, remove,
+} from '../src/core/watchlist.js';
 import { openPanel } from '../src/core/ui.js';
 
 function getEvaluate({ ready = [true], symbols = [], listInfo = null } = {}) {
@@ -141,6 +143,35 @@ describe('right-panel watchlist locators', () => {
         return true;
       },
     );
+  });
+});
+
+describe('Active Watchlist snapshot', () => {
+  it('copies ordered Symbol identities once with Unix and ISO capture time', async () => {
+    const source = {
+      success: true,
+      list_id: 'list-1',
+      list_name: 'Momentum',
+      symbols: [{ symbol: 'TWSE:2330', last: '1' }, { symbol: 'NASDAQ:AAPL' }],
+    };
+    let reads = 0;
+    const snapshot = await captureActiveWatchlistSnapshot({
+      _deps: {
+        now: () => 1704067200000,
+        getWatchlist: async () => { reads += 1; return source; },
+      },
+    });
+    source.symbols[0].symbol = 'TPEX:6488';
+    assert.equal(reads, 1);
+    assert.deepEqual(snapshot, {
+      list_id: 'list-1',
+      list_name: 'Momentum',
+      symbols: [{ symbol: 'TWSE:2330' }, { symbol: 'NASDAQ:AAPL' }],
+      captured_at: 1704067200000,
+      captured_at_iso: '2024-01-01T00:00:00.000Z',
+    });
+    assert.equal(Object.isFrozen(snapshot), true);
+    assert.equal(Object.isFrozen(snapshot.symbols), true);
   });
 });
 

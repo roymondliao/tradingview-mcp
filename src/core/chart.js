@@ -5,6 +5,7 @@ import { evaluate as _evaluate, evaluateAsync as _evaluateAsync, safeString, req
 import { waitForChartReady as _waitForChartReady } from '../wait.js';
 import { getActivePaneState } from './studies.js';
 import { unixSecondsToIso, withUnixSecondsIso } from './time.js';
+import { CoreOperationError } from './errors.js';
 
 const CHART_API = 'window.TradingViewApi._activeChartWidgetWV.value()';
 
@@ -32,6 +33,11 @@ export async function setSymbol({ symbol, _deps }) {
     })()
   `);
   const ready = await waitForChartReady(symbol);
+  if (ready !== true) {
+    throw new CoreOperationError(`Symbol readback timed out for ${symbol}.`, {
+      code: 'SYMBOL_SWITCH_FAILED', phase: 'chart_ready', symbol, retryable: true,
+    });
+  }
   return { success: true, symbol, chart_ready: ready };
 }
 
@@ -44,6 +50,11 @@ export async function setTimeframe({ timeframe, _deps }) {
     })()
   `);
   const ready = await waitForChartReady(null, timeframe);
+  if (ready !== true) {
+    throw new CoreOperationError(`Timeframe readback timed out for ${timeframe}.`, {
+      code: 'TIMEFRAME_SWITCH_FAILED', phase: 'chart_ready', retryable: true,
+    });
+  }
   return { success: true, timeframe, chart_ready: ready };
 }
 

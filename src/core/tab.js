@@ -11,58 +11,47 @@
  */
 import CDP from 'chrome-remote-interface';
 import { getClient, reconnectTo, CDP_HOST, CDP_PORT } from '../connection.js';
+import { chartRuntimeMetadataExpression } from './layout-identity.js';
 
-async function readTargetMetadata(targetId) {
-  return withTarget(targetId, (evalIn) => evalIn(`
-    (function() {
-      var api = window.TradingViewApi || {};
-      var cwc = api._chartWidgetCollection;
-      var saver = api._saveChartService && api._saveChartService._chartSaver;
-      var saved = saver && saver._prevChartState ? saver._prevChartState : null;
-      var savedContent = null;
-      try { savedContent = saved && saved.content ? JSON.parse(saved.content) : null; } catch (e) {}
-      var savedCharts = savedContent && Array.isArray(savedContent.charts) ? savedContent.charts : [];
-      var all = cwc && typeof cwc.getAll === 'function' ? cwc.getAll() : [];
-      var active = api._activeChartWidgetWV && typeof api._activeChartWidgetWV.value === 'function'
-        ? api._activeChartWidgetWV.value() : null;
-      var activeWidget = active && active._chartWidget ? active._chartWidget : null;
-      var panes = [];
-      for (var i = 0; i < all.length; i++) {
-        try {
-          var model = all[i].model();
-          var main = model.mainSeries();
-          panes.push({
-            pane_index: i,
-            pane_id: savedCharts[i] && savedCharts[i].chartId != null ? String(savedCharts[i].chartId) : null,
-            symbol: main.symbol(),
-            resolution: main.interval() || null,
-            active: all[i] === activeWidget
-          });
-        } catch (e) {
-          panes.push({ pane_index: i, pane_id: null, error: e.message, active: false });
-        }
+const METADATA_ATTEMPTS = 2;
+const METADATA_RETRY_MS = 100;
+
+function boundedMetadataError(error) {
+  return String(error?.message || error || 'Chart metadata unavailable').slice(0, 240);
+}
+
+export async function readTargetMetadata(targetId, { _deps } = {}) {
+  const targetReader = _deps?.withTarget || withTarget;
+  const delay = _deps?.delay || ((milliseconds) => (
+    new Promise((resolve) => setTimeout(resolve, milliseconds))
+  ));
+  let lastError = null;
+  for (let attempt = 1; attempt <= METADATA_ATTEMPTS; attempt += 1) {
+    try {
+      const metadata = await targetReader(targetId, (evalIn) => evalIn(
+        chartRuntimeMetadataExpression(), { awaitPromise: true },
+      ));
+      if (!metadata?.layout?.layout_id || !Array.isArray(metadata.panes) || metadata.panes.length === 0) {
+        throw new Error('Chart runtime did not return a complete Layout and Pane identity.');
       }
-      var layoutType = cwc && cwc._layoutType;
-      if (layoutType && typeof layoutType.value === 'function') layoutType = layoutType.value();
-      return {
-        visibility: document.visibilityState,
-        focused: document.hasFocus(),
-        layout: {
-          layout_id: saved && saved.id != null ? saved.id : null,
-          layout_name: saved ? (saved.name || saved.description || null) : null,
-          pane_layout: layoutType || (savedContent && savedContent.layout) || null
-        },
-        panes: panes
-      };
-    })()
-  `));
+      return { metadata, attempts: attempt };
+    } catch (error) {
+      lastError = error;
+      if (attempt < METADATA_ATTEMPTS) {
+        await delay(METADATA_RETRY_MS);
+      }
+    }
+  }
+  throw new Error(boundedMetadataError(lastError));
 }
 
 /**
  * List all open chart tabs (CDP page targets).
  */
-export async function list() {
-  const resp = await fetch(`http://${CDP_HOST}:${CDP_PORT}/json/list`);
+export async function list({ _deps } = {}) {
+  const fetchTargets = _deps?.fetch || fetch;
+  const readMetadata = _deps?.readTargetMetadata || readTargetMetadata;
+  const resp = await fetchTargets(`http://${CDP_HOST}:${CDP_PORT}/json/list`);
   const targets = await resp.json();
 
   // Chart tabs plus new-tab landing pages (layout picker), so every tab in the
@@ -71,8 +60,17 @@ export async function list() {
   const tabs = await Promise.all(rawTabs.map(async (target, tabIndex) => {
     const isChart = /tradingview\.com\/chart/i.test(target.url);
     let metadata = null;
+    let metadataError = null;
+    let metadataAttempts = 0;
     if (isChart) {
-      try { metadata = await readTargetMetadata(target.id); } catch { /* stale target */ }
+      try {
+        const result = await readMetadata(target.id);
+        metadata = result.metadata;
+        metadataAttempts = result.attempts;
+      } catch (error) {
+        metadataError = boundedMetadataError(error);
+        metadataAttempts = METADATA_ATTEMPTS;
+      }
     }
     return {
       tab_index: tabIndex,
@@ -86,6 +84,9 @@ export async function list() {
       focused: metadata?.focused ?? null,
       layout: metadata?.layout || null,
       panes: metadata?.panes || [],
+      metadata_status: !isChart ? 'not_applicable' : (metadata ? 'ready' : 'unavailable'),
+      metadata_attempts: metadataAttempts,
+      ...(metadataError && { metadata_error: metadataError }),
     };
   }));
 
@@ -108,8 +109,10 @@ export async function identifyTab(targetId) {
 }
 
 /** Attach the process-local CDP client to an explicit Tab without changing the visible Desktop tab. */
-export async function attachTab({ tab_index, url_chart_id, layout_id, _deps } = {}) {
-  const selectors = [tab_index != null, url_chart_id != null, layout_id != null].filter(Boolean).length;
+export async function attachTab({ tab_index, url_chart_id, layout_id, saved_layout_id, _deps } = {}) {
+  const selectors = [
+    tab_index != null, url_chart_id != null, layout_id != null, saved_layout_id != null,
+  ].filter(Boolean).length;
   if (selectors === 0) return null;
   const listTabs = _deps?.list || list;
   const reconnect = _deps?.reconnectTo || reconnectTo;
@@ -121,9 +124,27 @@ export async function attachTab({ tab_index, url_chart_id, layout_id, _deps } = 
     candidates = candidates.filter((tab) => tab.tab_index === index);
   }
   if (url_chart_id != null) candidates = candidates.filter((tab) => tab.url_chart_id === String(url_chart_id));
-  if (layout_id != null) candidates = candidates.filter((tab) => String(tab.layout?.layout_id) === String(layout_id));
+  if (layout_id != null) {
+    candidates = candidates.filter((tab) => (
+      String(tab.layout?.layout_id) === String(layout_id)
+      || (tab.layout?.layout_id == null && String(tab.url_chart_id) === String(layout_id))
+    ));
+  }
+  if (saved_layout_id != null) {
+    candidates = candidates.filter(
+      (tab) => String(tab.layout?.saved_layout_id) === String(saved_layout_id),
+    );
+  }
   if (candidates.length !== 1) {
-    throw new Error(`Tab selector resolved ${candidates.length} matches; use tab list and provide a unique tab_index, url_chart_id, or layout_id.`);
+    const unavailable = inventory.tabs.filter(
+      (tab) => tab.is_chart && tab.metadata_status === 'unavailable',
+    );
+    if (candidates.length === 0 && saved_layout_id != null && unavailable.length) {
+      throw new Error(
+        `Saved Layout selector could not be resolved because metadata is unavailable for ${unavailable.length} Chart Tab(s). Run tab list and inspect metadata_error.`,
+      );
+    }
+    throw new Error(`Tab selector resolved ${candidates.length} matches; use tab list and provide one unique tab_index, url_chart_id, layout_id, or saved_layout_id.`);
   }
   const selected = candidates[0];
   await reconnect(selected.target_id);
@@ -190,9 +211,19 @@ async function withTarget(targetId, fn) {
   let c = null;
   try {
     c = await CDP({ host: CDP_HOST, port: CDP_PORT, target: targetId });
-    return await fn(async (expression) => {
-      const { result } = await c.Runtime.evaluate({ expression, returnByValue: true });
-      return result?.value;
+    return await fn(async (expression, options = {}) => {
+      const response = await c.Runtime.evaluate({
+        expression,
+        returnByValue: true,
+        awaitPromise: options.awaitPromise === true,
+      });
+      if (response.exceptionDetails) {
+        const message = response.exceptionDetails.exception?.description
+          || response.exceptionDetails.text
+          || 'Unknown Chart metadata evaluation error';
+        throw new Error(`Chart metadata evaluation failed: ${message}`);
+      }
+      return response.result?.value;
     });
   } finally {
     try { if (c) await c.close(); } catch { /* already gone */ }

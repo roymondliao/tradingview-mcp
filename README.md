@@ -159,14 +159,28 @@ tv ohlcv --summary                 # price summary
 tv history --symbol NASDAQ:AAPL -t D  # load all available daily history metadata
 tv history --symbol NASDAQ:AAPL -t D --bars-per-request 1000 --max-requests 20 --max-bars 10000 --include-bars --output history.json
 tv history --symbol NASDAQ:AAPL -t D --include-bars --output history.json --force  # explicitly overwrite an existing file
-tv tab list                        # resolve Tab, Saved Layout names/IDs, and Pane IDs
-tv study list --layout-id 201414175 --pane-index 0  # read one explicit Pane
+tv tab list                        # resolve Tab, runtime/storage Layout IDs, and Pane IDs
+tv study list --layout-id LC43xk9j --pane-index 0  # select by Runtime/URL Layout ID
+tv strategy active --saved-layout-id 196567163 --pane-index 0  # select by account storage ID
+tv strategy trading-report <entity-id> --symbol TWSE:2344 --layout-id LC43xk9j --pane-index 0
+tv strategy trading-data <entity-id> --symbol TWSE:2344 --offset 0 --limit 500
+tv strategy trading-data <entity-id> --symbol TWSE:2344 --output trades.json
+tv strategy trading-data <entity-id> --symbol TWSE:2344 --format csv --output trades.csv
+tv strategy trading-export <entity-id> --symbol TWSE:2344 --output ./exports --format json
+tv strategy trading-export <entity-id> --watchlist active --output ./exports --format json
+tv strategy trading-export <entity-id> --watchlist active --output ./exports --fail-fast
 tv screenshot -r chart             # capture chart
 tv pine compile                    # compile Pine Script
 tv pane layout 2x2                 # 4-chart grid
 tv pane symbol 1 ES1!              # set pane symbol
 tv stream quote | jq '.close'      # monitor price changes
 ```
+
+For snapshot-complete Strategy workflows, use `strategy trading-report`. The existing `strategy select`, `strategy report`, and `strategy trades` commands remain deprecated compatibility surfaces and are not used by the new export workflow.
+
+`strategy trading-data` writes JSON by default and can infer JSON, JSONL, or CSV from a recognized output extension. File output is staged beside the destination and atomically published; an existing file requires `--force`. Its stdout remains a bounded JSON summary without the `trades` array. CSV uses stable English columns independent of the TradingView UI language and represents each paired Trade as exit/mark then entry rows.
+
+`strategy trading-export` creates one run directory containing `manifest.json` plus each successful Symbol's `report.json`, complete `trades.json|jsonl|csv`, and `reconciliation.json`. Use exactly one of `--symbol` or `--watchlist active`. Watchlist mode captures the Active Watchlist once, processes it sequentially, continues after Symbol failures by default, and restores the original Chart once at the end; `--fail-fast` marks all remaining items skipped. Duplicate Symbols keep their first occurrence and later entries are recorded as skipped. A partial run is published with bounded failure details and exits `1` (`2` for CDP connection failures).
 
 ### All Commands
 
@@ -179,6 +193,7 @@ tv draw shape/list/get/remove/clear
 tv alert list/create/delete
 tv watchlist get/add
 tv indicator add/remove/toggle/set/get
+tv strategy active/trading-report/trading-data/trading-export/select/report/orders/trades/equity
 tv layout list/switch
 tv pane list/layout/focus/symbol
 tv tab list/new/close/switch
@@ -223,7 +238,7 @@ Claude reads [`CLAUDE.md`](CLAUDE.md) automatically when working in this project
 | "Draw a level at 24500" | `draw_shape` (horizontal_line) |
 | "Take a screenshot" | `capture_screenshot` |
 
-## Tool Reference (78 MCP tools)
+## Tool Reference (106 MCP tools)
 
 ### Chart Reading
 
@@ -236,6 +251,17 @@ Claude reads [`CLAUDE.md`](CLAUDE.md) automatically when working in this project
 | `data_get_history` | Load older OHLCV batches until `from` or the available-history boundary. Metadata by default | Varies |
 
 Unix timestamp fields are preserved for programmatic use and include UTC ISO 8601 companions, such as `time` + `time_iso` and `period.from` + `period.from_iso`. Logical indexes such as `bar_index` are not timestamps.
+
+### Strategy Backtesting
+
+| CLI command | MCP tool | Purpose |
+|------|------|------|
+| `strategy active` | `strategy_get_active` | Read the resolved Pane's active Strategy, Report state, and safe snapshot metadata |
+| `strategy trading-report` | `strategy_get_trading_report` | Get a fresh canonical Report for an explicit `entity_id` and Symbol |
+| `strategy trading-data` | `strategy_get_trading_data` | Get one oldest-first Offset/Limit batch, or atomically write it and return a bounded summary |
+| `strategy trading-export` | `strategy_export_trading` | Export verified artifacts for one Symbol or the immutable Active Watchlist snapshot |
+
+The new tools require explicit Strategy and Symbol identities where applicable and expose the same Tab/Layout/Pane selectors as the CLI. `strategy_select`, `strategy_get_report`, `strategy_get_trades`, `data_get_strategy_results`, and `data_get_trades` remain deprecated compatibility surfaces; their results are not snapshot-complete and are not used by the export workflow.
 
 ### Custom Indicator Data (Pine Drawings)
 
@@ -362,7 +388,7 @@ npm test
 Claude Code  ←→  MCP Server (stdio)  ←→  CDP (port 9222)  ←→  TradingView Desktop (Electron)
 ```
 
-- **Transport**: MCP over stdio (85 tools) + CLI (`tv` command, 31 commands with 66 subcommands)
+- **Transport**: MCP over stdio (106 tools) + CLI (`tv` command)
 - **Connection**: Chrome DevTools Protocol on localhost:9222
 - **Streaming**: Poll-and-diff loop with deduplication, JSONL output to stdout
 - **No dependencies** beyond `@modelcontextprotocol/sdk` and `chrome-remote-interface`
