@@ -76,6 +76,8 @@ describe('getWatchlist() readiness', () => {
 
     assert.equal(result.success, true);
     assert.equal(result.count, 1);
+    assert.equal(result.complete, false);
+    assert.equal(result.completeness, 'virtualized_dom_rows_only');
     assert.deepEqual(result.symbols, symbols);
     assert.equal(openCalls, 0);
   });
@@ -256,8 +258,14 @@ describe('listWatchlists()', () => {
     assert.equal(result.success, true);
     assert.equal(result.count, 2);
     assert.deepEqual(result.lists, [
-      { id: 1, name: 'Main', symbol_count: 2 },
-      { id: 2, name: 'Taiwan', symbol_count: 3 },
+      {
+        id: 1, watchlist_id: 1, name: 'Main', symbol_count: 2,
+        declared_symbol_count: 2, declared_entry_count: 2, separator_count: 0, active: false,
+      },
+      {
+        id: 2, watchlist_id: 2, name: 'Taiwan', symbol_count: 3,
+        declared_symbol_count: 3, declared_entry_count: 3, separator_count: null, active: false,
+      },
     ]);
     assert.match(requestExpression, /fetch\(["']\/api\/v1\/symbols_list\/custom\/["']/);
     assert.doesNotMatch(requestExpression, /https:\/\/www\.tradingview\.com/);
@@ -272,7 +280,10 @@ describe('listWatchlists()', () => {
       }),
     } });
 
-    assert.deepEqual(result.lists, [{ id: 3, name: 'Swing', symbol_count: 4 }]);
+    assert.deepEqual(result.lists, [{
+      id: 3, watchlist_id: 3, name: 'Swing', symbol_count: 4,
+      declared_symbol_count: 4, declared_entry_count: 4, separator_count: null, active: false,
+    }]);
   });
 
   it('reports HTTP failures without treating HTTP 0 as a real response', async () => {

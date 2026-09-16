@@ -195,3 +195,16 @@ Evidence：
 
 448筆`stock_list`已足以證明V1 provider與DOM截斷問題，但不能直接取代1,974筆容量測試。
 
+## Implementation live validation: 2026-09-16
+
+Account內容會持續變動，因此實作驗證不以舊的448筆數量作為hard-coded成功條件，而是要求當次inventory、兩次detail reads與unique count完全一致。
+
+| Watchlist | Account ID | Declared | Returned | Unique | Stable reads | Complete |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `stock_list` | 325561734 | 449 | 449 | 449 | 2 | true |
+| `dev-testing-list` | 346958738 | 448 | 448 | 448 | 2 | true |
+
+- `stock_list` ordered fingerprint：`sha256:097ca617f74a1697841bfa2f4f2fc0cf04167e50b19c80cd9a8d86a1b1b301ea`。
+- `dev-testing-list` ordered fingerprint：`sha256:f05d6578c44a6e0c6375b84d6a7589d2714ac38668cdfde36d426dc4ce25caaf`。
+- 兩者invalid／duplicate／separator皆為0，Account inventory均標示non-active，但named Snapshot仍成功，且Desktop未切換Active Watchlist。
+- 完整canonical JSON以atomic single-file transaction寫入並重新parse驗證；stdout只回傳metadata、首尾sample與output資訊。

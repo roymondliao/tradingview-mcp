@@ -271,6 +271,24 @@ describe('CLI — help and routing', () => {
     assert.ok(stdout.includes('--summary'));
   });
 
+  it('watchlist snapshot help exposes exact name and atomic output options', () => {
+    const { stdout, exitCode } = run(['watchlist', 'snapshot', '--help']);
+    assert.equal(exitCode, 0);
+    assert.ok(stdout.includes('--name'));
+    assert.ok(stdout.includes('--output'));
+    assert.ok(stdout.includes('--force'));
+  });
+
+  it('watchlist snapshot validates required options before CDP discovery', () => {
+    const missingName = run(['watchlist', 'snapshot']);
+    assert.equal(missingName.exitCode, 1);
+    assert.match(JSON.parse(missingName.stderr).error, /--name is required/);
+
+    const misplacedForce = run(['watchlist', 'snapshot', '--name', 'dev-testing-list', '--force']);
+    assert.equal(misplacedForce.exitCode, 1);
+    assert.match(JSON.parse(misplacedForce.stderr).error, /--force requires --output/);
+  });
+
   it('history --help shows batch loading and output options', () => {
     const { stdout, exitCode } = run(['history', '--help']);
     assert.equal(exitCode, 0);

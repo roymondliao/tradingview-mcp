@@ -1,11 +1,22 @@
 import { z } from 'zod';
-import { jsonResult } from './_format.js';
+import { coreErrorResult, jsonResult } from './_format.js';
 import * as core from '../core/watchlist.js';
 
 export function registerWatchlistTools(server) {
-  server.tool('watchlist_get', 'Get all symbols from the current TradingView watchlist with last price, change, and change%', {}, async () => {
+  server.tool('watchlist_get', 'Get the incomplete virtualized DOM view of the active TradingView Watchlist', {}, async () => {
     try { return jsonResult(await core.getWatchlist()); }
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+  });
+
+  server.tool('watchlist_snapshot', 'Capture a complete, stable named Account Watchlist with a bounded symbol sample', {
+    name: z.string().min(1).describe('Exact, case-sensitive Account Watchlist name'),
+  }, async ({ name }) => {
+    try {
+      const result = await core.captureNamedWatchlistSnapshot({ name });
+      return jsonResult(core.summarizeNamedWatchlistSnapshot(result));
+    } catch (err) {
+      return coreErrorResult(err);
+    }
   });
 
   server.tool('watchlist_add', 'Add a symbol to the TradingView watchlist', {

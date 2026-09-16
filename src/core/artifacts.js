@@ -11,6 +11,7 @@ import {
   writeFile as nodeWriteFile,
 } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
+import { finished as nodeFinished } from 'node:stream/promises';
 import {
   basename, dirname, isAbsolute, join, resolve, sep,
 } from 'node:path';
@@ -423,6 +424,30 @@ export async function createArtifactTransaction({ output, force = false, _deps =
       }
     },
   };
+}
+
+/** Atomically write one canonical JSON document and return bounded file metadata. */
+export async function writeJsonArtifact({ value, output, force = false, _deps = {} } = {}) {
+  const transaction = await createArtifactTransaction({ output, force, _deps });
+  const waitForFinished = _deps.finished || nodeFinished;
+  const writable = transaction.openArtifact();
+  try {
+    writable.end(`${JSON.stringify(value, null, 2)}\n`);
+    await waitForFinished(writable);
+    const published = await transaction.publish();
+    return {
+      path: published.path,
+      format: 'json',
+      bytes: published.bytes,
+      atomic: published.atomic,
+    };
+  } catch (error) {
+    await transaction.abort();
+    if (error instanceof CoreOperationError) throw error;
+    throw outputError(`Failed to write JSON output: ${transaction.output_path}`, {
+      phase: 'artifact_write', cause: error,
+    });
+  }
 }
 
 /** Write one canonical Trading Data batch and return a bounded stdout summary. */

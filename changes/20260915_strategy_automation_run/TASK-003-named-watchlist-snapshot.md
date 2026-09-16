@@ -1,7 +1,7 @@
 ---
 id: TASK-003
 title: Complete Named Watchlist Snapshot
-status: todo
+status: done
 phase: strategy-automation-run
 depends_on: []
 blocks:
@@ -59,11 +59,11 @@ Named Snapshot以same-origin Account source為primary provider，React runtime�
 
 ### Acceptance criteria
 
-- [ ] Snapshot不依賴DOM或UI切換即可取得named Watchlist。
-- [ ] 只有count、identity與stable reads全部通過才回傳`complete: true`。
-- [ ] 448筆`stock_list`live readback與ordered fingerprint驗證通過。
-- [ ] Large response可寫入JSON file，stdout維持machine-readable。
-- [ ] Internal endpoint變動不會靜默回傳部分資料。
+- [x] Snapshot不依賴DOM或UI切換即可取得named Watchlist。
+- [x] 只有count、identity與stable reads全部通過才回傳`complete: true`。
+- [x] `stock_list`live readback與ordered fingerprint驗證通過；實作驗證時Account內容已由原規劃的448筆更新為449筆，inventory／detail／unique皆為449。
+- [x] Large response可寫入JSON file，stdout維持machine-readable。
+- [x] Internal endpoint變動不會靜默回傳部分資料。
 
 ### Validation commands
 
@@ -80,5 +80,11 @@ fnm exec --using=22 npm run tv -- watchlist snapshot --name stock_list
 
 ## Completion record
 
-Not started.
+Completed on 2026-09-16.
 
+- 新增exact-name Account resolution、same-origin detail adapter、two-consecutive-read stability與bounded retry。
+- 完整性驗證涵蓋declared／returned／unique count、invalid／duplicate Symbols與Section filtering；provider／schema異常回傳structured error，不fallback至DOM。
+- Snapshot提供immutable ordered Symbols、Unix／ISO capture time、ordered fingerprint與deterministic snapshot ID。
+- CLI支援`watchlist snapshot --name [--output] [--force]`；完整JSON使用single-file atomic transaction，file output stdout維持bounded summary。MCP`watchlist_snapshot`只回傳metadata與首尾sample。
+- Live read-only：`stock_list`449筆，fingerprint`sha256:097ca617f74a1697841bfa2f4f2fc0cf04167e50b19c80cd9a8d86a1b1b301ea`；`dev-testing-list`448筆，fingerprint`sha256:f05d6578c44a6e0c6375b84d6a7589d2714ac38668cdfde36d426dc4ce25caaf`。兩者皆stable reads 2、invalid 0、duplicate 0、complete true，且Account標示non-active，證明不依賴Active Watchlist切換。
+- Validation：targeted Watchlist／CLI 57 passed、full unit 443 passed、CLI 30 passed、lint 0 errors（3個既有warnings）。

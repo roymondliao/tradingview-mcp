@@ -96,7 +96,7 @@ Local source與舊Parameter Sets的dry-run validation contract見[`PINE_INPUT_SC
 | --- | --- | --- | --- |
 | [TASK-001](./TASK-001-candidate-pine-input-schema.md) | Candidate Pine Input Schema | `done` | — |
 | [TASK-002](./TASK-002-study-input-catalog-name-mutation.md) | Study Input Catalog and Name Mutation | `done` | — |
-| [TASK-003](./TASK-003-named-watchlist-snapshot.md) | Complete Named Watchlist Snapshot | `todo` | — |
+| [TASK-003](./TASK-003-named-watchlist-snapshot.md) | Complete Named Watchlist Snapshot | `done` | — |
 | [TASK-004](./TASK-004-run-config-resolution-dry-run.md) | Run Config, Resource Resolution, and Dry-run | `todo` | TASK-001～003 |
 | [TASK-005](./TASK-005-strategy-account-pane-sync.md) | Strategy Account Sync and Safe Pane Refresh | `todo` | TASK-001, 002, 004 |
 | [TASK-006](./TASK-006-parameter-set-execution.md) | Parameter Set Planning and Execution | `todo` | TASK-002, 004, 005 |
