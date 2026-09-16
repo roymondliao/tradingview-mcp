@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { jsonResult } from './_format.js';
+import { coreErrorResult, jsonResult } from './_format.js';
 import * as core from '../core/studies.js';
 import { paneContextSchema, withPaneContext } from './pane-context.js';
 
@@ -46,21 +46,32 @@ export function registerStudyTools(server) {
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 
-  server.tool('study_get_inputs', 'Get safe input values for one active-pane Study Instance', {
+  server.tool('study_get_inputs', 'Get named input metadata, constraints, current values, and fingerprint for one active-pane Study Instance', {
     ...paneContextSchema,
     entity_id: z.string().describe('Study Instance entity ID'),
   }, async (args) => {
     try { return jsonResult(await withPaneContext(args, () => core.getStudyInputs({ entity_id: args.entity_id }))); }
-    catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+    catch (err) { return coreErrorResult(err); }
   });
 
   server.tool('study_set_inputs', 'Change active-pane Study inputs without modifying Pine source', {
     ...paneContextSchema,
     entity_id: z.string().describe('Study Instance entity ID'),
-    inputs: z.string().describe('JSON input overrides keyed by TradingView input ID'),
+    inputs: z.string().optional().describe('JSON input overrides keyed by TradingView input ID'),
+    inputs_by_name: z.string().optional().describe('JSON input overrides keyed by exact Input name; mutually exclusive with inputs'),
   }, async (args) => {
-    try { return jsonResult(await withPaneContext(args, () => core.setStudyInputs({ entity_id: args.entity_id, inputs: args.inputs }))); }
-    catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+    try {
+      core.validateStudyInputSelectors({
+        entity_id: args.entity_id,
+        inputs: args.inputs,
+        inputs_by_name: args.inputs_by_name,
+      });
+      return jsonResult(await withPaneContext(args, () => core.setStudyInputs({
+        entity_id: args.entity_id,
+        inputs: args.inputs,
+        inputs_by_name: args.inputs_by_name,
+      })));
+    } catch (err) { return coreErrorResult(err); }
   });
 
   server.tool('study_toggle_visibility', 'Show or hide an active-pane Study Instance', {

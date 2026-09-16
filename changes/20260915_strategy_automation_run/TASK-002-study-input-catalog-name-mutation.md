@@ -1,7 +1,7 @@
 ---
 id: TASK-002
 title: Study Input Catalog and Name Mutation
-status: todo
+status: done
 phase: strategy-automation-run
 depends_on: []
 blocks:
@@ -22,7 +22,7 @@ scope: pane-study-instance
 ### In scope
 
 - 合併`getInputsInfo()`與`getInputValues()`。
-- Filter internal／hidden／fake fields並保留stable ordering。
+- Filter internal／hidden fields並保留stable ordering；Desktop 3.4.0的`isFake`同時標記真正可見的Pine／Strategy Inputs，不可單獨作為排除依據。
 - Response fields：ID、name、type、group、value、default、constraints、options。
 - Time values保留Unix milliseconds與ISO companions。
 - `--inputs`by ID與`--inputs-by-name`by exact title，mutually exclusive。
@@ -61,11 +61,11 @@ scope: pane-study-instance
 
 ### Acceptance criteria
 
-- [ ] `study inputs get`對可name-select的Inputs回傳non-empty `name`。
-- [ ] `--inputs`與`--inputs-by-name`都能正確設定並read back。
-- [ ] Invalid request不產生partial mutation。
-- [ ] Strategy set明確回傳`report_state: recalculating`但不等待Report。
-- [ ] Response與diagnostics不包含internal Pine payload。
+- [x] `study inputs get`對可name-select的Inputs回傳non-empty `name`。
+- [x] `--inputs`與`--inputs-by-name`都能正確設定並read back。
+- [x] Invalid request不產生partial mutation。
+- [x] Strategy set明確回傳`report_state: recalculating`但不等待Report；same-value no-op回傳`unchanged`且不呼叫mutation。
+- [x] Response與diagnostics不包含internal Pine payload。
 
 ### Validation commands
 
@@ -82,5 +82,10 @@ fnm exec --using=22 npm run tv -- study inputs get <entity-id> --layout-id <layo
 
 ## Completion record
 
-Not started.
+Completed on 2026-09-16.
 
+- CLI與MCP共用strict Core validation，支援Input ID與exact name selectors；既有partial unknown-key semantics已改為all-or-nothing failure。
+- `set`內部執行complete catalog readback，但response只回傳本次requested／resolved／applied／unchanged資訊與effective fingerprint；完整catalog由`study inputs get`提供。
+- Desktop 3.4.0 live catalog確認35個visible Inputs，排除hidden fields及`text`／`pineId`／`pineVersion`／`pineFeatures`／`__profile`。`isFake`不能單獨作為排除條件，因為真正可見的Pine／Strategy Inputs也使用此runtime flag。
+- `dev` Layout的`obv-v3`以`wOBV 平滑 MA 週期`完成10 → 11 → 10 mutation/readback；最終fingerprint恢復為`d084bf5c1174577630a6be564cf7ed081c899f7c3bbfd2ba1a7b120e425fa219`，Strategy Report為ready。
+- Validation：lint 0 errors（3個既有warnings）、unit 423 passed、CLI 28 passed、targeted Study／CLI／MCP 66 passed，以及live TradingView E2E完成。

@@ -294,6 +294,32 @@ describe('CLI — help and routing', () => {
     assert.ok(stdout.includes('--pane-index'));
   });
 
+  it('study inputs help exposes ID and exact-name selectors', () => {
+    const { stdout, exitCode } = run(['study', 'inputs', '--help']);
+    assert.equal(exitCode, 0);
+    assert.ok(stdout.includes('--inputs'));
+    assert.ok(stdout.includes('--inputs-by-name'));
+    assert.ok(stdout.includes('--layout-id'));
+    assert.ok(stdout.includes('--pane-index'));
+  });
+
+  it('study inputs set validates selector requirements before CDP discovery', () => {
+    const missing = run(['study', 'inputs', 'set', 'strategy-1']);
+    assert.equal(missing.exitCode, 1);
+    assert.equal(JSON.parse(missing.stderr).code, 'STUDY_INPUTS_REQUIRED');
+
+    const conflict = run([
+      'study', 'inputs', 'set', 'strategy-1',
+      '--inputs', '{"in_0":10}', '--inputs-by-name', '{"Length":10}',
+    ]);
+    assert.equal(conflict.exitCode, 1);
+    assert.equal(JSON.parse(conflict.stderr).code, 'STUDY_INPUT_SELECTOR_CONFLICT');
+
+    const invalid = run(['study', 'inputs', 'set', 'strategy-1', '--inputs-by-name', '{']);
+    assert.equal(invalid.exitCode, 1);
+    assert.equal(JSON.parse(invalid.stderr).code, 'STUDY_INPUTS_INVALID');
+  });
+
   it('history rejects removed page terminology before connecting', () => {
     const { stderr, exitCode } = run(['history', '--page-size', '1000']);
     assert.equal(exitCode, 1);

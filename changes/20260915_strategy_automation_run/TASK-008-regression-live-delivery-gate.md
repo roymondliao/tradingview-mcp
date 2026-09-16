@@ -27,7 +27,7 @@ scope: repository-delivery
 
 - Audit CLI help、Core exports、MCP parity ofextended atomic Pine／Study／Watchlist functions與error sanitization。
 - Full lint／unit／CLI／repository regression。
-- `dev` Layout、`stock_list`與`data/obv-v3.pine`controlled dry-run／formal run。
+- `dev` Layout、`dev-testing-list`、`TWSE:2330`與`data/obv-v3.pine`controlled dry-run／formal run；mutation前先完成exact-name fixture preflight。
 - Same-source reuse與changed-source update／refresh代表案例。
 - At least twoParameter Sets、fresh Report與complete Watchlist Snapshot evidence；正式full 448-symbol run是否執行由runtime成本與User確認決定，不能以未執行冒充通過。
 - Final readback／restore、no residual test Instances與no local generated artifacts tracked。
@@ -86,4 +86,3 @@ fnm exec --using=22 npm run tv -- strategy run --config ./run-config.json --dry-
 ## Completion record
 
 Not started.
-

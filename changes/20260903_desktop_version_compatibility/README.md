@@ -81,7 +81,7 @@ Detect Desktop version change
 | `PINE-001` | Account Saved Pine inventory／source capability、editor state、compile／error readback | Read-only inventory 可用；受控 disposable script 可編譯並確認結果，且 cleanup 不影響既有 Scripts。 |
 | `DRAWING-001` | Drawing inventory、stable selector、受控 create／get／remove readback | Disposable Drawing lifecycle 可完成並清理；不依賴 localized label 或不穩定 ordinal。 |
 | `ALERT-001` | Alert service、inventory 與受控 create／delete readback | Test Alert lifecycle 可驗證並清理；使用者既有 Alerts 不被修改。 |
-| `REPLAY-001` | Replay capability、state、受控 start／step／stop 與 restore | 在支援 Replay 的 fixture 上 lifecycle 與 stop readback 成功；不支援的 Symbol 明確歸類為 fixture／capability 條件。 |
+| `REPLAY-001` | Replay capability、state、受控 start／step／stop 與 restore | 獨立opt-in fixture以有效loaded bars的10% bounded point啟動；驗證symbol／resolution／bars、Desktop-version stop ordering與restore readback。禁止`selectFirstAvailableDate()`；Replay Trading另行opt-in並在stop前清除、驗證test-owned executions。 |
 | `UI-001` | Shell tabs、必要 panels、Pine editor 與 screenshot locators | Repo 使用的必要 locator 可唯一解析；不得以語言限定文字作唯一定位方式。 |
 | `STREAM-001` | Quote／chart event subscription、bounded sample 與 unsubscribe | 可收到 bounded event sample，結束後完成 unsubscribe 且 process 正常退出。 |
 | `OUTPUT-001` | JSON contract、bounded stdout、JSON／JSONL／CSV、atomic artifact publish | Live result 可被 serializer 處理；失敗不發布 partial final artifact，成功輸出可重新解析。 |

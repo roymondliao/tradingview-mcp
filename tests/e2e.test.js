@@ -22,21 +22,40 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import CDP from 'chrome-remote-interface';
-import { getWatchlist } from '../src/core/watchlist.js';
+import { list as listTabs } from '../src/core/tab.js';
+import { getWatchlist, listWatchlists } from '../src/core/watchlist.js';
+import { start as startReplay, stop as stopReplay } from '../src/core/replay.js';
 
 let client;
 let Runtime;
 let Input;
 let Page;
+let originalChartState = null;
+let testEnvironment = null;
+
+const TEST_LAYOUT_NAME = 'dev';
+const TEST_WATCHLIST_NAME = 'dev-testing-list';
+const TEST_SYMBOL = 'TWSE:2330';
+const TEST_SYMBOL_TICKER = '2330';
+const TEST_SYMBOL_TIMEOUT_MS = 20000;
+const RUN_REPLAY_E2E = process.env.TV_E2E_REPLAY === '1';
+const RUN_REPLAY_TRADING_E2E = process.env.TV_E2E_REPLAY_TRADING === '1';
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 async function evaluate(expr) {
-  const { result } = await Runtime.evaluate({
+  const response = await Runtime.evaluate({
     expression: expr,
     returnByValue: true,
     awaitPromise: true,
   });
+  if (response.exceptionDetails) {
+    const message = response.exceptionDetails.exception?.description
+      || response.exceptionDetails.text
+      || 'Unknown TradingView evaluation error';
+    throw new Error(message);
+  }
+  const { result } = response;
   if (result.subtype === 'error') throw new Error(result.description);
   return result.value;
 }
@@ -66,36 +85,203 @@ function wv(path) {
 /** Sleep for ms */
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+function normalizeSymbolIdentity(symbol) {
+  const normalized = String(symbol || '').trim().toUpperCase();
+  const separator = normalized.indexOf(':');
+  if (separator < 1) return normalized;
+  return `${normalized.slice(0, separator).replace(/_DLY$/, '')}:${normalized.slice(separator + 1)}`;
+}
+
+function setupError(message) {
+  return new Error(
+    `TradingView E2E test environment is not ready: ${message} `
+    + `Open the exact Layout "${TEST_LAYOUT_NAME}", create the Account Watchlist `
+    + `"${TEST_WATCHLIST_NAME}", and make sure ${TEST_SYMBOL} is available before retrying.`,
+  );
+}
+
+async function waitForSymbolReady(expectedSymbol, timeoutMs = TEST_SYMBOL_TIMEOUT_MS) {
+  const deadline = Date.now() + timeoutMs;
+  let stableReads = 0;
+  let lastSignature = null;
+  let lastState = null;
+  while (Date.now() <= deadline) {
+    const state = await evaluate(`
+      (function() {
+        var chart = ${CHART_API};
+        var bars = null;
+        try { bars = chart._chartWidget.model().mainSeries().bars(); } catch (e) {}
+        var spinner = document.querySelector('[class*="loader"]')
+          || document.querySelector('[class*="loading"]')
+          || document.querySelector('[data-name="loading"]');
+        return {
+          symbol: chart.symbol() || '',
+          resolution: chart.resolution() || '',
+          bar_count: bars && typeof bars.size === 'function' ? bars.size() : 0,
+          loading: !!(spinner && spinner.offsetParent !== null)
+        };
+      })()
+    `);
+    lastState = state;
+    const matches = normalizeSymbolIdentity(state?.symbol) === normalizeSymbolIdentity(expectedSymbol);
+    const ready = matches && !state?.loading && Number(state?.bar_count) > 0;
+    const signature = `${state?.symbol || ''}|${state?.resolution || ''}|${state?.bar_count || 0}`;
+    if (ready) stableReads = signature === lastSignature ? stableReads + 1 : 1;
+    else stableReads = 0;
+    if (stableReads >= 3) return state;
+    lastSignature = signature;
+    await sleep(200);
+  }
+  throw setupError(
+    `Symbol ${expectedSymbol} did not reach a stable loaded state; last readback was `
+    + `${lastState?.symbol || 'unresolved'} with ${lastState?.bar_count || 0} bars.`,
+  );
+}
+
+async function setSymbolAndWait(symbol) {
+  await evaluate(`${CHART_API}.setSymbol(${JSON.stringify(symbol)}, {})`);
+  return waitForSymbolReady(symbol);
+}
+
+async function setResolutionAndWait(resolution, timeoutMs = TEST_SYMBOL_TIMEOUT_MS) {
+  await evaluate(`${CHART_API}.setResolution(${JSON.stringify(resolution)}, {})`);
+  const deadline = Date.now() + timeoutMs;
+  let stableReads = 0;
+  while (Date.now() <= deadline) {
+    const state = await evaluate(`
+      (function() {
+        var chart = ${CHART_API};
+        var bars = null;
+        try { bars = chart._chartWidget.model().mainSeries().bars(); } catch (e) {}
+        return {
+          resolution: chart.resolution() || '',
+          bar_count: bars && typeof bars.size === 'function' ? bars.size() : 0
+        };
+      })()
+    `);
+    if (String(state?.resolution) === String(resolution) && Number(state?.bar_count) > 0) {
+      stableReads += 1;
+      if (stableReads >= 3) return state;
+    } else {
+      stableReads = 0;
+    }
+    await sleep(200);
+  }
+  throw new Error(`Resolution ${resolution} did not reach a stable loaded state.`);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('TradingView MCP — Full E2E (70 tools)', () => {
 
   before(async () => {
     try {
-      const targets = await CDP.List({ host: 'localhost', port: 9222 });
-      const chartTarget = targets.find(t => t.url && t.url.includes('tradingview.com/chart'));
-      if (!chartTarget) throw new Error('No TradingView chart target found');
+      const inventory = await listTabs();
+      const layoutMatches = inventory.tabs.filter((tab) => (
+        tab.is_chart && tab.metadata_status === 'ready' && tab.layout?.layout_name === TEST_LAYOUT_NAME
+      ));
+      if (layoutMatches.length === 0) {
+        throw setupError(`Required Layout "${TEST_LAYOUT_NAME}" is not open in TradingView Desktop.`);
+      }
+      if (layoutMatches.length > 1) {
+        throw setupError(
+          `Required Layout "${TEST_LAYOUT_NAME}" resolved ${layoutMatches.length} open Tabs; keep exactly one open.`,
+        );
+      }
+      const selectedTab = layoutMatches[0];
 
-      client = await CDP({ host: 'localhost', port: 9222, target: chartTarget.id });
+      client = await CDP({ host: 'localhost', port: 9222, target: selectedTab.target_id });
       await client.Runtime.enable();
       await client.Page.enable();
       await client.DOM.enable();
       Runtime = client.Runtime;
       Input = client.Input;
       Page = client.Page;
+
+      const watchlistInventory = await listWatchlists({ _deps: { evaluateAsync: evaluate } });
+      const watchlistMatches = watchlistInventory.lists.filter(
+        (watchlist) => watchlist.name === TEST_WATCHLIST_NAME,
+      );
+      if (watchlistMatches.length === 0) {
+        throw setupError(`Required Account Watchlist "${TEST_WATCHLIST_NAME}" does not exist.`);
+      }
+      if (watchlistMatches.length > 1) {
+        throw setupError(
+          `Required Account Watchlist "${TEST_WATCHLIST_NAME}" resolved ${watchlistMatches.length} matches; rename duplicates.`,
+        );
+      }
+
+      originalChartState = await evaluate(`
+        (function() {
+          var chart = ${CHART_API};
+          return {
+            symbol: chart.symbol(),
+            resolution: chart.resolution(),
+            chart_type: chart.chartType()
+          };
+        })()
+      `);
+      const symbolState = await setSymbolAndWait(TEST_SYMBOL);
+      testEnvironment = Object.freeze({
+        layout: Object.freeze({
+          name: TEST_LAYOUT_NAME,
+          layout_id: selectedTab.layout.layout_id,
+          saved_layout_id: selectedTab.layout.saved_layout_id,
+          target_id: selectedTab.target_id,
+        }),
+        watchlist: Object.freeze({ ...watchlistMatches[0] }),
+        requested_symbol: TEST_SYMBOL,
+        resolved_symbol: symbolState.symbol,
+      });
     } catch (err) {
-      console.error('Cannot connect to TradingView. Make sure it is running with --remote-debugging-port=9222');
-      process.exit(1);
+      try {
+        if (Runtime && originalChartState?.symbol) {
+          await setSymbolAndWait(originalChartState.symbol);
+          await setResolutionAndWait(originalChartState.resolution);
+          await evaluate(`${CHART_API}.setChartType(${Number(originalChartState.chart_type)})`);
+        }
+      } catch {}
+      try { if (client) await client.close(); } catch {}
+      client = null;
+      Runtime = null;
+      Input = null;
+      Page = null;
+      if (String(err?.message || '').startsWith('TradingView E2E test environment is not ready:')) throw err;
+      throw setupError(`CDP/preflight failed: ${err?.message || String(err)}`);
     }
   });
 
   after(async () => {
-    if (client) try { await client.close(); } catch {}
+    let restoreError = null;
+    try {
+      if (client && Runtime && originalChartState?.symbol) {
+        await setSymbolAndWait(originalChartState.symbol);
+        await setResolutionAndWait(originalChartState.resolution);
+        await evaluate(`${CHART_API}.setChartType(${Number(originalChartState.chart_type)})`);
+      }
+    } catch (error) {
+      restoreError = error;
+    } finally {
+      if (client) try { await client.close(); } catch {}
+    }
+    if (restoreError) {
+      throw new Error(`TradingView E2E cleanup could not restore the original Chart: ${restoreError.message}`);
+    }
   });
 
   // ─── 1. HEALTH & CONNECTION (4 tools) ─────────────────────────────────
 
   describe('Health & Connection', () => {
+
+    it('e2e_preflight — required local fixtures are resolved', () => {
+      assert.equal(testEnvironment.layout.name, TEST_LAYOUT_NAME);
+      assert.equal(testEnvironment.watchlist.name, TEST_WATCHLIST_NAME);
+      assert.equal(testEnvironment.requested_symbol, TEST_SYMBOL);
+      assert.equal(
+        normalizeSymbolIdentity(testEnvironment.resolved_symbol),
+        normalizeSymbolIdentity(TEST_SYMBOL),
+      );
+    });
 
     it('tv_health_check — CDP connection + chart state', async () => {
       assert.ok(client, 'CDP client connected');
@@ -172,10 +358,8 @@ describe('TradingView MCP — Full E2E (70 tools)', () => {
     });
 
     after(async () => {
-      await evaluate(`${CHART_API}.setSymbol('${originalSymbol}')`);
-      await sleep(2000);
-      await evaluate(`${CHART_API}.setResolution('${originalTF}')`);
-      await sleep(1000);
+      await setSymbolAndWait(originalSymbol);
+      await setResolutionAndWait(originalTF);
       await evaluate(`${CHART_API}.setChartType(${originalType})`);
       await sleep(500);
     });
@@ -202,15 +386,16 @@ describe('TradingView MCP — Full E2E (70 tools)', () => {
     });
 
     it('chart_set_symbol — change ticker', async () => {
-      await evaluate(`${CHART_API}.setSymbol('AAPL', {})`);
-      await sleep(2500);
-      const sym = await evaluate(`${CHART_API}.symbol()`);
-      assert.ok(sym.includes('AAPL'), `Symbol changed to AAPL, got: ${sym}`);
+      const state = await setSymbolAndWait(TEST_SYMBOL);
+      assert.equal(
+        normalizeSymbolIdentity(state.symbol),
+        normalizeSymbolIdentity(TEST_SYMBOL),
+        `Symbol changed to ${TEST_SYMBOL}, got: ${state.symbol}`,
+      );
     });
 
     it('chart_set_timeframe — change resolution', async () => {
-      await evaluate(`${CHART_API}.setResolution('D', {})`);
-      await sleep(1500);
+      await setResolutionAndWait('1D');
       const tf = await evaluate(`${CHART_API}.resolution()`);
       assert.equal(tf, '1D');
     });
@@ -325,7 +510,7 @@ describe('TradingView MCP — Full E2E (70 tools)', () => {
       await sleep(500);
 
       // Type search query
-      await Input.insertText({ text: 'AAPL' });
+      await Input.insertText({ text: TEST_SYMBOL_TICKER });
       await sleep(800);
 
       // Read results
@@ -930,13 +1115,35 @@ val = array.get(a, 5)`;
   // ─── 5. DRAWING (5 tools) ─────────────────────────────────────────────
 
   describe('Drawing', () => {
+    let baselineDrawingIds = [];
+    const ownedDrawingIds = new Set();
+    let primaryDrawingId = null;
 
-    after(async () => {
-      // Clean up all drawings
-      try { await evaluate(`${CHART_API}.removeAllShapes()`); } catch {}
-    });
+    async function listDrawingIds() {
+      return evaluate(`${CHART_API}.getAllShapes().map(function(s) { return String(s.id); })`);
+    }
 
-    it('draw_shape — create horizontal line', async () => {
+    async function waitForOwnedDrawing(entityId, { listed = false, timeoutMs = 5000 } = {}) {
+      const expected = String(entityId);
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() <= deadline) {
+        const state = await evaluate(`
+          (function() {
+            var api = ${CHART_API};
+            var eid = ${JSON.stringify(expected)};
+            var all = api.getAllShapes().map(function(s) { return String(s.id); });
+            var byId = false;
+            try { byId = !!api.getShapeById(eid); } catch (e) {}
+            return { listed: all.indexOf(eid) >= 0, by_id: byId, ids: all };
+          })()
+        `);
+        if ((listed && state.listed) || (!listed && (state.listed || state.by_id))) return state;
+        await sleep(100);
+      }
+      throw new Error(`Owned Drawing ${expected} did not become ${listed ? 'listable' : 'readable'}.`);
+    }
+
+    async function createOwnedHorizontalLine() {
       const quote = await evaluate(`
         (function() {
           var bars = ${BARS_PATH};
@@ -944,41 +1151,89 @@ val = array.get(a, 5)`;
           return last ? { time: last[0], price: last[4] } : null;
         })()
       `);
-      if (!quote) return;
-
-      const result = await evaluate(`
-        (function() {
-          var api = ${CHART_API};
-          var id = api.createShape(
-            { time: ${quote.time}, price: ${quote.price} },
-            { shape: 'horizontal_line', overrides: {} }
-          );
-          return { entity_id: id };
-        })()
+      assert.ok(quote, 'Current chart has a quote for Drawing placement');
+      const entityId = await evaluate(`
+        Promise.resolve(${CHART_API}.createShape(
+          { time: ${quote.time}, price: ${quote.price} },
+          { shape: 'horizontal_line', overrides: {} }
+        )).then(function(id) { return String(id); })
       `);
-      assert.ok(result, 'Shape created');
-      assert.ok(result.entity_id, 'Has entity_id');
+      assert.ok(entityId, 'Shape creation returned an entity ID');
+      ownedDrawingIds.add(String(entityId));
+      await waitForOwnedDrawing(entityId);
+      return String(entityId);
+    }
+
+    async function removeOwnedDrawing(entityId) {
+      const expected = String(entityId);
+      if (!ownedDrawingIds.has(expected)) {
+        throw new Error(`Refusing to remove Drawing not owned by this test run: ${expected}`);
+      }
+      await evaluate(`${CHART_API}.removeEntity(${JSON.stringify(expected)})`);
+      const deadline = Date.now() + 5000;
+      while (Date.now() <= deadline) {
+        const ids = await listDrawingIds();
+        if (!ids.includes(expected)) {
+          ownedDrawingIds.delete(expected);
+          return;
+        }
+        await sleep(100);
+      }
+      throw new Error(`Owned Drawing cleanup timed out: ${expected}`);
+    }
+
+    before(async () => {
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        const first = (await listDrawingIds()).sort();
+        await sleep(100);
+        const second = (await listDrawingIds()).sort();
+        if (JSON.stringify(first) === JSON.stringify(second)) {
+          baselineDrawingIds = first;
+          return;
+        }
+      }
+      throw new Error('Drawing baseline is unstable; refusing to run mutating Drawing E2E tests.');
+    });
+
+    after(async () => {
+      const cleanupErrors = [];
+      for (const entityId of [...ownedDrawingIds]) {
+        try { await removeOwnedDrawing(entityId); }
+        catch (error) { cleanupErrors.push(error.message); }
+      }
+      const finalIds = (await listDrawingIds()).sort();
+      if (JSON.stringify(finalIds) !== JSON.stringify(baselineDrawingIds)) {
+        cleanupErrors.push(
+          `Drawing baseline changed: expected ${JSON.stringify(baselineDrawingIds)}, received ${JSON.stringify(finalIds)}.`,
+        );
+      }
+      if (cleanupErrors.length) throw new Error(cleanupErrors.join(' '));
+    });
+
+    it('draw_shape — create horizontal line', async () => {
+      primaryDrawingId = await createOwnedHorizontalLine();
+      assert.ok(primaryDrawingId, 'Has owned entity_id');
     });
 
     it('draw_list — list drawings', async () => {
+      assert.ok(primaryDrawingId, 'Owned Drawing from draw_shape is available');
+      await waitForOwnedDrawing(primaryDrawingId, { listed: true });
       const shapes = await evaluate(`
         (function() {
           var all = ${CHART_API}.getAllShapes();
-          return all.map(function(s) { return { id: s.id, name: s.name }; });
+          return all.map(function(s) { return { id: String(s.id), name: s.name }; });
         })()
       `);
       assert.ok(Array.isArray(shapes), 'Shapes is array');
-      assert.ok(shapes.length > 0, 'Has at least one shape');
+      assert.ok(shapes.some((shape) => shape.id === primaryDrawingId), 'Lists the owned Drawing');
     });
 
     it('draw_get_properties — read shape details', async () => {
-      const shapes = await evaluate(`${CHART_API}.getAllShapes()`);
-      if (!shapes || shapes.length === 0) return;
-
+      assert.ok(primaryDrawingId, 'Owned Drawing from draw_shape is available');
       const result = await evaluate(`
         (function() {
           var api = ${CHART_API};
-          var shape = api.getShapeById('${shapes[0].id}');
+          var shape = api.getShapeById(${JSON.stringify(primaryDrawingId)});
           if (!shape) return { error: 'not found' };
           var props = {};
           try { props.points = shape.getPoints(); } catch(e) {}
@@ -991,32 +1246,18 @@ val = array.get(a, 5)`;
     });
 
     it('draw_remove_one — remove single drawing', async () => {
-      const shapes = await evaluate(`${CHART_API}.getAllShapes()`);
-      if (!shapes || shapes.length === 0) return;
-
-      const id = shapes[0].id;
-      await evaluate(`${CHART_API}.removeEntity('${id}')`);
-      const after = await evaluate(`${CHART_API}.getAllShapes()`);
-      const stillExists = after.some(s => s.id === id);
-      assert.ok(!stillExists, 'Shape removed');
+      assert.ok(primaryDrawingId, 'Owned Drawing from draw_shape is available');
+      await removeOwnedDrawing(primaryDrawingId);
+      const after = await listDrawingIds();
+      assert.ok(!after.includes(primaryDrawingId), 'Owned Drawing removed');
+      primaryDrawingId = null;
     });
 
-    it('draw_clear — remove all drawings', async () => {
-      // Add a shape first
-      const quote = await evaluate(`
-        (function() {
-          var bars = ${BARS_PATH};
-          var last = bars.valueAt(bars.lastIndex());
-          return last ? { time: last[0], price: last[4] } : null;
-        })()
-      `);
-      if (quote) {
-        await evaluate(`${CHART_API}.createShape({ time: ${quote.time}, price: ${quote.price} }, { shape: 'horizontal_line' })`);
-      }
-
-      await evaluate(`${CHART_API}.removeAllShapes()`);
-      const after = await evaluate(`${CHART_API}.getAllShapes()`);
-      assert.equal(after.length, 0, 'All shapes cleared');
+    it('draw_owned_cleanup — preserve the baseline while removing test content', async () => {
+      const entityId = await createOwnedHorizontalLine();
+      await removeOwnedDrawing(entityId);
+      const after = (await listDrawingIds()).sort();
+      assert.deepEqual(after, baselineDrawingIds, 'Only the owned Drawing was removed');
     });
   });
 
@@ -1156,33 +1397,52 @@ val = array.get(a, 5)`;
 
   // ─── 7. REPLAY MODE (6 tools) ─────────────────────────────────────────
 
-  describe('Replay Mode', () => {
+  (RUN_REPLAY_E2E ? describe : describe.skip)('Replay Mode (opt-in)', () => {
+    let ownedReplayExecutions = false;
+
+    async function stopReplayAndWait() {
+      return stopReplay({
+        _deps: { evaluate, getReplayApi: async () => REPLAY_API, delay: sleep },
+      });
+    }
+
+    async function clearOwnedReplayExecutions() {
+      if (!ownedReplayExecutions) return;
+      const result = await evaluate(`
+        (function() {
+          var api = window.TradingViewApi;
+          var chartModel = api._activeChartWidgetWV.value()._chartWidget.model().model();
+          var controller = api._replayApi._replayUIController._replayTradingUIController;
+          var modelId = chartModel.id();
+          var before = controller.isTradingReplaySessionHasExecutions();
+          controller.clearExecutions(modelId);
+          return {
+            model_id: modelId,
+            had_executions: before,
+            has_executions: controller.isTradingReplaySessionHasExecutions()
+          };
+        })()
+      `);
+      if (result?.has_executions) {
+        throw new Error(`Owned Replay executions were not cleared for Chart model ${result.model_id}.`);
+      }
+      ownedReplayExecutions = false;
+    }
 
     after(async () => {
       // Ensure replay is stopped
-      try {
-        const rp = REPLAY_API;
-        const started = await evaluate(wv(`${rp}.isReplayStarted()`));
-        if (started) {
-          await evaluate(`${rp}.stopReplay()`);
-          await evaluate(`${rp}.goToRealtime()`);
-          await evaluate(`${rp}.hideReplayToolbar()`);
-          await sleep(500);
-        }
-      } catch {}
+      await clearOwnedReplayExecutions();
+      await stopReplayAndWait();
     });
 
     it('replay_start — enter replay mode', async () => {
-      const available = await evaluate(wv(`${REPLAY_API}.isReplayAvailable()`));
-      if (!available) return; // Skip if replay not available for current symbol
-
-      await evaluate(`${REPLAY_API}.showReplayToolbar()`);
-      await sleep(500);
-      await evaluate(`${REPLAY_API}.selectFirstAvailableDate()`);
-      await sleep(500);
-
-      const started = await evaluate(wv(`${REPLAY_API}.isReplayStarted()`));
-      assert.ok(started, 'Replay started');
+      const result = await startReplay({
+        _deps: { evaluate, getReplayApi: async () => REPLAY_API, delay: sleep },
+      });
+      assert.equal(result.replay_started, true);
+      assert.equal(result.selection.selection_mode, 'loaded_bars_ratio');
+      assert.ok(result.selection.future_bar_count >= 5);
+      assert.ok(result.selection.future_bar_count <= 200);
     });
 
     it('replay_step — advance one bar', async () => {
@@ -1210,16 +1470,19 @@ val = array.get(a, 5)`;
       }
     });
 
-    it('replay_trade — buy action', async () => {
+    (RUN_REPLAY_TRADING_E2E ? it : it.skip)('replay_trade — buy action (separate opt-in)', async () => {
       const started = await evaluate(wv(`${REPLAY_API}.isReplayStarted()`));
       if (!started) return;
 
-      await evaluate(`${REPLAY_API}.buy()`);
-      const position = await evaluate(wv(`${REPLAY_API}.position()`));
-      assert.ok(position !== undefined, 'Position returned after buy');
-
-      // Close position
-      try { await evaluate(`${REPLAY_API}.closePosition()`); } catch {}
+      ownedReplayExecutions = true;
+      try {
+        await evaluate(`${REPLAY_API}.buy()`);
+        const position = await evaluate(wv(`${REPLAY_API}.position()`));
+        assert.ok(position !== undefined, 'Position returned after buy');
+      } finally {
+        try { await evaluate(`${REPLAY_API}.closePosition()`); } catch {}
+        await clearOwnedReplayExecutions();
+      }
     });
 
     it('replay_status — get replay state', async () => {
@@ -1239,12 +1502,9 @@ val = array.get(a, 5)`;
 
     it('replay_stop — return to realtime', async () => {
       const started = await evaluate(wv(`${REPLAY_API}.isReplayStarted()`));
-      if (!started) return;
+      assert.ok(started, 'Replay is started before stop');
 
-      await evaluate(`${REPLAY_API}.stopReplay()`);
-      await evaluate(`${REPLAY_API}.goToRealtime()`);
-      await evaluate(`${REPLAY_API}.hideReplayToolbar()`);
-      await sleep(500);
+      await stopReplayAndWait();
 
       const stoppedNow = await evaluate(wv(`${REPLAY_API}.isReplayStarted()`));
       assert.ok(!stoppedNow, 'Replay stopped');
@@ -1288,6 +1548,11 @@ val = array.get(a, 5)`;
   // ─── 9. WATCHLIST (2 tools) ───────────────────────────────────────────
 
   describe('Watchlist', () => {
+
+    it('watchlist_list — required named fixture exists', () => {
+      assert.equal(testEnvironment.watchlist.name, TEST_WATCHLIST_NAME);
+      assert.ok(testEnvironment.watchlist.id != null, 'Required Watchlist has an Account ID');
+    });
 
     it('watchlist_get — execute the production watchlist path', async () => {
       const result = await getWatchlist({ _deps: { evaluate, sleep } });

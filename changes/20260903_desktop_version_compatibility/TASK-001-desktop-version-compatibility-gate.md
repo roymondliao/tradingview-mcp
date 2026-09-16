@@ -23,6 +23,7 @@ scope: local-and-live
 - 建立公開 Desktop-dependent CLI／Core surface inventory，要求每個 surface 映射至 required 或具有明確 entitlement／fixture precondition 的 check。
 - 實作 `compatibility check` 的 `read-only` 與 `controlled` profiles，並支援 atomic JSON `--output`／`--force`。
 - 驗證 CDP、Target、Tab／Layout／Pane、Chart、Data、Study、Strategy、History、Watchlist、Pine、Drawing、Alert、Replay、UI、Stream、Output 與 repository regression contracts。
+- Replay controlled profile必須驗證`selectDate()` Promise、有效bars比例選點、manager／UI state語意、`goToRealtime()`後再close session的版本順序，以及symbol／resolution／bars restore；不得使用最早可用日期或在Strategy E2E中執行Replay。
 - Controlled profile 在 mutation 前建立 immutable restore context，成功或失敗都嘗試恢復，並對 restore 結果 readback。
 - 將 environment、fixture、optional capability 與 confirmed Desktop incompatibility 分開分類。
 - Required check 失敗時輸出失敗 contract、provider path、expected／observed shape、最後已知相容版本與 sanitized diagnostic；不輸出 unrestricted runtime data。
