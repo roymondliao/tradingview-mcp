@@ -22,10 +22,11 @@ describe('Study and Strategy MCP registration inventory', () => {
     const tools = collectTools(registerPineTools);
     for (const name of [
       'pine_list_scripts', 'pine_get_script', 'pine_create_script',
-      'pine_update_script', 'pine_delete_script',
+      'pine_update_script', 'pine_delete_script', 'pine_analyze', 'pine_check',
     ]) {
       assert.equal(typeof tools.get(name)?.handler, 'function', `${name} registered`);
     }
+    assert.ok(tools.get('pine_check')?.schema?.source, 'pine_check exposes source');
   });
 
   it('registers the complete Active Pane Study lifecycle', () => {

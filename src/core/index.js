@@ -7,6 +7,7 @@ export * as chartSession from './chart-session.js';
 export * as layoutIdentity from './layout-identity.js';
 export * as data from './data.js';
 export * as pine from './pine.js';
+export * as pineInputSchema from './pine-input-schema.js';
 export * as health from './health.js';
 export * as capture from './capture.js';
 export * as drawing from './drawing.js';

@@ -5,6 +5,15 @@
  */
 import { evaluate, evaluateAsync, getClient } from '../connection.js';
 import { unixSecondsToIso } from './time.js';
+import {
+  PINE_INPUT_SCHEMA_VERSION,
+  extractCandidateInputSchema,
+  normalizePineSource,
+  normalizedPineSourceSha256,
+  sanitizeCompilerInputVariables,
+} from './pine-input-schema.js';
+
+export { normalizePineSource, normalizedPineSourceSha256 } from './pine-input-schema.js';
 
 // ── Monaco finder (injected into TV page) ──
 const FIND_MONACO = `
@@ -184,11 +193,12 @@ export function analyze({ source }) {
   };
 }
 
-export async function check({ source }) {
+export async function check({ source, _deps } = {}) {
+  const runFetch = _deps?.fetch || fetch;
   const formData = new URLSearchParams();
   formData.append('source', source);
 
-  const response = await fetch(
+  const response = await runFetch(
     'https://pine-facade.tradingview.com/pine-facade/translate_light?user_name=Guest&pine_id=00000000-0000-0000-0000-000000000000',
     {
       method: 'POST',
@@ -232,6 +242,28 @@ export async function check({ source }) {
   }
 
   const compiled = errors.length === 0;
+  const compilerMetadataAvailable = Array.isArray(inner?.variables2);
+  const inputVariables = sanitizeCompilerInputVariables(inner);
+  let inputSchema;
+  if (compiled && compilerMetadataAvailable) {
+    inputSchema = extractCandidateInputSchema({ source, compiler_inputs: inputVariables });
+  } else {
+    inputSchema = {
+      available: false,
+      schema_version: PINE_INPUT_SCHEMA_VERSION,
+      source_sha256: normalizedPineSourceSha256(source),
+      compiler_input_count: inputVariables.length,
+      input_count: 0,
+      inputs: [],
+      input_schema_fingerprint: null,
+      errors: [{
+        code: compiled ? 'PINE_COMPILER_INPUT_METADATA_UNAVAILABLE' : 'PINE_COMPILE_FAILED',
+        message: compiled
+          ? 'TradingView compiler returned no Input variable metadata.'
+          : 'Candidate Input Schema is unavailable because Pine compilation failed.',
+      }],
+    };
+  }
   return {
     success: true,
     compiled,
@@ -239,6 +271,9 @@ export async function check({ source }) {
     warning_count: warnings.length,
     errors: errors.length > 0 ? errors : undefined,
     warnings: warnings.length > 0 ? warnings : undefined,
+    input_metadata_available: compilerMetadataAvailable,
+    input_variables: inputVariables,
+    input_schema: inputSchema,
     note: compiled ? 'Pine Script compiled successfully.' : undefined,
   };
 }
@@ -696,10 +731,6 @@ export function detectPineType(source) {
   ];
   const match = declarations.find(([, pattern]) => pattern.test(String(source || '')));
   return match?.[0] || 'unknown';
-}
-
-function normalizePineSource(source) {
-  return String(source || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 }
 
 async function pollSavedScript({ script_id, expectPresent, _deps }) {
