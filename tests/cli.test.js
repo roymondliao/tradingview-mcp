@@ -120,7 +120,23 @@ describe('CLI — help and routing', () => {
     assert.ok(stdout.includes('orders'));
     assert.ok(stdout.includes('trades'));
     assert.ok(stdout.includes('equity'));
+    assert.ok(stdout.includes('run'));
     assert.doesNotMatch(stdout, /trading-(?:report|data|export)(?:Get|Export)/);
+  });
+
+  it('strategy run exposes the read-only Run Config contract', () => {
+    const help = run(['strategy', 'run', '--help']);
+    assert.equal(help.exitCode, 0);
+    assert.ok(help.stdout.includes('--config'));
+    assert.ok(help.stdout.includes('--dry-run'));
+
+    const missing = run(['strategy', 'run', '--dry-run']);
+    assert.equal(missing.exitCode, 1);
+    assert.equal(JSON.parse(missing.stderr).code, 'RUN_CONFIG_REQUIRED');
+
+    const formal = run(['strategy', 'run', '--config', './missing.json']);
+    assert.equal(formal.exitCode, 1);
+    assert.equal(JSON.parse(formal.stderr).code, 'STRATEGY_RUN_NOT_IMPLEMENTED');
   });
 
   it('strategy trading-data help exposes Offset/Limit/Snapshot pagination', () => {

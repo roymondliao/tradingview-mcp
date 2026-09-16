@@ -69,7 +69,7 @@ Strategy create／update／reuse由normalized source hash自動判斷，不要�
 
 ## Run identity
 
-`run.run_id`為選填。省略時CLI產生：
+`run`本身為選填；省略、`null`或空object都表示由CLI產生identity。`run.run_id`為選填，省略時CLI產生：
 
 ```text
 <strategy-slug>-<UTC timestamp>-<random suffix>

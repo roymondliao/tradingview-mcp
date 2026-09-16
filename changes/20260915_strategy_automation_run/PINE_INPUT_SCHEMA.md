@@ -127,13 +127,13 @@ Schema fingerprint使用ordered canonical items的name、types、default／expre
 
 ## Current／candidate comparison
 
-Current Runtime Schema由old Pane `getInputsInfo()`／`getInputValues()`取得；Candidate Schema由本文件的hybrid provider建立。Comparison以exact name為identity，輸出`added`、`removed`與field-level `changed`。
+Current Schema由Account current source建立；Candidate Schema由本文件的hybrid provider建立。Comparison以exact name為identity，輸出`added`、`removed`與field-level `changed`。V1的change classification只比較`type`、`default_value`／`default_expression`、`min`與`max`；`group`、declaration order／location、`step`與`options`不構成schema diff。Parameter Set value validation仍可使用available的`step`與`options`。
 
 - Reorder只改runtime ID／declaration order，不使name-based Config失效。
 - Rename表現為removed old name＋added new name；Config仍引用old name時blocking error。
 - Added Input未被Parameter Sets覆蓋時使用new default並warning `PARAMETER_SET_NEW_INPUT_DEFAULTED`。
 - Removed／renamed name仍被引用：`PARAMETER_SET_INPUT_NOT_FOUND`。
-- Type或constraint變更使value不合法：對應type／range／option blocking error。
+- Type、min或max變更使value不合法：對應type／range blocking error；`step`與`options`雖不列入diff，仍由value validation檢查。
 
 Pine `strategy()`properties不屬於`input.*()`Candidate Schema；若未來自動化Initial Capital、Commission等設定，使用獨立`backtest.properties`contract，不與Parameter Sets混合。
 
@@ -192,4 +192,3 @@ Test date: `2026-09-15`
 - Parameter Set valid、missing、ambiguous、type、range、step與option cases。
 - Candidate／Runtime readback match與mismatch。
 - `data/obv-v3.pine`golden fixture：16 Compiler Input Variables與16Candidate Inputs。
-

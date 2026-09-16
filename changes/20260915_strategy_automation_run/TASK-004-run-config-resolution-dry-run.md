@@ -1,7 +1,7 @@
 ---
 id: TASK-004
 title: Run Config, Resource Resolution, and Dry-run
-status: todo
+status: done
 phase: strategy-automation-run
 depends_on:
   - TASK-001
@@ -68,11 +68,11 @@ Dry-run完整取得Watchlist Snapshot但stdout只顯示count、fingerprint與bou
 
 ### Acceptance criteria
 
-- [ ] 一份合法config可解析出完整requested／resolved plan。
-- [ ] User不需提供TradingView IDs。
-- [ ] 所有read-only可偵測問題在dry-run回傳；不只first error。
-- [ ] Dry-run不改變Account、Pane、Watchlist、Symbol、Timeframe或filesystem artifacts。
-- [ ] Formal run可以重用相同loader／resolver，不需重寫validation。
+- [x] 一份合法config可解析出完整requested／resolved plan。
+- [x] User不需提供TradingView IDs。
+- [x] 所有read-only可偵測問題在dry-run回傳；不只first error。
+- [x] Dry-run不改變Account、Pane、Watchlist、Symbol、Timeframe或filesystem artifacts。
+- [x] Formal run可以重用相同loader／resolver，不需重寫validation。
 
 ### Validation commands
 
@@ -89,5 +89,30 @@ fnm exec --using=22 npm run tv -- strategy run --config ./run-config.json --dry-
 
 ## Completion record
 
-Not started.
+Completed on 2026-09-16.
 
+Implemented:
+
+- Strict Run Config v1 loader with unknown-field rejection, config-relative paths, normalized Pine SHA-256, generated／explicit path-safe Run IDs, output collision checks, and aggregated diagnostics.
+- Exact-name open Layout／Tab／Pane, named Account Watchlist, Saved Strategy, and Pane Strategy Instance resolution without visual Tab or Pane activation.
+- Candidate／current Input Schema comparison, create／update／reuse and add／refresh／reuse planning, plus exact-title Candidate／Runtime Parameter Set validation.
+- `strategy run --config <path> --dry-run`; formal execution remains an explicit `STRATEGY_RUN_NOT_IMPLEMENTED` boundary for TASK-005～007.
+- Bounded Watchlist summary, example config, public Core exports, CLI help／exit behavior, and deterministic unit coverage.
+
+Live evidence using Desktop 3.4.0:
+
+- Config: `run-config.example.json`; Layout `dev`; Pane 0; Saved Strategy `obv-v3`; Watchlist `dev-testing-list`.
+- Resolved Layout IDs `aQoXnpKX`／`201414175`, Pane ID `1`, Symbol `TWSE_DLY:2330`, Timeframe `1D`.
+- Local and Account normalized source hashes matched; Account and Pane actions both resolved to `reuse`; Pane version read back as `3.0`.
+- Complete Watchlist Snapshot contained 448 declared／returned／unique Symbols with zero invalid or duplicate Symbols.
+- Candidate schema contained 16 Inputs; Desktop runtime catalog contained 35 user-facing Inputs after hidden fields were excluded, and resolved exact titles to `in_3` and `in_7` for the non-empty validation Parameter Set.
+- Follow-up correctness hardening rejects empty／incomplete Runtime Catalogs when Candidate Inputs exist, blocks unknown Account／Pane versions, uses exact Account Script ID matching, limits schema diff fields to type／default／min／max, and fingerprints complete Effective Inputs without printing the complete catalog. Explicit `run: null` remains the supported auto-ID form.
+- Final response: `success: true`, `valid: true`, `blocked: []`, `warnings: []`, `errors: []`.
+- The dry-run did not create output directories or files and did not update Pine, inputs, Pane, Symbol, Timeframe, Layout, or Watchlist state.
+
+Validation:
+
+- `fnm exec --using=22 npm run lint` — 0 errors; 3 pre-existing warnings outside this task.
+- `fnm exec --using=22 npm run test:unit` — 482 passed.
+- `fnm exec --using=22 npm run test:cli` — 31 passed.
+- Live `strategy run --config changes/20260915_strategy_automation_run/run-config.example.json --dry-run` — exit 0.

@@ -191,6 +191,10 @@ Freshness不可只比較總損益或交易次數；不同Inputs可能合法產�
 - 顯示requested name、resolved ID、base value與requested value。
 - 不呼叫`setInputValues()`，不觸發Strategy recalculation。
 
+完整Effective Inputs只在Account source與Pane loaded version都已明確一致、且Runtime Catalog完整時建立。CLI不需輸出完整Inputs陣列；只輸出requested／resolved overrides與涵蓋完整Effective Inputs的fingerprint。若Strategy仍需create／update／refresh，dry-run先完成Candidate validation，並將Effective fingerprint標為`pending_strategy_sync`，待同步後由新版Runtime Catalog計算。
+
+Candidate宣告Inputs但Runtime Catalog為空、缺少同名Input、同名不唯一或value type不相容時，Runtime validation不得標示`complete`。沒有任何`input.*()`的Strategy則允許Candidate與Runtime Catalog同時為空。
+
 本use case假設Base Strategy已存在於指定Pane，因此dry-run可以從runtime完整驗證name mapping。若未來支援在同一次run建立尚不存在的Strategy，read-only dry-run如何證明runtime input schema必須另外定義，不可假裝已完成驗證。
 
 ## Live evidence: input metadata
@@ -214,4 +218,3 @@ Test date: `2026-09-15`
 - Cross-Pane或parallel Parameter Set execution。
 - 對不存在於Pane的新Strategy進行完全read-only input schema validation。
 - Pine source update後的Input schema migration；屬於Strategy Sync／Pane refresh discussion。
-

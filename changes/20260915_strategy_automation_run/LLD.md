@@ -279,6 +279,8 @@ Account plan：missing=`create`、normalized hash equal=`reuse`、different=`upd
 
 Pane plan：missing=`add_latest`、matching latest=`reuse`、single stale=`refresh`、multiple same script=`ambiguous error`。
 
+`matching latest`必須同時具有exact `script_id`與可讀取且等於Account latest的Pane version；version unavailable是blocking capability error，不可猜測`reuse`或`refresh`。Pane inventory優先使用metadata `scriptIdPart`，fallback只能從definition ID嚴格解析完整`USER;...`identity，不使用substring matching。
+
 Refresh保留old，add latest並驗證new version／Runtime Schema／Base Inputs／fresh Report後才remove old。Failure cleanup只移除transaction建立且ownership已確認的new Instance。Account已latest但Pane stale可由下次run只重試refresh。
 
 Input schema migration以exact name：compatible existing values preserve；added使用new Runtime default；removed drop並記錄；type／constraint不相容使用new default並warning。Parameter Sets仍必須全部通過Candidate與Runtime validation。
@@ -299,6 +301,7 @@ restoreBaseInputs({ base, context, entity_id })
 ```
 
 - 每組Effective Inputs=`captured Base + current overrides`。
+- Effective Inputs只在完整Runtime Catalog可用時建立；stdout只需回傳requested／resolved overrides與完整fingerprint，不輸出整份catalog。
 - Apply前讀取Report state；Study Core mutation/readback後，以new Input fingerprint呼叫Strategy Runtime等待fresh stable Report。
 - 即使Report metrics相同，也以Inputs fingerprint與calculation lifecycle證明freshness。
 - 每組完成才執行下一組；finally恢復Base Inputs並read back。
@@ -393,11 +396,11 @@ Large Symbol arrays不在dry-run stdout完整展開；回傳counts、fingerprint
 | Config | `RUN_CONFIG_INVALID`, `RUN_ID_INVALID`, `RUN_OUTPUT_EXISTS` |
 | Layout／Pane | `TARGET_LAYOUT_NOT_OPEN`, `TARGET_LAYOUT_AMBIGUOUS`, `PANE_INDEX_INVALID`, `PANE_CONTEXT_CHANGED` |
 | Watchlist | `WATCHLIST_NOT_FOUND`, `WATCHLIST_AMBIGUOUS`, `WATCHLIST_INCOMPLETE`, `WATCHLIST_SNAPSHOT_UNSTABLE`, `WATCHLIST_SNAPSHOT_UNSUPPORTED` |
-| Account Strategy | `STRATEGY_NAME_AMBIGUOUS`, `STRATEGY_SOURCE_READBACK_MISMATCH`, `STRATEGY_VERSION_READBACK_MISMATCH` |
-| Pane Strategy | `STRATEGY_INSTANCE_AMBIGUOUS`, `STRATEGY_REFRESH_FAILED`, `STRATEGY_REFRESH_CLEANUP_FAILED` |
+| Account Strategy | `STRATEGY_NAME_AMBIGUOUS`, `ACCOUNT_STRATEGY_VERSION_UNAVAILABLE`, `STRATEGY_SOURCE_READBACK_MISMATCH`, `STRATEGY_VERSION_READBACK_MISMATCH` |
+| Pane Strategy | `STRATEGY_INSTANCE_AMBIGUOUS`, `PANE_STRATEGY_VERSION_UNAVAILABLE`, `STRATEGY_REFRESH_FAILED`, `STRATEGY_REFRESH_CLEANUP_FAILED` |
 | Candidate Schema | `PINE_INPUT_STATIC_TITLE_REQUIRED`, `PINE_INPUT_SCHEMA_UNRESOLVED`, `PINE_INPUT_TYPE_MISMATCH` |
 | Study Inputs | `STUDY_INPUT_SELECTOR_CONFLICT`, `STUDY_INPUT_NOT_FOUND`, `STUDY_INPUT_NAME_AMBIGUOUS`, `STUDY_INPUT_VALUE_INVALID` |
-| Parameter Sets | `PARAMETER_SET_NAME_DUPLICATE`, `PARAMETER_SET_INPUT_NOT_FOUND`, `PARAMETER_SET_INPUT_VALUE_INVALID` |
+| Parameter Sets | `PARAMETER_SET_NAME_DUPLICATE`, `PARAMETER_SET_INPUT_NOT_FOUND`, `PARAMETER_SET_INPUT_VALUE_INVALID`, `RUNTIME_INPUT_CATALOG_EMPTY`, `RUNTIME_INPUT_TYPE_MISMATCH` |
 | Runtime | existing calculation、snapshot、context與trading export errors |
 
 Errors保留`phase`、`retryable`與safe context；不得包含完整private Pine source、compiler payload、cookies或credentials。
@@ -430,4 +433,3 @@ CI不連接TradingView Desktop；所有CDP、clock、filesystem、compiler respo
 - TASK-006在fixed latest Strategy上實作Parameter Set execution與restore。
 - TASK-007整合existing Strategy Trading export與canonical run artifacts，交付正式`strategy run`。
 - TASK-008只做regression、live acceptance、文件與completion record，不新增功能。
-
