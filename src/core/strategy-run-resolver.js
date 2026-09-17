@@ -244,8 +244,8 @@ export async function readTargetPaneStudies({ target_id, pane_index, _deps } = {
   });
 }
 
-export function resolvePaneStrategyInstances({ pane_state, script_id } = {}) {
-  if (!script_id) return Object.freeze({ match_count: 0, matches: Object.freeze([]) });
+export function listPaneStrategyInstances({ pane_state, script_id } = {}) {
+  if (!script_id) return Object.freeze([]);
   const matches = (pane_state?.studies || []).filter((study) => (
     study.type === 'strategy'
     && String(
@@ -254,6 +254,11 @@ export function resolvePaneStrategyInstances({ pane_state, script_id } = {}) {
         : accountScriptIdFromDefinition(study.definition_id) || '',
     ) === String(script_id)
   ));
+  return Object.freeze(matches);
+}
+
+export function resolvePaneStrategyInstances({ pane_state, script_id } = {}) {
+  const matches = listPaneStrategyInstances({ pane_state, script_id });
   if (matches.length > 1) {
     throw resolutionError(
       'STRATEGY_INSTANCE_AMBIGUOUS',

@@ -31,7 +31,7 @@ function acceptsType(input, value) {
   return false;
 }
 
-function validateValue(input, value) {
+export function validateInputValue(input, value) {
   if (!acceptsType(input, value)) return `expects ${input.runtime_value_type || input.type || input.pine_input_type || 'a known type'}, received ${typeof value}`;
   const constraints = input.constraints || {};
   if (Array.isArray(constraints.options) && !constraints.options.some((option) => valuesEqual(option, value))) {
@@ -60,7 +60,7 @@ function uniqueByName(inputs) {
   return byName;
 }
 
-function normalizedValueType(input) {
+export function normalizedInputValueType(input) {
   const raw = String(input?.pine_input_type || input?.runtime_value_type || input?.type || '').toLowerCase();
   if (['bool', 'boolean'].includes(raw)) return 'bool';
   if (['int', 'integer', 'time'].includes(raw)) return 'int';
@@ -131,8 +131,8 @@ function validateRuntimeCatalog({ candidate_schema, base_catalog }) {
       ));
       continue;
     }
-    const candidateType = normalizedValueType(candidate);
-    const runtimeType = normalizedValueType(matches[0]);
+    const candidateType = normalizedInputValueType(candidate);
+    const runtimeType = normalizedInputValueType(matches[0]);
     const compatible = candidateType === runtimeType
       || (candidateType === 'enum' && ['enum', 'string'].includes(runtimeType));
     if (!compatible) {
@@ -220,7 +220,7 @@ export function planParameterSets({ base_catalog, candidate_schema, parameter_se
         continue;
       }
       const candidate = candidateMatches[0];
-      const invalid = validateValue(candidate, value);
+      const invalid = validateInputValue(candidate, value);
       if (invalid) {
         errors.push(issue(
           'PARAMETER_SET_INPUT_VALUE_INVALID',
@@ -231,7 +231,7 @@ export function planParameterSets({ base_catalog, candidate_schema, parameter_se
       }
       const runtimeMatches = baseByName.get(name) || [];
       if (runtimeCatalog.complete && runtimeMatches.length === 1) {
-        const runtimeInvalid = validateValue(runtimeMatches[0], value);
+        const runtimeInvalid = validateInputValue(runtimeMatches[0], value);
         if (runtimeInvalid) {
           errors.push(issue(
             'PARAMETER_SET_INPUT_VALUE_INVALID',
