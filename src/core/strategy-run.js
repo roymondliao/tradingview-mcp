@@ -14,6 +14,13 @@ import {
 } from './watchlist.js';
 import { compareInputSchemas, planParameterSets } from './strategy-parameter-sets.js';
 import { planStrategySync } from './strategy-sync.js';
+import { executeStrategySync } from './strategy-sync.js';
+import { executeParameterSets } from './strategy-parameter-sets.js';
+import { exportStrategySnapshotIntoRun } from './strategy-trading.js';
+import { createArtifactSetTransaction } from './artifacts.js';
+import { withChartSession } from './chart-session.js';
+import { CoreOperationError, sanitizeCoreContext } from './errors.js';
+import { unixMillisecondsToIso } from './time.js';
 import { reconnectTo } from '../connection.js';
 
 function diagnostic(error, fallbackCode, phase) {
@@ -52,7 +59,7 @@ function compilerDiagnostics(result) {
 }
 
 /** Resolve and validate one complete run without any TradingView or filesystem mutation. */
-export async function dryRunStrategyAutomation({ config_path, _deps = {} } = {}) {
+export async function dryRunStrategyAutomation({ config_path, _include_internal = false, _deps = {} } = {}) {
   const errors = [];
   const warnings = [];
   const blockedStages = [];
@@ -116,6 +123,7 @@ export async function dryRunStrategyAutomation({ config_path, _deps = {} } = {})
   }
 
   let watchlist = null;
+  let watchlistComplete = null;
   if (requested.target.watchlist.name) {
     try {
       const captureWatchlist = _deps.captureNamedWatchlistSnapshot || captureNamedWatchlistSnapshot;
@@ -123,6 +131,7 @@ export async function dryRunStrategyAutomation({ config_path, _deps = {} } = {})
         name: requested.target.watchlist.name,
         _deps: _deps.watchlist,
       });
+      watchlistComplete = complete;
       watchlist = summarizeNamedWatchlistSnapshot(complete, { sample_size: 3 });
     } catch (error) {
       errors.push(diagnostic(error, 'WATCHLIST_RESOLUTION_FAILED', 'watchlist_snapshot'));
@@ -240,7 +249,7 @@ export async function dryRunStrategyAutomation({ config_path, _deps = {} } = {})
     || /CDP|ECONNREFUSED|not running/i.test(error.message || '')
   ));
   const valid = errors.length === 0;
-  return {
+  const response = {
     success: valid,
     valid,
     dry_run: true,
@@ -279,10 +288,236 @@ export async function dryRunStrategyAutomation({ config_path, _deps = {} } = {})
     warnings,
     errors,
   };
+  if (!_include_internal) return response;
+  return {
+    ...response,
+    _internal: Object.freeze({
+      loaded,
+      candidate,
+      target,
+      watchlist: watchlistComplete,
+      account_resolution: accountResolution,
+      account_detail: accountDetail,
+      pane_state: paneState,
+      pane_instances: paneInstances,
+      current_schema: currentSchema,
+    }),
+  };
 }
 
-export async function runStrategyAutomation() {
-  const error = new Error('Formal strategy run is not implemented yet; use --dry-run.');
-  Object.assign(error, { code: 'STRATEGY_RUN_NOT_IMPLEMENTED', phase: 'request_validation' });
-  throw error;
+function publicPreflight(preflight) {
+  const { _internal, ...response } = preflight;
+  return response;
+}
+
+function experimentArtifactRoot(name) {
+  return `experiments/${name}`;
+}
+
+function boundedExperimentResult(result) {
+  return Object.freeze({
+    name: result.experiment.parameter_set.name,
+    experiment_id: result.experiment.experiment_id,
+    inputs_fingerprint: result.experiment.inputs_fingerprint,
+    status: result.operation.status,
+    success: result.operation.success,
+    summary: result.operation.summary,
+    manifest: result.operation.artifacts.manifest.relative_path,
+    started_at: result.experiment.started_at,
+    started_at_iso: result.experiment.started_at_iso,
+    completed_at: result.experiment.completed_at,
+    completed_at_iso: result.experiment.completed_at_iso,
+  });
+}
+
+function runFailureKind(experiments) {
+  return experiments.some((item) => item.operation?.failure_kind === 'cdp_connection')
+    ? 'cdp_connection'
+    : null;
+}
+
+/** Execute one complete non-durable Strategy automation Run and atomically publish its artifacts. */
+export async function runStrategyAutomation({ config_path, _deps = {} } = {}) {
+  const runPreflight = _deps.dryRunStrategyAutomation || dryRunStrategyAutomation;
+  const preflight = await runPreflight({
+    config_path,
+    _include_internal: true,
+    _deps: _deps.preflight || _deps,
+  });
+  if (!preflight.valid || !preflight._internal) {
+    return Object.freeze({
+      ...publicPreflight(preflight),
+      dry_run: false,
+      phase: 'preflight',
+    });
+  }
+
+  const internal = preflight._internal;
+  const requested = internal.loaded.requested;
+  const runContext = Object.freeze({
+    ...internal.target,
+    resolution: internal.target.resolution ?? internal.target.timeframe ?? null,
+  });
+  const createTransaction = _deps.createArtifactSetTransaction || createArtifactSetTransaction;
+  const transaction = await createTransaction({
+    output_directory: requested.output.directory_path,
+    run_id: requested.run.run_id,
+    force: false,
+    _deps: _deps.artifactDeps,
+  });
+  const now = _deps.now || Date.now;
+  const startedAt = now();
+  let sync = null;
+  try {
+    const runWithSession = _deps.withChartSession || withChartSession;
+    return await runWithSession({ context: runContext, _deps: _deps.session }, async () => {
+    const alreadyLockedSession = async (_options, operation) => operation();
+    const runSync = _deps.executeStrategySync || executeStrategySync;
+    sync = await runSync({
+      saved_name: requested.strategy.saved_name,
+      source: internal.loaded.pine_source,
+      source_sha256: requested.strategy.source_sha256,
+      candidate_schema: internal.candidate.input_schema,
+      current_schema: internal.current_schema,
+      context: runContext,
+      expected_plan: preflight.strategy_sync,
+      timeout_ms: _deps.timeout_ms,
+      _deps: { ..._deps.sync, withChartSession: alreadyLockedSession },
+    });
+    const strategyIdentity = Object.freeze({
+      script_id: sync.account.script_id,
+      version: sync.account.version,
+      source_sha256: sync.source_sha256,
+      entity_id: sync.pane.entity_id,
+    });
+    const resolved = Object.freeze({
+      context: sanitizeCoreContext(runContext),
+      strategy: strategyIdentity,
+      account: sync.account,
+      pane: sync.pane,
+      watchlist: internal.watchlist.watchlist,
+      watchlist_snapshot_id: internal.watchlist.snapshot.snapshot_id,
+    });
+    const runningRun = {
+      schema_version: 1,
+      run_id: transaction.run_id,
+      status: 'running',
+      requested,
+      config: {
+        path: internal.loaded.config_path,
+        sha256: internal.loaded.config_sha256,
+      },
+      source_sha256: requested.strategy.source_sha256,
+      candidate_schema_fingerprint: internal.candidate.input_schema.input_schema_fingerprint,
+      resolved,
+      started_at: startedAt,
+      started_at_iso: unixMillisecondsToIso(startedAt),
+      retry_supported: false,
+      resume_supported: false,
+      experiments: [],
+    };
+    await transaction.writeJson('watchlist.json', internal.watchlist);
+    await transaction.replaceJson('run.json', runningRun);
+
+    const exportSnapshot = _deps.exportStrategySnapshotIntoRun || exportStrategySnapshotIntoRun;
+    const runParameterSets = _deps.executeParameterSets || executeParameterSets;
+    const executed = await runParameterSets({
+      candidate_schema: internal.candidate.input_schema,
+      parameter_sets: requested.experiments.parameter_sets,
+      identity: strategyIdentity,
+      context: runContext,
+      timeout_ms: _deps.timeout_ms,
+      _deps: { ..._deps.parameter_sets, withChartSession: alreadyLockedSession },
+    }, async (experiment) => exportSnapshot({
+      entity_id: strategyIdentity.entity_id,
+      snapshot: internal.watchlist,
+      timeframe: requested.backtest.timeframe,
+      context: runContext,
+      format: requested.output.format,
+      fail_fast: false,
+      timeout_ms: _deps.timeout_ms,
+      transaction,
+      namespace: experimentArtifactRoot(experiment.parameter_set.name),
+      expected_inputs_fingerprint: experiment.inputs_fingerprint,
+      mode: 'named_watchlist_experiment',
+      _deps: _deps.export,
+    }));
+
+    for (const result of executed.experiments) {
+      const root = experimentArtifactRoot(result.experiment.parameter_set.name);
+      await transaction.writeJson(`${root}/experiment.json`, {
+        ...result.experiment,
+        export: {
+          status: result.operation.status,
+          success: result.operation.success,
+          summary: result.operation.summary,
+          manifest: result.operation.artifacts.manifest.relative_path,
+          chart_restore: result.operation.chart_restore,
+        },
+      });
+    }
+
+    const boundedExperiments = executed.experiments.map(boundedExperimentResult);
+    const success = boundedExperiments.every((item) => item.success);
+    const status = success ? 'succeeded' : 'partial';
+    const completedAt = now();
+    const finalRun = {
+      ...runningRun,
+      status,
+      completed_at: completedAt,
+      completed_at_iso: unixMillisecondsToIso(completedAt),
+      base_inputs_fingerprint: executed.base_inputs_fingerprint,
+      input_restore: executed.restore,
+      summary: {
+        experiments_requested: boundedExperiments.length,
+        experiments_succeeded: boundedExperiments.filter((item) => item.success).length,
+        experiments_partial: boundedExperiments.filter((item) => !item.success).length,
+        symbols_requested: boundedExperiments.reduce((sum, item) => sum + item.summary.requested, 0),
+        symbols_succeeded: boundedExperiments.reduce((sum, item) => sum + item.summary.succeeded, 0),
+        symbols_failed: boundedExperiments.reduce((sum, item) => sum + item.summary.failed, 0),
+      },
+      experiments: boundedExperiments,
+    };
+    await transaction.replaceJson('run.json', finalRun);
+    const [runInfo, watchlistInfo] = await Promise.all([
+      transaction.artifactInfo('run.json'),
+      transaction.artifactInfo('watchlist.json'),
+    ]);
+    const publication = await transaction.publish();
+    const failureKind = runFailureKind(executed.experiments);
+    return Object.freeze({
+      success,
+      ...(failureKind && { failure_kind: failureKind }),
+      run_id: transaction.run_id,
+      status,
+      output: publication,
+      strategy: strategyIdentity,
+      context: sanitizeCoreContext(runContext),
+      watchlist: {
+        name: internal.watchlist.watchlist.name,
+        snapshot_id: internal.watchlist.snapshot.snapshot_id,
+        symbol_count: internal.watchlist.snapshot.returned_symbol_count,
+      },
+      summary: finalRun.summary,
+      experiments: boundedExperiments,
+      artifacts: { run: runInfo, watchlist: watchlistInfo },
+      retry_supported: false,
+      resume_supported: false,
+    });
+    });
+  } catch (error) {
+    try {
+      await transaction.abort();
+    } catch {
+      // Preserve the primary orchestration error.
+    }
+    if (error instanceof CoreOperationError) throw error;
+    throw new CoreOperationError(`Strategy Run failed: ${error?.message || String(error)}`, {
+      code: error?.code || 'STRATEGY_RUN_FAILED',
+      phase: error?.phase || (sync ? 'strategy_run_execution' : 'strategy_sync'),
+      retryable: error?.retryable === true,
+      context: runContext,
+      cause: error,
+    });
+  }
 }

@@ -124,7 +124,7 @@ describe('CLI — help and routing', () => {
     assert.doesNotMatch(stdout, /trading-(?:report|data|export)(?:Get|Export)/);
   });
 
-  it('strategy run exposes the read-only Run Config contract', () => {
+  it('strategy run exposes dry-run and formal Run Config execution', () => {
     const help = run(['strategy', 'run', '--help']);
     assert.equal(help.exitCode, 0);
     assert.ok(help.stdout.includes('--config'));
@@ -136,7 +136,10 @@ describe('CLI — help and routing', () => {
 
     const formal = run(['strategy', 'run', '--config', './missing.json']);
     assert.equal(formal.exitCode, 1);
-    assert.equal(JSON.parse(formal.stderr).code, 'STRATEGY_RUN_NOT_IMPLEMENTED');
+    const formalError = JSON.parse(formal.stderr);
+    assert.equal(formalError.dry_run, false);
+    assert.equal(formalError.phase, 'preflight');
+    assert.equal(formalError.errors[0].code, 'RUN_CONFIG_READ_FAILED');
   });
 
   it('strategy trading-data help exposes Offset/Limit/Snapshot pagination', () => {

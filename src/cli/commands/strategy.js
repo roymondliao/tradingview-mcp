@@ -76,7 +76,7 @@ register('strategy', {
   description: 'Strategy Tester tools for explicit Strategy Instances',
   subcommands: new Map([
     ['run', {
-      description: 'Validate and resolve a Strategy automation Run Config',
+      description: 'Execute a Strategy automation Run Config or validate it read-only',
       options: {
         config: { type: 'string', description: 'Required path to a versioned Run Config JSON file' },
         'dry-run': { type: 'boolean', description: 'Read-only validation and resource resolution' },

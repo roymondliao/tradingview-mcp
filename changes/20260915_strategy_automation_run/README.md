@@ -100,7 +100,7 @@ Local source與舊Parameter Sets的dry-run validation contract見[`PINE_INPUT_SC
 | [TASK-004](./TASK-004-run-config-resolution-dry-run.md) | Run Config, Resource Resolution, and Dry-run | `done` | TASK-001～003 |
 | [TASK-005](./TASK-005-strategy-account-pane-sync.md) | Strategy Account Sync and Safe Pane Refresh | `done` | TASK-001, 002, 004 |
 | [TASK-006](./TASK-006-parameter-set-execution.md) | Parameter Set Planning and Execution | `done` | TASK-002, 004, 005 |
-| [TASK-007](./TASK-007-strategy-run-export-integration.md) | Strategy Run Export Integration | `todo` | TASK-003～006 |
+| [TASK-007](./TASK-007-strategy-run-export-integration.md) | Strategy Run Export Integration | `done` | TASK-003～006 |
 | [TASK-008](./TASK-008-regression-live-delivery-gate.md) | Regression, Live Validation, and Delivery Gate | `todo` | TASK-001～007 |
 
 Recommended implementation order：
