@@ -194,6 +194,24 @@ describe('bounded Report state and snapshot candidates', () => {
     assert.match(result.runtime_signature, /^[a-f0-9]{64}$/);
   });
 
+  it('fingerprints the same visible Runtime Input catalog used by Study Core', async () => {
+    let pageSource = '';
+    await readRawReportState({
+      entity_id: 'strategy-1', context,
+      _deps: {
+        inspectStrategySource: async () => ({ success: true, active_source: true }),
+        callPageFunction: async (fn) => {
+          pageSource = fn.toString();
+          return rawState();
+        },
+      },
+    });
+    assert.match(pageSource, /getInputsInfo/);
+    assert.match(pageSource, /input\.isHidden !== true/);
+    assert.match(pageSource, /'text', 'pineId', 'pineVersion'/);
+    assert.match(pageSource, /localeCompare\(right\.id, 'en', \{ numeric: true \}\)/);
+  });
+
   it('uses stable key ordering for runtime signatures', () => {
     assert.equal(stableRuntimeJson({ b: 2, a: { d: 4, c: 3 } }), '{"a":{"c":3,"d":4},"b":2}');
     assert.equal(createRuntimeSignature({ b: 2, a: 1 }), createRuntimeSignature({ a: 1, b: 2 }));
@@ -221,18 +239,17 @@ describe('fresh and stable Strategy Report lifecycle', () => {
     return { runtime_signature: signature, status_type, report_available, status_error };
   }
 
-  it('requires transition or signature change after mutation, then three stable ready reads', async () => {
+  it('requires transition or signature change after mutation, then two stable ready reads', async () => {
     const sequence = [
       observation('old'),
       observation('calculating', { status_type: 1, report_available: false }),
-      observation('new'),
       observation('new'),
       observation('new'),
     ];
     let now = 0;
     const phases = [];
     const result = await waitForFreshTradingReport({
-      entity_id: 'strategy-1', session, before: observation('old'), mutated: true, timeout_ms: 2000,
+      entity_id: 'strategy-1', session, before: observation('old'), mutated: true, timeout_ms: 5000,
       _deps: {
         assertSymbolSession: async (value, options) => { phases.push(options.phase); },
         ensureStrategyActive: async () => ({ success: true }),
@@ -243,13 +260,14 @@ describe('fresh and stable Strategy Report lifecycle', () => {
     });
     assert.equal(result.runtime_signature, 'new');
     assert.equal(result.transition_observed, true);
-    assert.equal(result.stable_reads, 3);
+    assert.equal(result.stable_reads, 2);
     assert.equal(result.fresh, true);
+    assert.equal(strategyRuntimeLimits.poll_interval_ms, 1000);
     assert.deepEqual(phases, ['strategy_calculation_start', 'strategy_calculation_complete']);
   });
 
-  it('accepts a same-context Report only after three stable observations', async () => {
-    const sequence = [observation('same'), observation('same'), observation('same')];
+  it('accepts a same-context Report only after two stable observations', async () => {
+    const sequence = [observation('same'), observation('same')];
     let now = 0;
     const result = await waitForFreshTradingReport({
       entity_id: 'strategy-1', context, mutated: false, timeout_ms: 1000,

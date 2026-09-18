@@ -181,6 +181,10 @@ capture fixed Strategy and Base Inputs
 
 Freshness不可只比較總損益或交易次數；不同Inputs可能合法產生相同結果。Report必須綁定requested effective `inputs_fingerprint`，並在可觀察到recalculation／unavailable transition或可信generation change後達到至少兩次相同的stable state。
 
+Strategy Runtime以`1,000 ms`polling interval檢查Report；第一筆ready state立即讀取，第二筆至少間隔1秒。stable threshold固定為連續2次相同signature，整體仍受預設20秒或caller指定timeout限制。
+
+Study readback與Strategy Runtime Report必須使用完全相同的Input fingerprint canonicalization：只納入`getInputsInfo()`可見且非hidden的Runtime Input IDs，排除`text`、`pineId`、`pineVersion`、`pineFeatures`與`__profile`，再以numeric ID order序列化。不可將Runtime額外internal fields造成的hash差異誤判為User Inputs被外部修改。
+
 ## Dry-run validation
 
 `strategy run --dry-run`取得固定Base Strategy的完整Input Catalog，並對每個Parameter Set：

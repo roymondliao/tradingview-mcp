@@ -9,8 +9,8 @@ import { CoreOperationError, sanitizeCoreContext } from './errors.js';
 import { stableJsonStringify, sha256Hex } from './stable-json.js';
 
 const DEFAULT_TIMEOUT_MS = 20000;
-const POLL_INTERVAL_MS = 200;
-const STABLE_READS = 3;
+const POLL_INTERVAL_MS = 1000;
+const STABLE_READS = 2;
 const DEFAULT_BATCH_LIMIT = 500;
 const MAX_BATCH_LIMIT = 5000;
 const SNAPSHOT_CANDIDATE_VERSION = 1;
@@ -220,11 +220,17 @@ async function readRuntimePage(entityId, mode, offset, limit) {
       }
       const wrapper = chart.getStudyById(String(requestedId));
       const inputs = wrapper && typeof wrapper.getInputValues === 'function' ? wrapper.getInputValues() || [] : [];
-      const excluded = new Set(['pineId', 'pineVersion', 'pineFeatures', '__profile']);
+      const info = wrapper && typeof wrapper.getInputsInfo === 'function' ? wrapper.getInputsInfo() || [] : [];
+      const excluded = new Set(['text', 'pineId', 'pineVersion', 'pineFeatures', '__profile']);
+      const allowed = new Set(info
+        .filter((input) => input && input.id != null && input.isHidden !== true && !excluded.has(String(input.id)))
+        .map((input) => String(input.id)));
       const normalized = inputs
-        .filter((input) => input && input.id != null && !excluded.has(String(input.id)))
+        .filter((input) => input && input.id != null
+          && !excluded.has(String(input.id))
+          && (!allowed.size || allowed.has(String(input.id))))
         .map((input) => ({ id: String(input.id), value: canonicalInput(input.value) }))
-        .sort((left, right) => left.id.localeCompare(right.id));
+        .sort((left, right) => left.id.localeCompare(right.id, 'en', { numeric: true }));
       const serialized = JSON.stringify(normalized);
       const bytes = new TextEncoder().encode(serialized);
       const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
