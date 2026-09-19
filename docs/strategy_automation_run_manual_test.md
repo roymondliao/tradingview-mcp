@@ -2,6 +2,8 @@
 
 本文件驗證`strategy run --config`從read-only preflight到Strategy sync、Parameter Sets、完整named Watchlist export與atomic artifacts的正式流程。
 
+TASK-008 automated gate已完成deterministic regression、完整448-Symbol Watchlist read-only preflight，以及`TWSE:2330`×兩組Parameter Sets的bounded formal代表案例。下列手測才是`dev-testing-list`完整448-Symbol run的正式驗收；不得以bounded結果取代。
+
 ## Safety and prerequisites
 
 - 使用Node.js 22以上版本。
@@ -123,3 +125,16 @@ fnm exec --using=22 npm run tv -- study inputs get <entity-id> \
 ## 6. Collision behavior
 
 使用相同explicit `run_id`再次執行formal run，必須在Strategy mutation前失敗並回傳`OUTPUT_ALREADY_EXISTS`。`strategy run`不提供`--force`，避免覆寫既有實驗結果。
+
+## 7. Manual acceptance record
+
+完成全量手測後，回填以下資訊，再將TASK-008由`in_progress`改為`done`：
+
+- 測試日期與TradingView Desktop version。
+- Config path、explicit `run_id`與output directory。
+- Dry-run的Layout／Pane／Strategy identities、Watchlist Snapshot ID、Symbol count與fingerprint。
+- Formal run的開始／完成時間、Experiment數與每個Experiment的requested／succeeded／failed Symbols。
+- 所有成功Symbol是否具有Report、Trading Data與`reconciliation.success: true`。
+- `run.json`的terminal status與`input_restore.success`。
+- Final Desktop readback：Account version、Pane `entity_id`、Inputs fingerprint、Symbol、Timeframe與matching Instance count。
+- 若有partial或failure，保存對應manifest diagnostics；V1尚無retry／resume，不可手動拼接成成功run。

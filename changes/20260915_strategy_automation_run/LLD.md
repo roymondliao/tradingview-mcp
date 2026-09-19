@@ -419,7 +419,7 @@ Errors保留`phase`、`retryable`與safe context；不得包含完整private Pin
 - Deterministic Core integration：compiler adapters、Account source、Tab/Layout/Pane resolver、Watchlist two-read、Study inputs、sync transaction與cleanup。
 - CLI contracts：help、required args、stdout/stderr、exit codes、dry-run no mutation與bounded summaries。
 - Existing regression：`npm run lint`、`npm run test:unit`、`npm run test:cli`、`npm test`。
-- Live validation：使用`dev` Layout、`stock_list`與`data/obv-v3.pine`；mutation前保存ownership，僅操作明確測試Strategy，read back final state。
+- Live validation：使用`dev` Layout、`dev-testing-list`、`TWSE:2330`與`data/obv-v3.pine`；mutation前保存ownership，僅操作明確測試Strategy，read back final state。Automated gate只執行bounded representative export，完整448-Symbol formal run由User依manual guide安排與驗收。
 
 CI不連接TradingView Desktop；所有CDP、clock、filesystem、compiler response與Account APIs必須可注入。Live evidence寫入Task completion records，不將Account IDs、private source或generated artifacts加入repo fixtures。
 

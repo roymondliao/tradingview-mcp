@@ -51,7 +51,7 @@ Durable Export／Retry／Resume與Local-only E2E會在上述三項contract確定
 - Snapshot使用exact name解析唯一`watchlist_id`，不切換Active Watchlist。
 - 完整Symbols由Account detail source讀取；DOM rows不可作為完整Snapshot來源，也不實作UI scrolling fallback。
 - Snapshot以連續兩次count、modified與ordered-symbol fingerprint讀取證明穩定性。
-- `stock_list` live test已驗證declared 448、Account detail 448、React runtime 448、unique 448、invalid 0、duplicate 0，兩次ordered fingerprint一致；同時DOM僅回傳37筆。
+- `stock_list`最新live test已驗證declared／Account detail／unique皆為449、invalid 0、duplicate 0，兩次ordered fingerprint一致；先前448筆fixture測試時DOM僅回傳37筆，證明virtualized DOM不可作為完整Snapshot來源。
 
 ### Base Strategy與Parameter Sets
 
@@ -101,7 +101,7 @@ Local source與舊Parameter Sets的dry-run validation contract見[`PINE_INPUT_SC
 | [TASK-005](./TASK-005-strategy-account-pane-sync.md) | Strategy Account Sync and Safe Pane Refresh | `done` | TASK-001, 002, 004 |
 | [TASK-006](./TASK-006-parameter-set-execution.md) | Parameter Set Planning and Execution | `done` | TASK-002, 004, 005 |
 | [TASK-007](./TASK-007-strategy-run-export-integration.md) | Strategy Run Export Integration | `done` | TASK-003～006 |
-| [TASK-008](./TASK-008-regression-live-delivery-gate.md) | Regression, Live Validation, and Delivery Gate | `todo` | TASK-001～007 |
+| [TASK-008](./TASK-008-regression-live-delivery-gate.md) | Regression, Live Validation, and Delivery Gate | `in_progress`（automated gate passed; manual acceptance pending） | TASK-001～007 |
 
 Recommended implementation order：
 

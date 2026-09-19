@@ -28,7 +28,7 @@
       {
         "name": "candidate-check",
         "inputs": {
-          "wOBV 平滑 MA 週期": 10,
+          "wOBV 平滑 MA 週期": 11,
           "趨勢 SMA 週期": 20
         }
       }
