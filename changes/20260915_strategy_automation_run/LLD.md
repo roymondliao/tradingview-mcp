@@ -1,6 +1,6 @@
 # Strategy Automation Run LLD
 
-Status: `planned`
+Status: `done`
 
 ## Purpose
 

@@ -1,7 +1,7 @@
 ---
 id: FEATURE-20260915-STRATEGY-AUTOMATION-RUN
 title: Strategy Automation Run
-status: in_progress
+status: done
 created: 2026-09-15
 scope:
   - run-configuration
@@ -12,7 +12,7 @@ scope:
 
 # Strategy Automation Run
 
-Status: `planned`
+Status: `done`
 
 ## Objective
 
@@ -101,7 +101,7 @@ Local source與舊Parameter Sets的dry-run validation contract見[`PINE_INPUT_SC
 | [TASK-005](./TASK-005-strategy-account-pane-sync.md) | Strategy Account Sync and Safe Pane Refresh | `done` | TASK-001, 002, 004 |
 | [TASK-006](./TASK-006-parameter-set-execution.md) | Parameter Set Planning and Execution | `done` | TASK-002, 004, 005 |
 | [TASK-007](./TASK-007-strategy-run-export-integration.md) | Strategy Run Export Integration | `done` | TASK-003～006 |
-| [TASK-008](./TASK-008-regression-live-delivery-gate.md) | Regression, Live Validation, and Delivery Gate | `in_progress`（automated gate passed; manual acceptance pending） | TASK-001～007 |
+| [TASK-008](./TASK-008-regression-live-delivery-gate.md) | Regression, Live Validation, and Delivery Gate | `done` | TASK-001～007 |
 
 Recommended implementation order：
 
