@@ -20,7 +20,7 @@ TASK-008 automated gate已完成deterministic regression、完整448-Symbol Watc
 可從以下範例複製：
 
 ```bash
-cp changes/20260915_strategy_automation_run/run-config.example.json /tmp/tv-strategy-run.json
+cp changes/20260915_strategy_automation_run/run-config.example.json ./temp/tv-strategy-run.json
 ```
 
 確認或修改：
@@ -38,7 +38,7 @@ Relative paths以config所在目錄解析。若config移到`/tmp`，應將Pine f
 
 ```bash
 fnm exec --using=22 npm run tv -- strategy run \
-  --config /tmp/tv-strategy-run.json \
+  --config ./temp/tv-strategy-run-positive.json \
   --dry-run
 ```
 
@@ -56,7 +56,7 @@ fnm exec --using=22 npm run tv -- strategy run \
 
 ```bash
 fnm exec --using=22 npm run tv -- strategy run \
-  --config /tmp/tv-strategy-run.json
+  --config ./temp/tv-strategy-run-positive.json
 ```
 
 Formal run會重新執行完整preflight，不把先前dry-run當作cache。成功response只提供bounded counts、fingerprints與artifact paths，不在stdout列出完整Watchlist或所有Symbol明細。
@@ -124,7 +124,7 @@ fnm exec --using=22 npm run tv -- study inputs get <entity-id> \
 
 ## 6. Collision behavior
 
-使用相同explicit `run_id`再次執行formal run，必須在Strategy mutation前失敗並回傳`OUTPUT_ALREADY_EXISTS`。`strategy run`不提供`--force`，避免覆寫既有實驗結果。
+使用相同explicit `run_id`再次執行formal run，必須在Strategy mutation前失敗並回傳`RUN_OUTPUT_EXISTS`。`strategy run`不提供`--force`，避免覆寫既有實驗結果。
 
 ## 7. Manual acceptance record
 

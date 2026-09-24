@@ -1,3 +1,4 @@
+temp/*
 data/*
 docs/*
 !docs/terminology.md
