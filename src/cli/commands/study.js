@@ -57,6 +57,7 @@ register('study', {
       options: {
         ...PANE_CONTEXT_OPTIONS,
         inputs: { type: 'string', short: 'i', description: 'JSON input overrides for set' },
+        'inputs-by-name': { type: 'string', description: 'JSON input overrides keyed by exact Input name' },
       },
       handler: (opts, positionals) => {
         const action = positionals[0];
@@ -65,8 +66,16 @@ register('study', {
           throw new Error('Usage: tv study inputs get <entity_id> | tv study inputs set <entity_id> --inputs \'{"in_0":20}\'');
         }
         if (action === 'get') return withPaneContext(opts, () => core.getStudyInputs({ entity_id: entityId }));
-        if (!opts.inputs) throw new Error('--inputs is required for study inputs set');
-        return withPaneContext(opts, () => core.setStudyInputs({ entity_id: entityId, inputs: opts.inputs }));
+        core.validateStudyInputSelectors({
+          entity_id: entityId,
+          inputs: opts.inputs,
+          inputs_by_name: opts['inputs-by-name'],
+        });
+        return withPaneContext(opts, () => core.setStudyInputs({
+          entity_id: entityId,
+          inputs: opts.inputs,
+          inputs_by_name: opts['inputs-by-name'],
+        }));
       },
     }],
     ['toggle', {

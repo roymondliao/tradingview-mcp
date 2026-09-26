@@ -5,7 +5,14 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { start, step, autoplay, stop, trade, status, VALID_AUTOPLAY_DELAYS } from '../src/core/replay.js';
+import {
+  start, step, autoplay, stop, trade, status, selectReplayStartBar, VALID_AUTOPLAY_DELAYS,
+} from '../src/core/replay.js';
+
+const READY_CHART_STATE = {
+  symbol: 'TWSE_DLY:2330', resolution: '1D', bar_count: 300,
+  invalid_symbol: false, upstream_error: false,
+};
 
 // ── Mock helpers ─────────────────────────────────────────────────────────
 
@@ -36,15 +43,40 @@ function mockGetReplayApi() {
 
 function mockDeps(responses = {}, sequence) {
   const evaluate = mockEvaluate(responses, sequence);
-  return { _deps: { evaluate, getReplayApi: mockGetReplayApi() }, evaluate };
+  return {
+    _deps: { evaluate, getReplayApi: mockGetReplayApi(), delay: async () => {} }, evaluate,
+  };
 }
 
 // ── start() ──────────────────────────────────────────────────────────────
+
+describe('selectReplayStartBar() — bounded ratio selection', () => {
+  it('selects ten percent before the latest valid loaded bar', () => {
+    const result = selectReplayStartBar(Array.from({ length: 300 }, (_, index) => 1000 + index));
+    assert.equal(result.selection_mode, 'loaded_bars_ratio');
+    assert.equal(result.valid_bar_count, 300);
+    assert.equal(result.future_bar_count, 30);
+    assert.equal(result.target_position, 269);
+    assert.equal(result.target_time, 1269);
+  });
+
+  it('applies minimum and maximum future-bar bounds', () => {
+    assert.equal(selectReplayStartBar(Array.from({ length: 20 }, (_, index) => index)).future_bar_count, 5);
+    assert.equal(selectReplayStartBar(Array.from({ length: 5000 }, (_, index) => index)).future_bar_count, 200);
+  });
+
+  it('reports insufficient history instead of selecting the first available date', () => {
+    const result = selectReplayStartBar([1, 2, 3, 4, 5, 6]);
+    assert.equal(result.error, 'REPLAY_HISTORY_INSUFFICIENT');
+    assert.equal(result.valid_bar_count, 6);
+  });
+});
 
 describe('start() — date selection and polling', () => {
   it('awaits selectDate with timestamp in ms for date param', async () => {
     const { _deps, evaluate } = mockDeps({
       'isReplayAvailable': true,
+      'invalid_symbol': READY_CHART_STATE,
       'showReplayToolbar': undefined,
       'selectDate': 'ok',
       'isReplayStarted': true,
@@ -63,18 +95,40 @@ describe('start() — date selection and polling', () => {
     assert.ok(selectCall.includes('1773532800000') || selectCall.includes('177'), 'passes ms timestamp');
   });
 
-  it('calls selectFirstAvailableDate when no date given', async () => {
+  it('selects a bounded loaded-bar ratio when no date is given', async () => {
     const { _deps, evaluate } = mockDeps({
       'isReplayAvailable': true,
+      'invalid_symbol': READY_CHART_STATE,
+      'selection_mode': {
+        selection_mode: 'loaded_bars_ratio', ratio: 0.1, valid_bar_count: 300,
+        future_bar_count: 30, target_position: 269, target_time: 1700000000,
+      },
       'showReplayToolbar': undefined,
-      'selectFirstAvailableDate': undefined,
+      'selectDate': 'ok',
       'isReplayStarted': true,
-      'currentDate': 946684800,
+      'currentDate': 1700000000,
     });
     const result = await start({ _deps });
-    assert.equal(result.date, '(first available)');
-    const firstAvail = evaluate.calls.find(c => c.includes('selectFirstAvailableDate'));
-    assert.ok(firstAvail, 'selectFirstAvailableDate was called');
+    assert.equal(result.selection.future_bar_count, 30);
+    assert.equal(result.date, '2023-11-14T22:13:20.000Z');
+    const selectCall = evaluate.calls.find(c => c.includes('selectDate(1700000000000)'));
+    assert.ok(selectCall, 'ratio-selected loaded bar was passed to selectDate');
+    assert.equal(evaluate.calls.some(c => c.includes('selectFirstAvailableDate')), false);
+  });
+
+  it('rejects insufficient loaded history before opening Replay UI', async () => {
+    const { _deps, evaluate } = mockDeps({
+      'isReplayAvailable': true,
+      'invalid_symbol': READY_CHART_STATE,
+      'selection_mode': {
+        error: 'REPLAY_HISTORY_INSUFFICIENT', valid_bar_count: 6, minimum_valid_bars: 10,
+      },
+    });
+    await assert.rejects(
+      () => start({ _deps }),
+      /REPLAY_HISTORY_INSUFFICIENT.*received 6/,
+    );
+    assert.equal(evaluate.calls.some(c => c.includes('showReplayToolbar')), false);
   });
 
   it('throws on invalid date string', async () => {
@@ -101,6 +155,7 @@ describe('start() — date selection and polling', () => {
     let pollCount = 0;
     const evaluate = async (expr) => {
       if (expr.includes('isReplayAvailable')) return true;
+      if (expr.includes('invalid_symbol')) return READY_CHART_STATE;
       if (expr.includes('showReplayToolbar') || expr.includes('selectDate')) return 'ok';
       if (expr.includes('isReplayStarted')) {
         pollCount++;
@@ -112,7 +167,10 @@ describe('start() — date selection and polling', () => {
       return undefined;
     };
     evaluate.calls = [];
-    const result = await start({ date: '2026-01-01', _deps: { evaluate, getReplayApi: mockGetReplayApi() } });
+    const result = await start({
+      date: '2026-01-01',
+      _deps: { evaluate, getReplayApi: mockGetReplayApi(), delay: async () => {} },
+    });
     assert.equal(result.success, true);
     assert.equal(result.current_date, 1700000000);
     assert.ok(pollCount >= 4, 'polled multiple times');
@@ -122,6 +180,7 @@ describe('start() — date selection and polling', () => {
     let stopCalled = false;
     const evaluate = async (expr) => {
       if (expr.includes('isReplayAvailable')) return true;
+      if (expr.includes('invalid_symbol')) return READY_CHART_STATE;
       if (expr.includes('showReplayToolbar') || expr.includes('selectDate')) return 'ok';
       if (expr.includes('isReplayStarted')) return false; // never starts
       if (expr.includes('currentDate')) return null;
@@ -130,7 +189,10 @@ describe('start() — date selection and polling', () => {
     };
     evaluate.calls = [];
     await assert.rejects(
-      () => start({ date: '2026-01-01', _deps: { evaluate, getReplayApi: mockGetReplayApi() } }),
+      () => start({
+        date: '2026-01-01',
+        _deps: { evaluate, getReplayApi: mockGetReplayApi(), delay: async () => {} },
+      }),
       (err) => {
         assert.ok(err.message.includes('Replay failed to start'));
         return true;
@@ -259,14 +321,25 @@ describe('autoplay() — delay validation', () => {
 // ── stop() ───────────────────────────────────────────────────────────────
 
 describe('stop()', () => {
-  it('calls stopReplay when started', async () => {
-    const { _deps, evaluate } = mockDeps({
-      'isReplayStarted': true,
+  it('returns to realtime before closing the Replay session', async () => {
+    let startedReads = 0;
+    const evaluate = mockEvaluate({
+      'isReplayStarted': () => {
+        startedReads += 1;
+        return startedReads === 1;
+      },
+      'goToRealtime': undefined,
       'stopReplay': undefined,
     });
-    const result = await stop({ _deps });
+    const result = await stop({
+      _deps: { evaluate, getReplayApi: mockGetReplayApi(), delay: async () => {} },
+    });
     assert.equal(result.success, true);
     assert.equal(result.action, 'replay_stopped');
+    const realtimeCall = evaluate.calls.findIndex(c => c.includes('goToRealtime'));
+    const stopCallIndex = evaluate.calls.findIndex(c => c.includes('stopReplay'));
+    assert.ok(realtimeCall >= 0, 'goToRealtime was called');
+    assert.ok(stopCallIndex > realtimeCall, 'stopReplay closes the session after manager shutdown');
     const stopCall = evaluate.calls.find(c => c.includes('stopReplay'));
     assert.ok(stopCall, 'stopReplay was called');
   });

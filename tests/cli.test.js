@@ -120,7 +120,26 @@ describe('CLI — help and routing', () => {
     assert.ok(stdout.includes('orders'));
     assert.ok(stdout.includes('trades'));
     assert.ok(stdout.includes('equity'));
+    assert.ok(stdout.includes('run'));
     assert.doesNotMatch(stdout, /trading-(?:report|data|export)(?:Get|Export)/);
+  });
+
+  it('strategy run exposes dry-run and formal Run Config execution', () => {
+    const help = run(['strategy', 'run', '--help']);
+    assert.equal(help.exitCode, 0);
+    assert.ok(help.stdout.includes('--config'));
+    assert.ok(help.stdout.includes('--dry-run'));
+
+    const missing = run(['strategy', 'run', '--dry-run']);
+    assert.equal(missing.exitCode, 1);
+    assert.equal(JSON.parse(missing.stderr).code, 'RUN_CONFIG_REQUIRED');
+
+    const formal = run(['strategy', 'run', '--config', './missing.json']);
+    assert.equal(formal.exitCode, 1);
+    const formalError = JSON.parse(formal.stderr);
+    assert.equal(formalError.dry_run, false);
+    assert.equal(formalError.phase, 'preflight');
+    assert.equal(formalError.errors[0].code, 'RUN_CONFIG_READ_FAILED');
   });
 
   it('strategy trading-data help exposes Offset/Limit/Snapshot pagination', () => {
@@ -271,6 +290,24 @@ describe('CLI — help and routing', () => {
     assert.ok(stdout.includes('--summary'));
   });
 
+  it('watchlist snapshot help exposes exact name and atomic output options', () => {
+    const { stdout, exitCode } = run(['watchlist', 'snapshot', '--help']);
+    assert.equal(exitCode, 0);
+    assert.ok(stdout.includes('--name'));
+    assert.ok(stdout.includes('--output'));
+    assert.ok(stdout.includes('--force'));
+  });
+
+  it('watchlist snapshot validates required options before CDP discovery', () => {
+    const missingName = run(['watchlist', 'snapshot']);
+    assert.equal(missingName.exitCode, 1);
+    assert.match(JSON.parse(missingName.stderr).error, /--name is required/);
+
+    const misplacedForce = run(['watchlist', 'snapshot', '--name', 'dev-testing-list', '--force']);
+    assert.equal(misplacedForce.exitCode, 1);
+    assert.match(JSON.parse(misplacedForce.stderr).error, /--force requires --output/);
+  });
+
   it('history --help shows batch loading and output options', () => {
     const { stdout, exitCode } = run(['history', '--help']);
     assert.equal(exitCode, 0);
@@ -292,6 +329,32 @@ describe('CLI — help and routing', () => {
     assert.ok(stdout.includes('--layout-id'));
     assert.ok(stdout.includes('--saved-layout-id'));
     assert.ok(stdout.includes('--pane-index'));
+  });
+
+  it('study inputs help exposes ID and exact-name selectors', () => {
+    const { stdout, exitCode } = run(['study', 'inputs', '--help']);
+    assert.equal(exitCode, 0);
+    assert.ok(stdout.includes('--inputs'));
+    assert.ok(stdout.includes('--inputs-by-name'));
+    assert.ok(stdout.includes('--layout-id'));
+    assert.ok(stdout.includes('--pane-index'));
+  });
+
+  it('study inputs set validates selector requirements before CDP discovery', () => {
+    const missing = run(['study', 'inputs', 'set', 'strategy-1']);
+    assert.equal(missing.exitCode, 1);
+    assert.equal(JSON.parse(missing.stderr).code, 'STUDY_INPUTS_REQUIRED');
+
+    const conflict = run([
+      'study', 'inputs', 'set', 'strategy-1',
+      '--inputs', '{"in_0":10}', '--inputs-by-name', '{"Length":10}',
+    ]);
+    assert.equal(conflict.exitCode, 1);
+    assert.equal(JSON.parse(conflict.stderr).code, 'STUDY_INPUT_SELECTOR_CONFLICT');
+
+    const invalid = run(['study', 'inputs', 'set', 'strategy-1', '--inputs-by-name', '{']);
+    assert.equal(invalid.exitCode, 1);
+    assert.equal(JSON.parse(invalid.stderr).code, 'STUDY_INPUTS_INVALID');
   });
 
   it('history rejects removed page terminology before connecting', () => {

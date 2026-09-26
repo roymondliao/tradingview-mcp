@@ -1,7 +1,9 @@
+temp/*
 data/*
 docs/*
 !docs/terminology.md
 !docs/study_strategy_cli_design.md
+!docs/strategy_automation_run_manual_test.md
 screenshots/
 scripts/current.pine
 temp_*

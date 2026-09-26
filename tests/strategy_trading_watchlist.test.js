@@ -6,8 +6,11 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CoreOperationError } from '../src/core/errors.js';
-import { safeSymbolPathSegment } from '../src/core/artifacts.js';
-import { exportStrategyWatchlist } from '../src/core/strategy-trading.js';
+import { createArtifactSetTransaction, safeSymbolPathSegment } from '../src/core/artifacts.js';
+import {
+  exportStrategySnapshotIntoRun,
+  exportStrategyWatchlist,
+} from '../src/core/strategy-trading.js';
 
 const temporaryDirectories = [];
 const context = Object.freeze({
@@ -78,7 +81,8 @@ function runtime({ symbols, fail = new Map(), mutateSource, fingerprintFor } = {
         timeframe_changed: false,
       });
       await options._deps.onSymbolSession(session);
-      const directory = `symbols/${safeSymbolPathSegment(symbol)}`;
+      const prefix = options._run.namespace ? `${options._run.namespace}/` : '';
+      const directory = `${prefix}symbols/${safeSymbolPathSegment(symbol)}`;
       if (fail.has(symbol)) {
         await transaction.writeJson(`${directory}/partial.json`, { symbol });
         throw fail.get(symbol);
@@ -132,6 +136,42 @@ async function runExport(directory, currentRuntime, options = {}) {
 }
 
 describe('Active Watchlist Strategy Trading export', () => {
+  it('exports a provided named Snapshot under a caller namespace without recapturing it', async () => {
+    const directory = temporaryDirectory();
+    const currentRuntime = runtime({ symbols: ['TWSE:2330', 'TWSE:2317'] });
+    const transaction = await createArtifactSetTransaction({
+      output_directory: directory,
+      run_id: 'provided-run',
+    });
+    const fingerprint = { available: true, algorithm: 'sha256', value: 'inputs-1' };
+    const result = await exportStrategySnapshotIntoRun({
+      entity_id: 'strategy-2',
+      snapshot: {
+        success: true,
+        watchlist: { name: 'dev-testing-list', watchlist_id: 1 },
+        snapshot: { complete: true, snapshot_id: 'sha256:named' },
+        symbols: ['TWSE:2330', 'TWSE:2317'],
+      },
+      context,
+      transaction,
+      namespace: 'experiments/fast',
+      expected_inputs_fingerprint: fingerprint,
+      mode: 'named_watchlist_experiment',
+      _deps: currentRuntime.deps,
+    });
+    assert.equal(currentRuntime.calls.capture, 0);
+    assert.equal(currentRuntime.calls.sessions, 0);
+    assert.deepEqual(currentRuntime.calls.exports, ['TWSE:2330', 'TWSE:2317']);
+    assert.equal(result.summary.succeeded, 2);
+    assert.equal(result.artifacts.manifest.relative_path, 'experiments/fast/manifest.json');
+    const publication = await transaction.publish();
+    assert.equal(existsSync(join(publication.path, 'experiments', 'fast', 'manifest.json')), true);
+    assert.equal(existsSync(join(
+      publication.path, 'experiments', 'fast', 'symbols', safeSymbolPathSegment('TWSE:2330'),
+      'report.json',
+    )), true);
+  });
+
   it('captures once, keeps order, ignores later UI mutation, and skips duplicate entries', async () => {
     const directory = temporaryDirectory();
     const currentRuntime = runtime({

@@ -120,7 +120,7 @@ register('pine', {
       },
     }],
     ['check', {
-      description: 'Server-side compile check (no chart needed)',
+      description: 'Server-side compile check with sanitized Candidate Input Schema (no chart needed)',
       options: {
         file: { type: 'string', short: 'f', description: 'Read source from file' },
       },

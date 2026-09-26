@@ -5,7 +5,7 @@ register('replay', {
   description: 'Replay mode controls',
   subcommands: new Map([
     ['start', {
-      description: 'Start replay mode',
+      description: 'Start replay at a date or a safe point 10% before the latest loaded bar',
       options: {
         date: { type: 'string', short: 'd', description: 'Start date (YYYY-MM-DD)' },
       },

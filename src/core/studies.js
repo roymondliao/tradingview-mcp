@@ -6,6 +6,9 @@
  */
 import { evaluate as _evaluate, evaluateAsync as _evaluateAsync, safeString } from '../connection.js';
 import { listScripts as _listScripts } from './pine.js';
+import { CoreOperationError } from './errors.js';
+import { sha256Hex, stableJsonStringify } from './stable-json.js';
+import { unixMillisecondsToIso } from './time.js';
 
 const CHART_API = 'window.TradingViewApi._activeChartWidgetWV.value()';
 
@@ -281,12 +284,11 @@ export async function listActivePaneStudies({ type, _deps } = {}) {
 export function sanitizeStudyInputs(inputs) {
   if (!Array.isArray(inputs)) return [];
   const safe = [];
-  const internalIds = new Set(['pineId', 'pineVersion', 'pineFeatures', '__profile']);
+  const internalIds = new Set(['text', 'pineId', 'pineVersion', 'pineFeatures', '__profile']);
   for (const input of inputs) {
     if (!input || typeof input !== 'object' || !input.id) continue;
     if (internalIds.has(String(input.id))) continue;
     const value = input.value;
-    if (input.id === 'text' && typeof value === 'string' && value.length > 200) continue;
     if (typeof value === 'string' && value.length > 500) continue;
     let serialized = '';
     try { serialized = JSON.stringify(value); } catch { continue; }
@@ -298,6 +300,100 @@ export function sanitizeStudyInputs(inputs) {
     });
   }
   return safe;
+}
+
+function safeMetadataValue(value, maximumLength = 2000) {
+  if (value === undefined) return { available: false };
+  try {
+    const serialized = JSON.stringify(value);
+    if (serialized === undefined || serialized.length > maximumLength) return { available: false };
+    return { available: true, value };
+  } catch {
+    return { available: false };
+  }
+}
+
+function sanitizeStudyInputInfo(inputInfo) {
+  if (!Array.isArray(inputInfo)) return [];
+  const internalIds = new Set(['text', 'pineId', 'pineVersion', 'pineFeatures', '__profile']);
+  const safe = [];
+  for (const input of inputInfo) {
+    if (!input || typeof input !== 'object' || input.id == null) continue;
+    const id = String(input.id);
+    // Desktop 3.4.0 marks every generated Pine/Strategy input as `isFake`,
+    // including the visible `in_*` controls shown in the Settings dialog.
+    // `isHidden` and the explicit internal IDs are the reliable boundary.
+    if (internalIds.has(id) || input.isHidden === true) continue;
+    const defaultValue = safeMetadataValue(input.defval);
+    const options = Array.isArray(input.options) && input.options.length <= 200
+      ? safeMetadataValue(input.options, 8000)
+      : { available: false };
+    safe.push({
+      id,
+      name: input.name == null ? null : String(input.name).slice(0, 500),
+      type: input.type == null ? null : String(input.type).slice(0, 100),
+      ...(input.group != null && { group: String(input.group).slice(0, 500) }),
+      ...(defaultValue.available && { default_value: defaultValue.value }),
+      ...(input.min != null && Number.isFinite(Number(input.min)) && { min: Number(input.min) }),
+      ...(input.max != null && Number.isFinite(Number(input.max)) && { max: Number(input.max) }),
+      ...(input.step != null && Number.isFinite(Number(input.step)) && { step: Number(input.step) }),
+      ...(options.available && { options: options.value }),
+      ...(typeof input.active === 'boolean' && { active: input.active }),
+    });
+  }
+  return safe;
+}
+
+/** Merge bounded Runtime input definitions with current values in value order. */
+export function buildStudyInputCatalog({ values, info } = {}) {
+  const excludedIds = new Set((Array.isArray(info) ? info : [])
+    .filter((item) => item && item.isHidden === true)
+    .map((item) => String(item.id)));
+  const safeValues = sanitizeStudyInputs(values).filter((item) => !excludedIds.has(item.id));
+  const infoById = new Map(sanitizeStudyInputInfo(info).map((item) => [item.id, item]));
+  return safeValues.map((value) => {
+    const metadata = infoById.get(value.id) || {};
+    const name = metadata.name ?? value.name ?? null;
+    const type = metadata.type ?? null;
+    const constraints = {
+      ...(metadata.min != null && { min: metadata.min }),
+      ...(metadata.max != null && { max: metadata.max }),
+      ...(metadata.step != null && { step: metadata.step }),
+      ...(metadata.options != null && { options: metadata.options }),
+    };
+    const result = {
+      id: value.id,
+      name,
+      name_selectable: typeof name === 'string' && name.length > 0,
+      type,
+      ...(metadata.group != null && { group: metadata.group }),
+      value: value.value,
+      ...(Object.prototype.hasOwnProperty.call(metadata, 'default_value') && {
+        default_value: metadata.default_value,
+      }),
+      constraints,
+      ...(metadata.active != null && { active: metadata.active }),
+    };
+    if (String(type || '').toLowerCase() === 'time') {
+      result.value_iso = unixMillisecondsToIso(value.value);
+      if (Object.prototype.hasOwnProperty.call(metadata, 'default_value')) {
+        result.default_value_iso = unixMillisecondsToIso(metadata.default_value);
+      }
+    }
+    return Object.freeze(result);
+  });
+}
+
+export function fingerprintStudyInputs(inputs) {
+  const canonical = (Array.isArray(inputs) ? inputs : [])
+    .map((input) => ({ id: String(input.id), value: input.value }))
+    .sort((left, right) => left.id.localeCompare(right.id, 'en', { numeric: true }));
+  return Object.freeze({
+    available: true,
+    algorithm: 'sha256',
+    value: sha256Hex(canonical),
+    count: canonical.length,
+  });
 }
 
 export async function getActivePaneStudy({ entity_id, _deps } = {}) {
@@ -314,16 +410,80 @@ export async function getActivePaneStudy({ entity_id, _deps } = {}) {
       var study = chart.getStudyById(${safeString(entity_id)});
       if (!study) return { error: 'Study not found in active pane' };
       var inputs = [];
-      try { inputs = study.getInputValues() || []; } catch (e) { return { inputs: [], inputs_error: e.message }; }
-      return { inputs: inputs };
+      var inputInfo = [];
+      var inputsError = null;
+      var inputInfoError = null;
+      var rawInputs = [];
+      var internalIds = { text: true, pineId: true, pineVersion: true, pineFeatures: true, __profile: true };
+      function safePrimitive(value, maximumLength) {
+        if (value === null || typeof value === 'boolean' || typeof value === 'number') return value;
+        if (typeof value === 'string') return value.length <= maximumLength ? value : undefined;
+        return undefined;
+      }
+      function safeOptions(value) {
+        if (!Array.isArray(value) || value.length > 200) return undefined;
+        var result = [];
+        for (var optionIndex = 0; optionIndex < value.length; optionIndex++) {
+          var option = safePrimitive(value[optionIndex], 500);
+          if (option === undefined) return undefined;
+          result.push(option);
+        }
+        return result;
+      }
+      try { rawInputs = study.getInputValues() || []; } catch (e) { inputsError = e.message; }
+      try {
+        var rawInfo = typeof study.getInputsInfo === 'function' ? (study.getInputsInfo() || []) : [];
+        for (var infoIndex = 0; infoIndex < rawInfo.length; infoIndex++) {
+          var item = rawInfo[infoIndex] || {};
+          var id = item.id == null ? '' : String(item.id);
+          // Desktop 3.4.0 also sets isFake=true on real, visible Pine inputs.
+          // Keep those controls and exclude only hidden/internal definitions.
+          if (!id || internalIds[id] || item.isHidden === true) continue;
+          var projected = {
+            id: id,
+            name: safePrimitive(item.name, 500),
+            type: safePrimitive(item.type, 100),
+            group: safePrimitive(item.group, 500),
+            min: safePrimitive(item.min, 100),
+            max: safePrimitive(item.max, 100),
+            step: safePrimitive(item.step, 100),
+            active: typeof item.active === 'boolean' ? item.active : undefined
+          };
+          var defaultValue = safePrimitive(item.defval, 2000);
+          var optionsValue = safeOptions(item.options);
+          if (defaultValue !== undefined) projected.defval = defaultValue;
+          if (optionsValue !== undefined) projected.options = optionsValue;
+          inputInfo.push(projected);
+        }
+      } catch (e) { inputInfoError = e.message; }
+      var allowed = {};
+      for (var allowedIndex = 0; allowedIndex < inputInfo.length; allowedIndex++) allowed[inputInfo[allowedIndex].id] = true;
+      for (var valueIndex = 0; valueIndex < rawInputs.length; valueIndex++) {
+        var rawInput = rawInputs[valueIndex] || {};
+        var valueId = rawInput.id == null ? '' : String(rawInput.id);
+        if (!valueId || internalIds[valueId]) continue;
+        if (inputInfo.length && !allowed[valueId]) continue;
+        var safeValue = safePrimitive(rawInput.value, 500);
+        if (safeValue === undefined) continue;
+        inputs.push({ id: valueId, value: safeValue });
+      }
+      return {
+        inputs: inputs,
+        input_info: inputInfo,
+        inputs_error: inputsError,
+        input_info_error: inputInfoError
+      };
     })()
   `);
   if (detail?.error) throw new Error(detail.error);
+  const inputs = buildStudyInputCatalog({ values: detail?.inputs, info: detail?.input_info });
   return {
     success: true,
     ...summary,
-    inputs: sanitizeStudyInputs(detail?.inputs),
+    inputs,
+    inputs_fingerprint: fingerprintStudyInputs(inputs),
     ...(detail?.inputs_error && { inputs_error: detail.inputs_error }),
+    ...(detail?.input_info_error && { input_info_error: detail.input_info_error }),
   };
 }
 
@@ -336,25 +496,169 @@ export async function getStudyInputs({ entity_id, _deps } = {}) {
     name: study.name,
     type: study.type,
     inputs: study.inputs || [],
+    inputs_fingerprint: study.inputs_fingerprint || fingerprintStudyInputs(study.inputs || []),
+    ...(study.inputs_error && { inputs_error: study.inputs_error }),
+    ...(study.input_info_error && { input_info_error: study.input_info_error }),
   };
 }
 
-export async function setStudyInputs({ entity_id, inputs: inputsRaw, _deps } = {}) {
-  const requested = typeof inputsRaw === 'string' ? JSON.parse(inputsRaw) : inputsRaw;
-  if (!requested || typeof requested !== 'object' || Array.isArray(requested) || !Object.keys(requested).length) {
-    throw new Error('inputs must be a non-empty JSON object');
+function studyInputError(code, message, entityId) {
+  return new CoreOperationError(message, {
+    code, phase: 'study_input_validation', entity_id: entityId, retryable: false,
+  });
+}
+
+function parseInputOverrides(raw, field, entityId) {
+  let requested = raw;
+  if (typeof raw === 'string') {
+    try { requested = JSON.parse(raw); }
+    catch { throw studyInputError('STUDY_INPUTS_INVALID', `${field} must be valid JSON.`, entityId); }
   }
+  if (!requested || typeof requested !== 'object' || Array.isArray(requested) || !Object.keys(requested).length) {
+    throw studyInputError('STUDY_INPUTS_REQUIRED', `${field} must be a non-empty JSON object.`, entityId);
+  }
+  return requested;
+}
+
+export function validateStudyInputSelectors({ entity_id, inputs, inputs_by_name } = {}) {
+  if (inputs != null && inputs_by_name != null) {
+    throw studyInputError(
+      'STUDY_INPUT_SELECTOR_CONFLICT',
+      'Provide exactly one of inputs or inputs_by_name.',
+      entity_id,
+    );
+  }
+  if (inputs == null && inputs_by_name == null) {
+    throw studyInputError(
+      'STUDY_INPUTS_REQUIRED',
+      'Provide exactly one of inputs or inputs_by_name.',
+      entity_id,
+    );
+  }
+  const selector = inputs_by_name != null ? 'name' : 'id';
+  return {
+    selector,
+    requested: parseInputOverrides(
+      selector === 'name' ? inputs_by_name : inputs,
+      selector === 'name' ? 'inputs_by_name' : 'inputs',
+      entity_id,
+    ),
+  };
+}
+
+function valuesEqual(left, right) {
+  return stableJsonStringify(left) === stableJsonStringify(right);
+}
+
+function inputTypeAccepts(type, value) {
+  const normalized = String(type || '').toLowerCase();
+  if (['bool', 'boolean'].includes(normalized)) return typeof value === 'boolean';
+  if (['int', 'integer'].includes(normalized)) return Number.isInteger(value);
+  if (['float', 'price', 'number'].includes(normalized)) return typeof value === 'number' && Number.isFinite(value);
+  if (normalized === 'time') return Number.isInteger(value) && Number.isFinite(value);
+  if (['string', 'text', 'text_area', 'source', 'symbol', 'resolution', 'timeframe', 'session'].includes(normalized)) {
+    return typeof value === 'string';
+  }
+  if (normalized === 'color') return typeof value === 'string' || typeof value === 'number';
+  if (normalized === 'enum') return ['string', 'number'].includes(typeof value);
+  return false;
+}
+
+function validateRequestedValue(input, value, entityId) {
+  if (!input.type || !inputTypeAccepts(input.type, value)) {
+    throw studyInputError(
+      'STUDY_INPUT_VALUE_INVALID',
+      `Input ${input.name || input.id} expects ${input.type || 'known runtime metadata'}, received ${typeof value}.`,
+      entityId,
+    );
+  }
+  const { min, max, step, options } = input.constraints || {};
+  if (Array.isArray(options) && !options.some((option) => valuesEqual(option, value))) {
+    throw studyInputError(
+      'STUDY_INPUT_VALUE_INVALID',
+      `Input ${input.name || input.id} value is not one of the available options.`,
+      entityId,
+    );
+  }
+  if (typeof value === 'number') {
+    if (min != null && value < min) {
+      throw studyInputError('STUDY_INPUT_VALUE_INVALID', `Input ${input.name || input.id} must be at least ${min}.`, entityId);
+    }
+    if (max != null && value > max) {
+      throw studyInputError('STUDY_INPUT_VALUE_INVALID', `Input ${input.name || input.id} must be at most ${max}.`, entityId);
+    }
+    if (step != null && step > 0) {
+      const quotient = (value - (min ?? 0)) / step;
+      const tolerance = 1e-9 * Math.max(1, Math.abs(quotient));
+      if (Math.abs(quotient - Math.round(quotient)) > tolerance) {
+        throw studyInputError('STUDY_INPUT_VALUE_INVALID', `Input ${input.name || input.id} must follow step ${step}.`, entityId);
+      }
+    }
+  }
+}
+
+function resolveInputOverrides({ catalog, selector, requested, entityId }) {
+  const byId = new Map(catalog.map((input) => [input.id, input]));
+  const byName = new Map();
+  for (const input of catalog) {
+    if (!input.name_selectable) continue;
+    const matches = byName.get(input.name) || [];
+    matches.push(input);
+    byName.set(input.name, matches);
+  }
+  const resolved = [];
+  for (const [key, value] of Object.entries(requested)) {
+    let input;
+    if (selector === 'id') {
+      input = byId.get(key);
+      if (!input) throw studyInputError('STUDY_INPUT_NOT_FOUND', `Study Input ID not found: ${key}`, entityId);
+    } else {
+      const matches = byName.get(key) || [];
+      if (!matches.length) throw studyInputError('STUDY_INPUT_NOT_FOUND', `Study Input name not found: ${key}`, entityId);
+      if (matches.length > 1) throw studyInputError('STUDY_INPUT_NAME_AMBIGUOUS', `Study Input name is ambiguous: ${key}`, entityId);
+      [input] = matches;
+    }
+    validateRequestedValue(input, value, entityId);
+    resolved.push({ requested_key: key, input, requested_value: value });
+  }
+  return resolved;
+}
+
+export async function setStudyInputs({ entity_id, inputs, inputs_by_name, _deps } = {}) {
+  const request = validateStudyInputSelectors({ entity_id, inputs, inputs_by_name });
   const getStudy = _deps?.getActivePaneStudy || getActivePaneStudy;
   const beforeStudy = await getStudy({ entity_id, _deps });
-  const beforeById = new Map((beforeStudy.inputs || []).map((input) => [input.id, input.value]));
-  const known = {};
-  const unknownInputs = [];
-  for (const [key, value] of Object.entries(requested)) {
-    if (beforeById.has(key)) known[key] = value;
-    else unknownInputs.push(key);
-  }
-  if (!Object.keys(known).length) {
-    throw new Error(`None of the requested input IDs exist on Study ${entity_id}: ${unknownInputs.join(', ')}`);
+  const resolved = resolveInputOverrides({
+    catalog: beforeStudy.inputs || [], selector: request.selector,
+    requested: request.requested, entityId: entity_id,
+  });
+  const changed = resolved.filter((item) => !valuesEqual(item.input.value, item.requested_value));
+  const overrides = Object.fromEntries(changed.map((item) => [item.input.id, item.requested_value]));
+
+  if (!changed.length) {
+    return {
+      success: true,
+      entity_id,
+      type: beforeStudy.type,
+      selector: request.selector,
+      requested_inputs: request.requested,
+      resolved_inputs: resolved.map((item) => ({
+        requested_key: item.requested_key,
+        id: item.input.id,
+        name: item.input.name,
+        previous_value: item.input.value,
+        requested_value: item.requested_value,
+        value: item.input.value,
+        status: 'unchanged',
+      })),
+      applied_inputs: {},
+      unchanged_inputs: Object.fromEntries(
+        resolved.map((item) => [item.input.id, item.input.value]),
+      ),
+      inputs_fingerprint: beforeStudy.inputs_fingerprint
+        || fingerprintStudyInputs(beforeStudy.inputs || []),
+      ...(beforeStudy.type === 'strategy' && { report_state: 'unchanged' }),
+    };
   }
 
   const runEvaluate = _deps?.evaluate || _evaluate;
@@ -364,36 +668,50 @@ export async function setStudyInputs({ entity_id, inputs: inputsRaw, _deps } = {
       var study = chart.getStudyById(${safeString(entity_id)});
       if (!study) return { error: 'Study not found in active pane' };
       var values = study.getInputValues() || [];
-      var overrides = ${JSON.stringify(known)};
+      var overrides = ${JSON.stringify(overrides)};
       for (var i = 0; i < values.length; i++) {
         if (Object.prototype.hasOwnProperty.call(overrides, values[i].id)) values[i].value = overrides[values[i].id];
       }
       study.setInputValues(values);
-      return { inputs: study.getInputValues() || [] };
+      return { updated: true };
     })()
   `);
   if (mutation?.error) throw new Error(mutation.error);
-  const afterInputs = sanitizeStudyInputs(mutation?.inputs);
-  const afterById = new Map(afterInputs.map((input) => [input.id, input.value]));
+  const afterStudy = await getStudy({ entity_id, _deps });
+  const afterById = new Map((afterStudy.inputs || []).map((input) => [input.id, input]));
   const appliedInputs = {};
   const unchangedInputs = {};
-  const unconfirmedInputs = [];
-  for (const [key, requestedValue] of Object.entries(known)) {
-    if (!afterById.has(key)) { unconfirmedInputs.push(key); continue; }
-    const actual = afterById.get(key);
-    if (Object.is(beforeById.get(key), actual)) unchangedInputs[key] = actual;
-    else appliedInputs[key] = actual;
-    if (!Object.is(actual, requestedValue) && !unconfirmedInputs.includes(key)) unconfirmedInputs.push(key);
+  const resolvedInputs = [];
+  for (const item of resolved) {
+    const actualInput = afterById.get(item.input.id);
+    if (!actualInput || !valuesEqual(actualInput.value, item.requested_value)) {
+      throw new CoreOperationError(`Study Input readback mismatch: ${item.input.name || item.input.id}`, {
+        code: 'STUDY_INPUT_READBACK_MISMATCH', phase: 'study_input_readback',
+        entity_id, retryable: false,
+      });
+    }
+    if (valuesEqual(item.input.value, actualInput.value)) unchangedInputs[item.input.id] = actualInput.value;
+    else appliedInputs[item.input.id] = actualInput.value;
+    resolvedInputs.push({
+      requested_key: item.requested_key,
+      id: item.input.id,
+      name: item.input.name,
+      previous_value: item.input.value,
+      requested_value: item.requested_value,
+      value: actualInput.value,
+      status: valuesEqual(item.input.value, actualInput.value) ? 'unchanged' : 'applied',
+    });
   }
   return {
-    success: unconfirmedInputs.length === 0,
+    success: true,
     entity_id,
     type: beforeStudy.type,
-    requested_inputs: requested,
+    selector: request.selector,
+    requested_inputs: request.requested,
+    resolved_inputs: resolvedInputs,
     applied_inputs: appliedInputs,
     unchanged_inputs: unchangedInputs,
-    ...(unknownInputs.length && { unknown_inputs: unknownInputs }),
-    ...(unconfirmedInputs.length && { unconfirmed_inputs: unconfirmedInputs }),
+    inputs_fingerprint: afterStudy.inputs_fingerprint || fingerprintStudyInputs(afterStudy.inputs || []),
     ...(beforeStudy.type === 'strategy' && { report_state: 'recalculating' }),
   };
 }

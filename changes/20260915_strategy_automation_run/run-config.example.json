@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "run": {
+    "description": "OBV v3 local dry-run"
+  },
+  "strategy": {
+    "file": "../../data/obv-v3.pine",
+    "saved_name": "obv-v3"
+  },
+  "target": {
+    "layout": {
+      "name": "dev"
+    },
+    "pane_index": 0,
+    "watchlist": {
+      "name": "dev-testing-list"
+    }
+  },
+  "backtest": {
+    "timeframe": "1D"
+  },
+  "experiments": {
+    "parameter_sets": [
+      {
+        "name": "baseline",
+        "inputs": {}
+      },
+      {
+        "name": "candidate-check",
+        "inputs": {
+          "wOBV 平滑 MA 週期": 11,
+          "趨勢 SMA 週期": 20
+        }
+      }
+    ]
+  },
+  "output": {
+    "directory": "../../output",
+    "format": "csv"
+  }
+}

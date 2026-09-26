@@ -230,6 +230,11 @@ async function withTarget(targetId, fn) {
   }
 }
 
+/** Evaluate a bounded read-only expression in one Chart target without changing the visible Desktop Tab. */
+export async function evaluateTarget(targetId, expression, options = {}) {
+  return withTarget(targetId, (evalIn) => evalIn(expression, options));
+}
+
 /**
  * Open a new chart tab by clicking the shell window's new-tab button.
  * With `layout`, also picks from the landing page's layout list:
