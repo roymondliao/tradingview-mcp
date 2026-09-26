@@ -1,0 +1,22 @@
+//@version=6
+strategy("OBV input schema fixture")
+
+useDateFilter = input.bool(true, title="啓用回測時間範圍限定", group="回測範圍")
+backtestStartDate = input.time(timestamp("1 Jan 2010"), title="開始時間", group="回測範圍")
+backtestEndDate = input.time(timestamp("31 Dec 2025"), title="結束時間", group="回測範圍")
+
+wobvMaLen = input.int(10, title="wOBV 平滑 MA 週期", minval=3, maxval=30, step=1, group="wOBV 設定")
+minChangePct = input.float(0.3, title="最低價格變化門檻 (%)", minval=0.0, maxval=2.0, step=0.1, group="wOBV 設定")
+capPct = input.float(10.0, title="單日貢獻上限 (%)", minval=1.0, maxval=15.0, step=0.5, group="wOBV 設定")
+
+wobvBreakoutLen = input.int(10, title="wOBV MA 突破期間 (天數)", minval=5, maxval=60, step=1, group="入場條件")
+smaLen = input.int(20, title="趨勢 SMA 週期", minval=10, maxval=200, step=5, group="入場條件")
+rsiLen = input.int(14, title="RSI 週期", minval=7, maxval=21, step=1, group="入場條件")
+rsiThreshold = input.int(50, title="RSI 最低門檻", minval=30, maxval=70, step=5, group="入場條件")
+
+divLookback = input.int(10, title="背離偵測窗口 (天數)", minval=5, maxval=30, step=1, group="出場條件")
+divConfirmBars = input.int(2, title="背離確認天數", minval=1, maxval=10, step=1, group="出場條件")
+trailActivationPct = input.float(7.0, title="追蹤停損啟動門檻 (%)", minval=3.0, maxval=20.0, step=1.0, group="風險管理")
+atrTrailMultiplier = input.float(2, title="ATR 追蹤停損倍數", minval=1.0, maxval=5.0, step=0.5, group="風險管理")
+stopLossPct = input.float(10.0, title="固定停損 (%)", minval=1.0, maxval=15.0, step=0.5, group="風險管理")
+maxHoldingDays = input.int(20, title="最大持倉天數", minval=5, maxval=60, step=1, group="風險管理")

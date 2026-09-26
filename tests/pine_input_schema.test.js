@@ -214,8 +214,8 @@ length = input.int(10, title="Length")`;
     assert.notEqual(first.source_sha256, second.source_sha256);
   });
 
-  it('extracts the expected 16 named Inputs from data/obv-v3.pine', () => {
-    const source = readFileSync(join(__dirname, '..', 'data', 'obv-v3.pine'), 'utf8');
+  it('extracts the expected 16 named Inputs from the sanitized OBV fixture', () => {
+    const source = readFileSync(join(__dirname, 'fixtures', 'obv-v3-inputs.pine'), 'utf8');
     const inputs = [
       ['useDateFilter', 'bool'], ['backtestStartDate', 'int'], ['backtestEndDate', 'int'],
       ['wobvMaLen', 'int'], ['minChangePct', 'float'], ['capPct', 'float'],
@@ -289,4 +289,3 @@ describe('pine check Candidate Schema response', () => {
     } }), /TradingView API returned 503/);
   });
 });
-
