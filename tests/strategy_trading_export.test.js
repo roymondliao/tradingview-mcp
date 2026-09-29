@@ -1,12 +1,16 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  mkdtempSync, readFileSync, readdirSync, rmSync,
+  existsSync, mkdtempSync, readFileSync, readdirSync, rmSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CoreOperationError } from '../src/core/errors.js';
-import { exportStrategySymbol } from '../src/core/strategy-trading.js';
+import { createDurableRunStore } from '../src/core/strategy-run-artifacts.js';
+import {
+  createStrategySymbolAttemptArtifactWriter,
+  exportStrategySymbol,
+} from '../src/core/strategy-trading.js';
 
 const temporaryDirectories = [];
 const context = Object.freeze({
@@ -250,6 +254,39 @@ describe('Single-Symbol Strategy Trading export', () => {
     assert.equal(tradingData.trades[0].report_index, 0);
     assert.equal(reconciliation.snapshot_id, result.snapshot_id);
     assert.equal(reconciliation.reconciliation.success, true);
+  });
+
+  it('reuses the same verified workflow with a durable Symbol attempt writer', async () => {
+    const directory = temporaryDirectory();
+    const store = await createDurableRunStore({ output_directory: directory, run_id: 'durable-run' });
+    const attempt = await store.beginSymbolAttempt({
+      experiment_name: 'baseline',
+      symbol: 'TWSE:2344',
+      attempt_count: 1,
+      format: 'json',
+    });
+    const writer = createStrategySymbolAttemptArtifactWriter({ attempt, format: 'json' });
+    const runtime = harness();
+    const result = await exportStrategySymbol({
+      entity_id: 'strategy-2',
+      symbol: 'TWSE:2344',
+      context,
+      format: 'json',
+      batch_limit: 1,
+      _run: { artifact_writer: writer },
+      _deps: runtime.deps,
+    });
+    assert.deepEqual(runtime.calls.batches, [0, 1]);
+    assert.equal(runtime.calls.restored, 0);
+    assert.equal(result.reconciliation.success, true);
+    assert.equal(
+      result.artifacts.report.relative_path,
+      'experiments/baseline/symbols/TWSE_u3A_2344/report.json',
+    );
+    await attempt.commit();
+    assert.equal(existsSync(join(attempt.final_path, 'report.json')), true);
+    assert.equal(existsSync(join(attempt.final_path, 'trades.json')), true);
+    assert.equal(existsSync(join(attempt.final_path, 'reconciliation.json')), true);
   });
 
   it('publishes a complete zero-Trade export', async () => {

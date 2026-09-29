@@ -694,6 +694,7 @@ export async function beginSymbolAttempt({
     staging_path: stagingPath,
     final_path: finalPath,
     relative_directory: paths.directory,
+    format: paths.format,
 
     async openArtifact(name) {
       if (state !== 'open') throw new Error(`Symbol attempt is ${state}.`);

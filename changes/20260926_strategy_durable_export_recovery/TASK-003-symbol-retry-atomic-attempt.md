@@ -1,7 +1,7 @@
 ---
 id: TASK-003
 title: Symbol Retry Classifier and Atomic Attempt Export
-status: todo
+status: done
 phase: strategy-durable-export-recovery
 depends_on:
   - TASK-001
@@ -93,14 +93,29 @@ STRATEGY_SYMBOL_RETRY_DELAYS_MS = [1000, 2000]
 
 ## Acceptance criteria
 
-- [ ] One runtime Symbol workflow serves bothlegacy anddurable writers。
-- [ ] Retry policy cannot be modified byUser input。
-- [ ] Every retry is a fresh complete snapshot workflow。
-- [ ] No durable error record contains`retryable`or`retry_exhausted`。
-- [ ] Artifact success is reported only afterdirectory commit and manifest callback。
-- [ ] Legacy V1 exports have no observable regression。
-- [ ] Targeted tests、full unit suite、lint and`git diff --check`pass。
+- [x] One runtime Symbol workflow serves bothlegacy anddurable writers。
+- [x] Retry policy cannot be modified byUser input。
+- [x] Every retry is a fresh complete snapshot workflow。
+- [x] No durable error record contains`retryable`or`retry_exhausted`。
+- [x] Artifact success is reported only afterdirectory commit and manifest callback。
+- [x] Legacy V1 exports have no observable regression。
+- [x] Targeted tests、full unit suite、lint and`git diff --check`pass。
 
 ## Completion record
 
-Not started.
+Completed on 2026-09-29.
+
+Implementation：
+
+- Added `strategy-run-retry.js` with fixed3-attempt policy、stable code classifier、fresh invocation budgets、cumulative attempt counts andcancelable backoff。
+- Refactored `strategy-trading.js` artifact I/O behind onewriter seam while retaining thesame Report A／Data offset0／Report B／reconciliation workflow。
+- Added durable attempt writer mapping exactly`report.json`、oneTrades file and`reconciliation.json`; legacy transaction adapter remains unchanged forV1 exporters。
+- Enforced directory commit beforemanifest success callback andcovered rename-before-callback recovery throughactual durable filesystem primitives。
+
+Validation：
+
+- Node 22 targeted compatibility set：48 tests passed。
+- Node 24 targeted compatibility set：48 tests passed。
+- Node 22 full unit suite：594 tests passed，0 failed。
+- ESLint：0 errors；repository仍有3個pre-existing unused-variable warnings outside thisTask。
+- `git diff --check`passed。
