@@ -1,7 +1,7 @@
 ---
 id: TASK-002
 title: Cross-process Run and Pane Leases
-status: todo
+status: done
 phase: strategy-durable-export-recovery
 depends_on:
   - TASK-001
@@ -83,14 +83,29 @@ scope: process-ownership
 
 ## Acceptance criteria
 
-- [ ] Run and Pane keys are stable across Desktop target／entity ID changes。
-- [ ] Acquisition order cannot deadlock two callers。
-- [ ] No code path reclaims a lease based only onmtime／age。
-- [ ] Crash-owned leases can be reclaimed after positive dead-PID evidence。
-- [ ] Release never removes another process's lease。
-- [ ] Module has no TradingView／CDP dependency。
-- [ ] Targeted tests、full unit suite、lint and`git diff --check`pass。
+- [x] Run and Pane keys are stable across Desktop target／entity ID changes。
+- [x] Acquisition order cannot deadlock two callers。
+- [x] No code path reclaims a lease based only onmtime／age。
+- [x] Crash-owned leases can be reclaimed after positive dead-PID evidence。
+- [x] Release never removes another process's lease。
+- [x] Module has no TradingView／CDP dependency。
+- [x] Targeted tests、full unit suite、lint and`git diff --check`pass。
 
 ## Completion record
 
-Not started.
+Completed on 2026-09-29.
+
+Implementation：
+
+- Added `strategy-run-lease.js` with canonical future／existing Run path identities andstable Pane identities that exclude volatile target、tab、Symbol andentity fields。
+- Added atomic OS-temp Run／Pane lease directories、bounded owner metadata、automatic diagnostic heartbeat、Run → Pane acquisition andPane → Run release。
+- Added PID liveness handling where success／`EPERM`is live、only`ESRCH`is dead andallunknown／corrupt states fail closed。
+- Added atomic stale-owner quarantine／reclaim andtoken-checked release，including serialization betweenin-flight heartbeat andrelease。
+
+Validation：
+
+- Node 22 targeted：18 tests passed。
+- Node 24 targeted：18 tests passed。
+- Node 22 full unit suite：575 tests passed，0 failed。
+- ESLint：0 errors；repository仍有3個pre-existing unused-variable warnings outside thisTask。
+- `git diff --check`passed。

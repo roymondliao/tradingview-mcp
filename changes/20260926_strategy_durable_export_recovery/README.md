@@ -250,7 +250,7 @@ Artifact v2 state + durable store
 | ID | Task | Status | Depends on |
 | --- | --- | --- | --- |
 | [TASK-001](./TASK-001-durable-contract-state-model.md) | Artifact v2 State Model and Durable Run Store | `done` | Strategy Automation Run V1 |
-| [TASK-002](./TASK-002-run-pane-leases.md) | Cross-process Run and Pane Leases | `todo` | TASK-001 |
+| [TASK-002](./TASK-002-run-pane-leases.md) | Cross-process Run and Pane Leases | `done` | TASK-001 |
 | [TASK-003](./TASK-003-symbol-retry-atomic-attempt.md) | Symbol Retry Classifier and Atomic Attempt Export | `todo` | TASK-001 |
 | [TASK-004](./TASK-004-durable-experiment-execution.md) | Durable Experiment and Parameter Set Execution | `todo` | TASK-001, TASK-003 |
 | [TASK-005](./TASK-005-resume-planning-identity.md) | Resume Loader, Planning, and Identity Rebind | `todo` | TASK-001, TASK-002, TASK-004 |
@@ -259,4 +259,4 @@ Artifact v2 state + durable store
 
 ## Completion record
 
-LLD與implementation task split已完成。TASK-001 artifact v2 state／durable store foundation已完成；TASK-002～007尚未開始。D-014量化threshold將由TASK-007 prototype evidence補齊。
+LLD與implementation task split已完成。TASK-001 artifact v2 state／durable store foundation及TASK-002 Run／Pane leases已完成；TASK-003～007尚未開始。D-014量化threshold將由TASK-007 prototype evidence補齊。
