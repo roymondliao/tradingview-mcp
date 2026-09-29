@@ -3,6 +3,7 @@ import * as core from '../../core/strategy.js';
 import * as trading from '../../core/strategy-trading.js';
 import { resolveTradingDataFormat } from '../../core/strategy-trading-format.js';
 import { dryRunStrategyAutomation, runStrategyAutomation } from '../../core/strategy-run.js';
+import { resumeStrategyAutomation } from '../../core/strategy-resume.js';
 import { prepareContext } from '../../core/pane.js';
 import { CoreOperationError } from '../../core/errors.js';
 import {
@@ -72,6 +73,42 @@ function requireTradingDataPagination(offset, limit, snapshotId) {
   return { offset: parsedOffset, limit: parsedLimit };
 }
 
+const SIGNAL_EXIT_CODES = Object.freeze({ SIGINT: 130, SIGTERM: 143 });
+
+/** Install graceful handlers only for one formal Run/Resume invocation. */
+export async function withStrategyAutomationSignals(operation, {
+  process_facade = process,
+  AbortControllerClass = AbortController,
+} = {}) {
+  if (typeof operation !== 'function') throw new TypeError('Signal operation callback is required.');
+  const controller = new AbortControllerClass();
+  let received = 0;
+  const handlers = {};
+  for (const [signalName, exitCode] of Object.entries(SIGNAL_EXIT_CODES)) {
+    handlers[signalName] = () => {
+      received += 1;
+      if (received === 1) {
+        const reason = new CoreOperationError(`Received ${signalName}.`, {
+          code: 'RUN_INTERRUPTED', phase: 'signal',
+        });
+        reason.signal = signalName;
+        reason.exit_code = exitCode;
+        controller.abort(reason);
+        return;
+      }
+      process_facade.exit(exitCode);
+    };
+    process_facade.on(signalName, handlers[signalName]);
+  }
+  try {
+    return await operation(controller.signal);
+  } finally {
+    for (const [signalName, handler] of Object.entries(handlers)) {
+      process_facade.off(signalName, handler);
+    }
+  }
+}
+
 register('strategy', {
   description: 'Strategy Tester tools for explicit Strategy Instances',
   subcommands: new Map([
@@ -90,7 +127,33 @@ register('strategy', {
         if (opts['dry-run']) {
           return dryRunStrategyAutomation({ config_path: opts.config });
         }
-        return runStrategyAutomation({ config_path: opts.config });
+        return withStrategyAutomationSignals((signal) => runStrategyAutomation({
+          config_path: opts.config,
+          signal,
+        }));
+      },
+    }],
+    ['resume', {
+      description: 'Resume one existing durable Strategy Run in the same directory',
+      options: {
+        'run-directory': { type: 'string', description: 'Required existing durable Run Directory' },
+      },
+      handler: async (opts) => {
+        if (!opts['run-directory']) {
+          throw new CoreOperationError('--run-directory is required for strategy resume.', {
+            code: 'RUN_RESUME_NOT_FOUND', phase: 'request_validation', retryable: false,
+          });
+        }
+        const unknown = Object.keys(opts).filter((key) => key !== 'run-directory');
+        if (unknown.length) {
+          throw new CoreOperationError(`Unsupported strategy resume option: --${unknown[0]}.`, {
+            code: 'RUN_RESUME_ARTIFACT_INVALID', phase: 'request_validation', retryable: false,
+          });
+        }
+        return withStrategyAutomationSignals((signal) => resumeStrategyAutomation({
+          run_directory: opts['run-directory'],
+          signal,
+        }));
       },
     }],
     ['active', {

@@ -7,11 +7,12 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { resultExitCode } from '../src/cli/router.js';
+import { withStrategyAutomationSignals } from '../src/cli/commands/strategy.js';
 
 function require_fs() { return { writeFileSync, unlinkSync }; }
 
@@ -37,11 +38,54 @@ function run(args, opts = {}) {
   }
 }
 
+function processFacade() {
+  const listeners = new Map();
+  const exits = [];
+  return {
+    exits,
+    on(signal, handler) { listeners.set(signal, handler); },
+    off(signal, handler) {
+      if (listeners.get(signal) === handler) listeners.delete(signal);
+    },
+    exit(code) { exits.push(code); },
+    emit(signal) { listeners.get(signal)?.(); },
+    listenerCount() { return listeners.size; },
+  };
+}
+
+describe('Strategy automation CLI signals', () => {
+  it('aborts gracefully on the first signal and removes listeners', async () => {
+    const facade = processFacade();
+    const result = await withStrategyAutomationSignals(async (signal) => {
+      facade.emit('SIGINT');
+      assert.equal(signal.aborted, true);
+      assert.equal(signal.reason.exit_code, 130);
+      return { success: false, exit_code: signal.reason.exit_code };
+    }, { process_facade: facade });
+    assert.equal(result.exit_code, 130);
+    assert.deepEqual(facade.exits, []);
+    assert.equal(facade.listenerCount(), 0);
+  });
+
+  it('uses immediate hard-exit semantics for a repeated signal', async () => {
+    const facade = processFacade();
+    await withStrategyAutomationSignals(async () => {
+      facade.emit('SIGTERM');
+      facade.emit('SIGINT');
+      return { success: false, exit_code: 143 };
+    }, { process_facade: facade });
+    assert.deepEqual(facade.exits, [130]);
+    assert.equal(facade.listenerCount(), 0);
+  });
+});
+
 describe('CLI — help and routing', () => {
   it('maps partial and CDP result summaries to stable process exit codes', () => {
     assert.equal(resultExitCode({ success: true }), 0);
     assert.equal(resultExitCode({ success: false, failure_kind: 'partial' }), 1);
     assert.equal(resultExitCode({ success: false, failure_kind: 'cdp_connection' }), 2);
+    assert.equal(resultExitCode({ success: false, exit_code: 130 }), 130);
+    assert.equal(resultExitCode({ success: false, exit_code: 143 }), 143);
   });
 
   it('--help shows command list', () => {
@@ -121,6 +165,7 @@ describe('CLI — help and routing', () => {
     assert.ok(stdout.includes('trades'));
     assert.ok(stdout.includes('equity'));
     assert.ok(stdout.includes('run'));
+    assert.ok(stdout.includes('resume'));
     assert.doesNotMatch(stdout, /trading-(?:report|data|export)(?:Get|Export)/);
   });
 
@@ -140,6 +185,23 @@ describe('CLI — help and routing', () => {
     assert.equal(formalError.dry_run, false);
     assert.equal(formalError.phase, 'preflight');
     assert.equal(formalError.errors[0].code, 'RUN_CONFIG_READ_FAILED');
+  });
+
+  it('strategy resume requires only an existing Run Directory', () => {
+    const help = run(['strategy', 'resume', '--help']);
+    assert.equal(help.exitCode, 0);
+    assert.ok(help.stdout.includes('--run-directory'));
+    assert.doesNotMatch(help.stdout, /--config|--retry/);
+
+    const missing = run(['strategy', 'resume']);
+    assert.equal(missing.exitCode, 1);
+    assert.equal(JSON.parse(missing.stderr).code, 'RUN_RESUME_NOT_FOUND');
+
+    const unsupported = run([
+      'strategy', 'resume', '--run-directory', './missing-run', '--config', './run.json',
+    ]);
+    assert.equal(unsupported.exitCode, 1);
+    assert.equal(JSON.parse(unsupported.stderr).phase, 'request_validation');
   });
 
   it('strategy trading-data help exposes Offset/Limit/Snapshot pagination', () => {

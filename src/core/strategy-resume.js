@@ -16,11 +16,15 @@ import { normalizedPineSourceSha256 } from './pine-input-schema.js';
 import {
   assertPreparedInputFingerprint,
   effectiveInputsFingerprint,
+  executeSelectedParameterSets,
+  prepareParameterSetExecution,
 } from './strategy-parameter-sets.js';
 import { readDurableRunArtifacts } from './strategy-run-artifacts.js';
 import {
   buildResumePlan,
   deriveRunSummary,
+  transitionExperimentState,
+  transitionRunState,
 } from './strategy-run-state.js';
 import {
   acquireStrategyRunPaneLeases,
@@ -33,8 +37,21 @@ import {
   rebindStrategyResumePaneInstance,
   rebindStrategyResumeTarget,
   resolveLayoutTarget,
+  resolvePaneStrategyInstances,
   resolveSavedStrategy,
 } from './strategy-run-resolver.js';
+import { planStrategySync } from './strategy-sync.js';
+import { executeStrategySync } from './strategy-sync.js';
+import {
+  executeDurableStrategyExperiment,
+  prepareDurableStrategyExperiment,
+} from './strategy-durable-experiment.js';
+import {
+  createStrategySymbolAttemptArtifactWriter,
+  exportStrategySymbol,
+} from './strategy-trading.js';
+import { restoreSymbolSession } from './chart-session.js';
+import { withChartSession } from './chart-session.js';
 import { sha256Hex, stableJsonStringify } from './stable-json.js';
 import { reconnectTo } from '../connection.js';
 
@@ -87,17 +104,26 @@ function requestedParameterSets(run) {
   if (!Array.isArray(requested) || requested.length === 0) {
     throw resumeError('run.json requested Parameter Sets are missing.');
   }
-  if (
-    !Array.isArray(run.planned_experiments)
-    || run.planned_experiments.length !== requested.length
-  ) {
-    throw resumeError('run.json is missing one or more persisted Experiment plans.');
-  }
   return requested;
 }
 
 function assertPlanIdentity(run) {
   const requested = requestedParameterSets(run);
+  const planningFields = [
+    run.base_inputs,
+    run.base_inputs_fingerprint,
+    run.planned_experiments,
+  ];
+  const presentCount = planningFields.filter((value) => value != null).length;
+  if (presentCount === 0) return false;
+  if (
+    run.resolved?.strategy == null
+    || presentCount !== planningFields.length
+    || !Array.isArray(run.planned_experiments)
+    || run.planned_experiments.length !== requested.length
+  ) {
+    throw resumeError('run.json contains incomplete persisted Experiment setup metadata.');
+  }
   assertFingerprint(
     effectiveInputsFingerprint(run.base_inputs),
     run.base_inputs_fingerprint,
@@ -140,6 +166,7 @@ function assertPlanIdentity(run) {
       throw resumeError(`Experiment plan ${index} ID is inconsistent.`);
     }
   }
+  return true;
 }
 
 function stableTargetIdentity(target) {
@@ -274,7 +301,7 @@ async function auditExperimentDirectoryInventory(artifacts, _deps = {}) {
     throw resumeError('Unable to audit the Experiments directory.', { cause: error });
   }
   const plannedNames = new Set(
-    artifacts.run.planned_experiments.map((plan) => plan.parameter_set.name),
+    (artifacts.run.planned_experiments || []).map((plan) => plan.parameter_set.name),
   );
   for (const entry of entries) {
     if (entry.isSymbolicLink() || !entry.isDirectory() || !plannedNames.has(entry.name)) {
@@ -374,9 +401,9 @@ export async function loadStrategyResume({ run_directory, _deps = {} } = {}) {
   if (basename(artifacts.store.run_path) !== artifacts.run.run_id) {
     throw resumeError('Run ID does not match the resolved Run Directory.');
   }
-  assertPlanIdentity(artifacts.run);
+  const setupComplete = assertPlanIdentity(artifacts.run);
   const symbols = assertFrozenWatchlist(artifacts);
-  assertExperimentArtifacts(artifacts);
+  if (setupComplete) assertExperimentArtifacts(artifacts);
   const auditInventory = _deps.auditExperimentInventory || auditExperimentDirectoryInventory;
   await auditInventory(artifacts, _deps.fs);
   await auditSucceededArtifacts(artifacts);
@@ -386,9 +413,6 @@ export async function loadStrategyResume({ run_directory, _deps = {} } = {}) {
     experiments: artifacts.experiments,
     manifests: artifacts.manifests,
   });
-  if (purePlan.setup_required) {
-    throw resumeError('Resume requires complete persisted Experiment plans.');
-  }
   const plan = enrichResumePlan(artifacts, purePlan);
   return Object.freeze({
     run_directory: artifacts.store.run_path,
@@ -440,7 +464,7 @@ export async function withStrategyResumeOwnership({
   }
 }
 
-async function readPersistedPineSource(run, _deps = {}) {
+export async function readPersistedPineSource(run, _deps = {}) {
   const path = run.requested?.strategy?.file_path;
   if (typeof path !== 'string' || !path.trim() || !isAbsolute(path)) {
     throw resumeError('run.json does not contain an absolute persisted Pine source path.');
@@ -456,8 +480,8 @@ async function readPersistedPineSource(run, _deps = {}) {
     const expected = new Set([
       run.source_sha256,
       run.requested.strategy.source_sha256,
-      run.resolved.strategy.source_sha256,
-    ]);
+      run.resolved.strategy?.source_sha256,
+    ].filter((value) => value != null));
     if (expected.size !== 1 || !expected.has(sourceSha256)) {
       throw identityError('Local Pine source hash differs from the persisted Run.');
     }
@@ -466,6 +490,132 @@ async function readPersistedPineSource(run, _deps = {}) {
     if (error?.code === 'RUN_RESUME_IDENTITY_MISMATCH') throw error;
     throw identityError(`Unable to verify persisted Pine source: ${path}.`, error);
   }
+}
+
+async function resolveResumeCandidate(run, pine, _deps) {
+  const compile = _deps.checkPine || checkPine;
+  let candidate;
+  try {
+    candidate = await compile({ source: pine.source, _deps: _deps.pine });
+  } catch (error) {
+    wrapIdentityFailure(error, 'Unable to verify the persisted Candidate Pine schema.');
+  }
+  if (
+    candidate?.compiled !== true
+    || candidate?.input_schema?.available !== true
+    || candidate.input_schema.source_sha256 !== run.source_sha256
+    || candidate.input_schema.input_schema_fingerprint !== run.candidate_schema_fingerprint
+  ) {
+    throw identityError('Candidate Pine schema differs from the persisted Run.');
+  }
+  return candidate;
+}
+
+async function resolveResumeTarget(run, _deps) {
+  const resolveLayout = _deps.resolveLayoutTarget || resolveLayoutTarget;
+  let currentTarget;
+  try {
+    currentTarget = await resolveLayout({
+      layout_name: run.resolved.target.layout_name,
+      pane_index: run.resolved.target.pane_index,
+      _deps: _deps.layout,
+    });
+  } catch (error) {
+    wrapIdentityFailure(error, 'Unable to resolve the persisted Layout and Pane.');
+  }
+  const context = rebindStrategyResumeTarget({
+    persisted: run.resolved.target,
+    current: currentTarget,
+  });
+  const attachTarget = _deps.attachTarget || reconnectTo;
+  try {
+    await attachTarget(context.target_id);
+  } catch (error) {
+    wrapIdentityFailure(error, 'Unable to attach the resolved Strategy Resume target.');
+  }
+  return context;
+}
+
+/** Resolve the read-only inputs needed to complete a crash-interrupted setup phase. */
+export async function resolveStrategyResumeSetup({ local, _deps = {} } = {}) {
+  const run = local?.artifacts?.run;
+  if (!run || local.plan.setup_required !== true) {
+    throw resumeError('Strategy Resume setup resolution requires an unfinished setup Run.');
+  }
+  const pine = await readPersistedPineSource(run, _deps.fs);
+  const candidate = await resolveResumeCandidate(run, pine, _deps);
+  const context = await resolveResumeTarget(run, _deps);
+  const resolveAccount = _deps.resolveSavedStrategy || resolveSavedStrategy;
+  const readAccount = _deps.readResolvedSavedStrategy || readResolvedSavedStrategy;
+  let account;
+  let accountDetail = null;
+  try {
+    account = await resolveAccount({
+      saved_name: run.requested.strategy.saved_name,
+      _deps: _deps.account,
+    });
+    if (account?.exists) {
+      accountDetail = await readAccount({ resolved_account: account, _deps: _deps.account });
+    }
+  } catch (error) {
+    wrapIdentityFailure(error, 'Unable to resolve the requested Saved Strategy for setup.');
+  }
+  const readPane = _deps.readTargetPaneStudies || readTargetPaneStudies;
+  let paneState;
+  try {
+    paneState = await readPane({
+      target_id: context.target_id,
+      pane_index: context.pane_index,
+      _deps: _deps.pane,
+    });
+  } catch (error) {
+    wrapIdentityFailure(error, 'Unable to read the requested Pane for setup.');
+  }
+  const paneInstances = account?.exists
+    ? resolvePaneStrategyInstances({
+      pane_state: paneState,
+      script_id: account.script.script_id || account.script.id,
+    })
+    : Object.freeze({ match_count: 0, matches: Object.freeze([]) });
+  let currentSchema = null;
+  if (accountDetail?.pine_source) {
+    if (accountDetail.source_sha256 === pine.source_sha256) {
+      currentSchema = candidate.input_schema;
+    } else {
+      const current = await (_deps.checkPine || checkPine)({
+        source: accountDetail.pine_source,
+        _deps: _deps.pine,
+      });
+      currentSchema = current?.input_schema || null;
+    }
+  }
+  const syncPlan = planStrategySync({
+    local_source_sha256: pine.source_sha256,
+    account: account ? {
+      ...account,
+      source_sha256: accountDetail?.source_sha256 || null,
+    } : null,
+    pane_instances: paneInstances,
+  });
+  if (syncPlan.errors?.length) {
+    throw identityError(syncPlan.errors[0].message || 'Strategy setup plan is invalid.');
+  }
+  return Object.freeze({
+    pine,
+    candidate_schema: candidate.input_schema,
+    target: Object.freeze({
+      ...context,
+      symbol: paneState.symbol ?? context.symbol,
+      timeframe: paneState.timeframe ?? context.timeframe,
+      resolution: paneState.timeframe ?? context.resolution,
+    }),
+    account,
+    account_detail: accountDetail,
+    pane_state: paneState,
+    pane_instances: paneInstances,
+    current_schema: currentSchema,
+    strategy_sync: syncPlan,
+  });
 }
 
 function preparedInputsFromRun(run, strategy, context) {
@@ -500,43 +650,8 @@ export async function resolveStrategyResumeIdentity({ local, _deps = {} } = {}) 
     throw resumeError('Resume identity requires complete persisted setup metadata.');
   }
   const pine = await readPersistedPineSource(run, _deps.fs);
-  const compile = _deps.checkPine || checkPine;
-  let candidate;
-  try {
-    candidate = await compile({ source: pine.source, _deps: _deps.pine });
-  } catch (error) {
-    wrapIdentityFailure(error, 'Unable to verify the persisted Candidate Pine schema.');
-  }
-  if (
-    candidate?.compiled !== true
-    || candidate?.input_schema?.available !== true
-    || candidate.input_schema.source_sha256 !== run.source_sha256
-    || candidate.input_schema.input_schema_fingerprint !== run.candidate_schema_fingerprint
-  ) {
-    throw identityError('Candidate Pine schema differs from the persisted Run.');
-  }
-
-  const resolveLayout = _deps.resolveLayoutTarget || resolveLayoutTarget;
-  let currentTarget;
-  try {
-    currentTarget = await resolveLayout({
-      layout_name: run.resolved.target.layout_name,
-      pane_index: run.resolved.target.pane_index,
-      _deps: _deps.layout,
-    });
-  } catch (error) {
-    wrapIdentityFailure(error, 'Unable to resolve the persisted Layout and Pane.');
-  }
-  const context = rebindStrategyResumeTarget({
-    persisted: run.resolved.target,
-    current: currentTarget,
-  });
-  const attachTarget = _deps.attachTarget || reconnectTo;
-  try {
-    await attachTarget(context.target_id);
-  } catch (error) {
-    wrapIdentityFailure(error, 'Unable to attach the resolved Strategy Resume target.');
-  }
+  const candidate = await resolveResumeCandidate(run, pine, _deps);
+  const context = await resolveResumeTarget(run, _deps);
 
   const resolveAccount = _deps.resolveSavedStrategy || resolveSavedStrategy;
   const readAccount = _deps.readResolvedSavedStrategy || readResolvedSavedStrategy;
@@ -627,15 +742,462 @@ export async function withStrategyResumeContext({
     run_directory,
     _deps: _deps.ownership,
   }, async (owned) => {
-    const identity = await resolveStrategyResumeIdentity({
-      local: owned.locked,
-      _deps: _deps.identity,
-    });
+    const identity = owned.locked.plan.setup_required
+      ? await resolveStrategyResumeSetup({
+        local: owned.locked,
+        _deps: _deps.identity,
+      })
+      : await resolveStrategyResumeIdentity({
+        local: owned.locked,
+        _deps: _deps.identity,
+      });
     return operation(Object.freeze({
       ...owned,
       local: owned.locked,
       identity,
       context: sanitizeCoreContext(identity.target),
     }));
+  });
+}
+
+function interruptedError(signal) {
+  const reason = signal?.reason;
+  const error = new CoreOperationError(
+    `Strategy automation was interrupted${reason ? `: ${reason.message || String(reason)}` : '.'}`,
+    { code: 'RUN_INTERRUPTED', phase: 'signal', cause: reason instanceof Error ? reason : undefined },
+  );
+  if (Number.isInteger(reason?.exit_code)) error.exit_code = reason.exit_code;
+  if (reason?.signal) error.signal = reason.signal;
+  return error;
+}
+
+function assertNotAborted(signal) {
+  if (signal?.aborted) throw interruptedError(signal);
+}
+
+function executablePreparedRun(run, identity, context) {
+  return Object.freeze({
+    valid: true,
+    errors: Object.freeze([]),
+    identity,
+    context,
+    base_inputs: run.base_inputs,
+    base_inputs_fingerprint: run.base_inputs_fingerprint,
+    planned_experiments: run.planned_experiments,
+    parameter_sets: Object.freeze(run.planned_experiments.map((plan) => Object.freeze({
+      index: plan.parameter_set.index,
+      name: plan.parameter_set.name,
+      requested_inputs: plan.parameter_set.requested_inputs,
+      resolved_inputs: plan.parameter_set.resolved_inputs || Object.freeze([]),
+      requested_inputs_fingerprint: plan.parameter_set.requested_inputs_fingerprint,
+      inputs_fingerprint: plan.inputs_fingerprint,
+      effective_inputs: plan.effective_inputs,
+      experiment_id: plan.experiment_id,
+    }))),
+  });
+}
+
+async function defaultExecuteSymbolAttempt({
+  attempt,
+  symbol,
+  experiment,
+  identity,
+  context,
+  timeframe,
+  format,
+  timeout_ms,
+  _deps,
+}) {
+  const writer = createStrategySymbolAttemptArtifactWriter({ attempt, format });
+  const exportSymbol = _deps.exportStrategySymbol || exportStrategySymbol;
+  const restoreSession = _deps.restoreSymbolSession || restoreSymbolSession;
+  let symbolSession = null;
+  let result = null;
+  try {
+    result = await exportSymbol({
+      entity_id: identity.entity_id,
+      symbol,
+      timeframe,
+      context,
+      format,
+      timeout_ms,
+      _run: { artifact_writer: writer },
+      _deps: {
+        ..._deps.export,
+        onSymbolSession: async (session) => { symbolSession = session; },
+      },
+    });
+    return result;
+  } finally {
+    if (symbolSession) {
+      const restore = await restoreSession(symbolSession, {
+        timeout_ms,
+        _deps: _deps.export,
+      });
+      if (result) result.chart_restore = restore;
+    }
+  }
+}
+
+/** Shared selected-Experiment execution used by new Run and explicit Resume. */
+export async function executeDurableStrategyPlan({
+  store,
+  run,
+  watchlist,
+  prepared,
+  identity,
+  context,
+  selected_experiments,
+  signal,
+  timeout_ms,
+  _deps = {},
+} = {}) {
+  assertNotAborted(signal);
+  const symbols = (watchlist?.symbols || []).map((item) => (
+    typeof item === 'string' ? item : item.symbol
+  ));
+  const selections = Array.isArray(selected_experiments)
+    ? selected_experiments
+    : run.planned_experiments.map((plan, index) => ({
+      index,
+      selected_indices: symbols.map((_symbol, symbolIndex) => symbolIndex),
+      experiment: null,
+      manifest: null,
+      persisted_plan: plan,
+    }));
+  const selected = selections.filter((item) => item.selected_indices.length > 0);
+  const durableStates = new Map();
+  const rawNow = _deps.now || Date.now;
+  let lastTimestamp = Math.max(
+    run.updated_at || 0,
+    ...selections.map((item) => item.manifest?.updated_at || 0),
+  );
+  const now = () => {
+    const candidate = Number(rawNow());
+    if (Number.isInteger(candidate)) lastTimestamp = Math.max(lastTimestamp, candidate);
+    return lastTimestamp;
+  };
+  for (const selection of selected) {
+    assertNotAborted(signal);
+    let state = await (_deps.prepareDurableStrategyExperiment
+      || prepareDurableStrategyExperiment)({
+      store,
+      run,
+      experiment_plan: run.planned_experiments[selection.index],
+      experiment: selection.experiment,
+      manifest: selection.manifest,
+      requested_symbols: symbols,
+      strategy: identity,
+      target: run.resolved.target,
+      timeframe: selection.timeframe || run.requested.backtest.timeframe,
+      format: selection.format || run.requested.output.format,
+      _deps: { now },
+    });
+    if (state.manifest.status === 'failed') {
+      const manifest = transitionExperimentState(state.manifest, {
+        status: 'running',
+        updated_at: Math.max(state.manifest.updated_at, now()),
+      });
+      await store.replaceManifest(manifest);
+      state = Object.freeze({ ...state, manifest });
+    }
+    durableStates.set(selection.index, state);
+  }
+
+  const executePlan = _deps.executeSelectedParameterSets || executeSelectedParameterSets;
+  const executeExperiment = _deps.executeDurableStrategyExperiment
+    || executeDurableStrategyExperiment;
+  const executeAttempt = _deps.executeSymbolAttempt || defaultExecuteSymbolAttempt;
+  const results = await executePlan({
+    prepared,
+    selected_indices: selected.map((item) => item.index),
+    identity,
+    context,
+    timeout_ms,
+    before_experiment: async () => { assertNotAborted(signal); },
+    _deps: _deps.parameter_sets,
+  }, async (parameterExperiment) => {
+    assertNotAborted(signal);
+    const index = parameterExperiment.parameter_set.index;
+    const selection = selected.find((item) => item.index === index);
+    const state = durableStates.get(index);
+    const operation = await executeExperiment({
+      store,
+      prepared_experiment: state,
+      selected_indices: selection.selected_indices,
+      context,
+      signal,
+      ownership_confirmed: true,
+      execute_symbol_attempt: (attempt) => executeAttempt({
+        ...attempt,
+        identity,
+        context,
+        timeframe: state.timeframe,
+        format: state.format,
+        timeout_ms,
+        _deps,
+      }),
+      _deps: { now, retry: { ..._deps.retry, now } },
+    });
+    durableStates.set(index, Object.freeze({ ...state, manifest: operation.manifest }));
+    return operation;
+  });
+  return Object.freeze({ results, durable_states: durableStates });
+}
+
+function boundedExperiment(manifest) {
+  return Object.freeze({
+    name: manifest.parameter_set_name,
+    experiment_id: manifest.experiment_id,
+    inputs_fingerprint: manifest.inputs_fingerprint,
+    status: manifest.status,
+    success: manifest.status === 'succeeded',
+    summary: manifest.summary,
+    manifest: `experiments/${manifest.parameter_set_name}/manifest.json`,
+    started_at: manifest.started_at,
+    started_at_iso: manifest.started_at_iso,
+    updated_at: manifest.updated_at,
+    updated_at_iso: manifest.updated_at_iso,
+  });
+}
+
+function setupFailureSummary(run) {
+  const experimentsRequested = run.requested.experiments.parameter_sets.length;
+  const symbolsPerExperiment = run.resolved.watchlist.symbol_count;
+  return Object.freeze({
+    experiments_requested: experimentsRequested,
+    experiments_running: 0,
+    experiments_succeeded: 0,
+    experiments_failed: 0,
+    symbols_requested: experimentsRequested * symbolsPerExperiment,
+    symbols_pending: experimentsRequested * symbolsPerExperiment,
+    symbols_running: 0,
+    symbols_retry_wait: 0,
+    symbols_succeeded: 0,
+    symbols_failed: 0,
+    symbols_skipped: 0,
+  });
+}
+
+/** Derive and persist the terminal Run state from all authoritative manifests. */
+export async function finalizeDurableStrategyRun({
+  store,
+  error = null,
+  _deps = {},
+} = {}) {
+  const readArtifacts = _deps.readArtifacts || readDurableRunArtifacts;
+  const loaded = await readArtifacts({
+    run_directory: store.run_path,
+    _deps: _deps.artifacts,
+  });
+  const manifests = loaded.manifests;
+  const complete = Array.isArray(loaded.run.planned_experiments)
+    && manifests.length === loaded.run.planned_experiments.length
+    && manifests.every((manifest) => manifest.status === 'succeeded');
+  const terminalError = error || (!complete
+    ? new CoreOperationError('Strategy Run has incomplete or failed Experiments.', {
+      code: 'STRATEGY_RUN_FAILED', phase: 'strategy_run_execution',
+    })
+    : null);
+  const summary = loaded.run.planned_experiments
+    ? deriveRunSummary({ run: loaded.run, manifests })
+    : setupFailureSummary(loaded.run);
+  const experiments = manifests.map(boundedExperiment);
+  const now = _deps.now || Date.now;
+  const run = transitionRunState(loaded.run, {
+    status: complete && terminalError == null ? 'succeeded' : 'failed',
+    updated_at: Math.max(loaded.run.updated_at, now()),
+    error: terminalError,
+    patch: { summary, experiments },
+  });
+  await store.replaceRun(run);
+  return Object.freeze({ run, watchlist: loaded.watchlist, manifests, summary, experiments });
+}
+
+export async function durableStrategyRunResponse({
+  finalized,
+  store,
+  context,
+  strategy,
+  resumed = false,
+  signal,
+} = {}) {
+  const [runArtifact, watchlistArtifact] = await Promise.all([
+    store.artifactInfo('run.json'),
+    store.artifactInfo('watchlist.json'),
+  ]);
+  const interrupted = finalized.run.error?.code === 'RUN_INTERRUPTED';
+  const signalExitCode = Number.isInteger(signal?.reason?.exit_code)
+    ? signal.reason.exit_code
+    : null;
+  const cdpFailure = String(finalized.run.error?.code || '').startsWith('CDP_');
+  return Object.freeze({
+    success: finalized.run.status === 'succeeded',
+    ...(cdpFailure && { failure_kind: 'cdp_connection' }),
+    ...(interrupted && signalExitCode != null && { exit_code: signalExitCode }),
+    run_id: finalized.run.run_id,
+    status: finalized.run.status,
+    durable: true,
+    resumed,
+    output: Object.freeze({
+      path: store.run_path,
+      atomic: false,
+      atomic_scope: 'state_file_and_symbol_directory',
+      replaced: false,
+    }),
+    strategy: strategy || finalized.run.resolved.strategy || null,
+    context: sanitizeCoreContext(context || finalized.run.resolved.target),
+    watchlist: Object.freeze({
+      name: finalized.run.resolved.watchlist.name,
+      snapshot_id: finalized.run.resolved.watchlist.snapshot_id,
+      symbol_count: finalized.run.resolved.watchlist.symbol_count,
+    }),
+    summary: finalized.summary,
+    experiments: finalized.experiments,
+    ...(finalized.run.error && { error: finalized.run.error }),
+    artifacts: Object.freeze({ run: runArtifact, watchlist: watchlistArtifact }),
+    retry_supported: true,
+    resume_supported: true,
+  });
+}
+
+function setupRunPatch(run, { strategy, target, prepared }) {
+  return {
+    resolved: {
+      ...run.resolved,
+      target: { ...run.resolved.target, ...sanitizeCoreContext(target) },
+      strategy,
+    },
+    base_inputs: prepared.base_inputs,
+    base_inputs_fingerprint: prepared.base_inputs_fingerprint,
+    planned_experiments: prepared.planned_experiments,
+  };
+}
+
+/** Resume the same durable Run ID without creating continuation output. */
+export async function resumeStrategyAutomation({
+  run_directory,
+  signal,
+  _deps = {},
+} = {}) {
+  const runWithResumeContext = _deps.withStrategyResumeContext || withStrategyResumeContext;
+  return runWithResumeContext({
+    run_directory,
+    _deps: _deps.context,
+  }, async ({ local, identity }) => {
+    const store = local.artifacts.store;
+    let run = local.artifacts.run;
+    let context = identity.target;
+    let runtimeStrategy = run.resolved.strategy || null;
+    let primaryError = null;
+    try {
+      assertNotAborted(signal);
+      const runWithSession = _deps.withChartSession || withChartSession;
+      await runWithSession({ context, _deps: _deps.session }, async () => {
+        const alreadyLockedSession = async (_options, operation) => operation();
+        let strategy;
+        let prepared;
+        let selections;
+        if (local.plan.setup_required) {
+          const runSync = _deps.executeStrategySync || executeStrategySync;
+          const sync = await runSync({
+            saved_name: run.requested.strategy.saved_name,
+            source: identity.pine.source,
+            source_sha256: run.source_sha256,
+            candidate_schema: identity.candidate_schema,
+            current_schema: identity.current_schema,
+            context,
+            expected_plan: identity.strategy_sync,
+            timeout_ms: _deps.timeout_ms,
+            _deps: { ..._deps.sync, withChartSession: alreadyLockedSession },
+          });
+          strategy = Object.freeze({
+            script_id: sync.account.script_id,
+            version: String(sync.account.version),
+            source_sha256: sync.source_sha256,
+            entity_id: sync.pane.entity_id,
+          });
+          runtimeStrategy = strategy;
+          run = transitionRunState(run, {
+            status: 'running',
+            updated_at: Math.max(run.updated_at, (_deps.now || Date.now)()),
+            patch: { resolved: { ...run.resolved, strategy } },
+          });
+          await store.replaceRun(run);
+          const prepare = _deps.prepareParameterSetExecution || prepareParameterSetExecution;
+          prepared = await prepare({
+            candidate_schema: identity.candidate_schema,
+            parameter_sets: run.requested.experiments.parameter_sets,
+            identity: strategy,
+            context,
+            _deps: _deps.parameter_sets,
+          });
+          run = transitionRunState(run, {
+            status: 'running',
+            updated_at: Math.max(run.updated_at, (_deps.now || Date.now)()),
+            patch: setupRunPatch(run, { strategy, target: context, prepared }),
+          });
+          await store.replaceRun(run);
+          selections = run.planned_experiments.map((plan, index) => ({
+            index,
+            selected_indices: local.symbols.map((_symbol, symbolIndex) => symbolIndex),
+            experiment: null,
+            manifest: null,
+            persisted_plan: plan,
+            timeframe: run.requested.backtest.timeframe,
+            format: run.requested.output.format,
+          }));
+        } else {
+          strategy = identity.strategy;
+          runtimeStrategy = strategy;
+          context = identity.target;
+          prepared = executablePreparedRun(run, strategy, context);
+          selections = local.plan.experiments;
+          run = transitionRunState(run, {
+            status: 'running',
+            updated_at: Math.max(run.updated_at, (_deps.now || Date.now)()),
+            patch: {
+              resolved: {
+                ...run.resolved,
+                target: { ...run.resolved.target, ...sanitizeCoreContext(context) },
+              },
+            },
+          });
+          await store.replaceRun(run);
+        }
+        assertNotAborted(signal);
+        await executeDurableStrategyPlan({
+          store,
+          run,
+          watchlist: local.artifacts.watchlist,
+          prepared,
+          identity: strategy,
+          context,
+          selected_experiments: selections,
+          signal,
+          timeout_ms: _deps.timeout_ms,
+          _deps: { now: _deps.now, ..._deps.execution, parameter_sets: {
+            ..._deps.execution?.parameter_sets,
+            withChartSession: alreadyLockedSession,
+          } },
+        });
+      });
+      assertNotAborted(signal);
+    } catch (error) {
+      primaryError = error;
+    }
+    const finalized = await finalizeDurableStrategyRun({
+      store,
+      error: primaryError,
+      _deps: { now: _deps.now, ..._deps.finalize },
+    });
+    return durableStrategyRunResponse({
+      finalized,
+      store,
+      context,
+      strategy: runtimeStrategy,
+      resumed: true,
+      signal,
+    });
   });
 }

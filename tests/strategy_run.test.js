@@ -10,7 +10,17 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { dryRunStrategyAutomation, runStrategyAutomation } from '../src/core/strategy-run.js';
+import {
+  createParameterSetExecutionPlan,
+  persistableParameterSetPlan,
+} from '../src/core/strategy-parameter-sets.js';
+import { createDurableRunStore } from '../src/core/strategy-run-artifacts.js';
+import {
+  loadStrategyResume,
+  resumeStrategyAutomation,
+} from '../src/core/strategy-resume.js';
 import { CoreOperationError } from '../src/core/errors.js';
+import { sha256Hex } from '../src/core/stable-json.js';
 
 const temporaryDirectories = [];
 
@@ -156,23 +166,40 @@ function formalPreflight(outputDirectory, { parameterSets = null } = {}) {
     run_path: join(outputDirectory, 'formal-run'),
     format: 'csv',
   };
+  request.strategy.source_sha256 = 'source-hash';
   request.experiments.parameter_sets = parameterSets || [
     { name: 'baseline', inputs: {} },
     { name: 'fast', inputs: { Length: 5 } },
   ];
+  const symbols = ['TWSE:2330', 'TWSE:2317'];
+  const orderedFingerprint = `sha256:${sha256Hex(symbols)}`;
+  const snapshotId = `sha256:${sha256Hex({
+    watchlist_id: '1',
+    name: 'dev-testing-list',
+    modified: '2026-09-29T00:00:00Z',
+    symbols,
+  })}`;
   const watchlist = {
     success: true,
-    watchlist: { name: 'dev-testing-list', watchlist_id: 1 },
+    watchlist: {
+      name: 'dev-testing-list', watchlist_id: 1,
+      modified: '2026-09-29T00:00:00Z', active: false,
+    },
     snapshot: {
       complete: true,
-      snapshot_id: 'sha256:watchlist',
-      returned_symbol_count: 2,
+      snapshot_id: snapshotId,
+      ordered_symbol_fingerprint: orderedFingerprint,
+      declared_symbol_count: symbols.length,
+      returned_symbol_count: symbols.length,
+      unique_symbol_count: symbols.length,
     },
-    symbols: ['TWSE:2330', 'TWSE:2317'],
+    symbols,
   };
   const target = {
-    target_id: 'target-1', layout_name: 'dev', layout_id: 'layout-1', saved_layout_id: 1,
-    pane_index: 0, pane_id: 'pane-0', symbol: 'TWSE_DLY:2330', timeframe: '1D',
+    tab_index: 0, target_id: 'target-1', url_chart_id: 'url-1',
+    layout_name: 'dev', layout_id: 'layout-1', saved_layout_id: 1,
+    pane_layout: 's', pane_index: 0, pane_id: 'pane-0',
+    symbol: 'TWSE_DLY:2330', timeframe: '1D',
   };
   return {
     success: true,
@@ -205,9 +232,64 @@ function formalPreflight(outputDirectory, { parameterSets = null } = {}) {
   };
 }
 
-function formalDeps(preflight, calls, { partial = false, parameterError = null } = {}) {
+function baseInputs() {
+  return [{
+    id: 'in_0', name: 'Length', name_selectable: true,
+    type: 'integer', value: 10, default_value: 10,
+    constraints: { min: 1, max: 20 },
+  }];
+}
+
+function preparedPlan(preflight, identity) {
+  const plan = createParameterSetExecutionPlan({
+    base_catalog: baseInputs(),
+    candidate_schema: preflight._internal.candidate.input_schema,
+    parameter_sets: preflight._internal.loaded.requested.experiments.parameter_sets,
+    identity,
+  });
+  return Object.freeze({
+    ...plan,
+    planned_experiments: Object.freeze(plan.parameter_sets.map(persistableParameterSetPlan)),
+    context: preflight._internal.target,
+  });
+}
+
+async function closeTradeArtifact(attempt) {
+  const writable = await attempt.openArtifact('trades.csv');
+  await new Promise((resolveWrite, rejectWrite) => {
+    writable.once('error', rejectWrite);
+    writable.once('close', resolveWrite);
+    writable.end('trade\n');
+  });
+}
+
+function formalDeps(preflight, calls, {
+  failedSymbol = null,
+  fatalSymbol = null,
+  parameterError = null,
+  syncError = null,
+  onAttempt = null,
+} = {}) {
   let clock = 1800000000000;
+  const now = () => clock++;
+  const identity = Object.freeze({
+    script_id: 'USER;obv', version: '3.0', source_sha256: 'source-hash', entity_id: 'entity-1',
+  });
+  const prepared = preparedPlan(preflight, identity);
   return {
+    now,
+    acquireLeases: async () => {
+      calls.events.push('leases-acquired');
+      return { async release() { calls.events.push('leases-released'); } };
+    },
+    assertPaneContext: async () => {
+      calls.events.push('pane-rechecked');
+      return { symbol: 'TWSE_DLY:2330', resolution: '1D' };
+    },
+    createDurableRunStore: async (options) => {
+      calls.events.push('store-created');
+      return createDurableRunStore(options);
+    },
     withChartSession: async ({ context: sessionContext }, operation) => {
       calls.sessions = (calls.sessions || 0) + 1;
       assert.equal(sessionContext.resolution, '1D');
@@ -215,6 +297,10 @@ function formalDeps(preflight, calls, { partial = false, parameterError = null }
     },
     dryRunStrategyAutomation: async () => preflight,
     executeStrategySync: async (args) => {
+      calls.events.push('strategy-sync');
+      assert.equal(existsSync(join(preflight._internal.loaded.requested.output.run_path, 'run.json')), true);
+      assert.equal(existsSync(join(preflight._internal.loaded.requested.output.run_path, 'watchlist.json')), true);
+      if (syncError) throw syncError;
       calls.sync.push(args.expected_plan);
       await args._deps.withChartSession({}, async () => {
         calls.innerSessions = (calls.innerSessions || 0) + 1;
@@ -233,132 +319,123 @@ function formalDeps(preflight, calls, { partial = false, parameterError = null }
         },
       };
     },
-    executeParameterSets: async (args, operation) => {
-      if (parameterError) throw parameterError;
-      await args._deps.withChartSession({}, async () => {
-        calls.innerSessions = (calls.innerSessions || 0) + 1;
-      });
-      const experiments = [];
-      for (const [index, set] of args.parameter_sets.entries()) {
-        const startedAt = clock++;
-        const experiment = {
-          schema_version: 1,
-          experiment_id: `sha256:experiment-${index}`,
-          parameter_set: {
-            index, name: set.name, requested_inputs: set.inputs, resolved_inputs: [],
-            requested_inputs_fingerprint: `requested-${index}`,
-          },
-          strategy: args.identity,
-          context: args.context,
-          base_inputs_fingerprint: { available: true, value: 'base-inputs', count: 1 },
-          inputs_fingerprint: { available: true, value: `inputs-${index}`, count: 1 },
-          effective_inputs: [{ id: 'in_0', name: 'Length', value: index ? 5 : 10 }],
-          started_at: startedAt,
-          started_at_iso: new Date(startedAt).toISOString(),
-          report: { stable_reads: 2, fresh: index > 0 },
-        };
-        const exported = await operation(experiment);
-        experiments.push({
+    prepareParameterSetExecution: async () => prepared,
+    execution: {
+      retry: { now, delay: async () => {} },
+      executeSelectedParameterSets: async (args, operation) => {
+        if (parameterError) throw parameterError;
+        const experiments = [];
+        for (const index of args.selected_indices) {
+          const plan = args.prepared.parameter_sets[index];
+          await args.before_experiment(plan);
+          const output = await operation({
+            parameter_set: {
+              index, name: plan.name,
+              requested_inputs: plan.requested_inputs,
+            },
+          });
+          experiments.push({ operation: output });
+        }
+        return {
           success: true,
-          experiment: {
-            ...experiment,
-            completed_at: clock++,
-            completed_at_iso: new Date(clock - 1).toISOString(),
-          },
-          operation: exported,
-          mutation: { mutated: index > 0, applied_input_count: index > 0 ? 1 : 0 },
-        });
-      }
-      return {
-        success: true,
-        strategy: args.identity,
-        context: args.context,
-        base_inputs_fingerprint: { available: true, value: 'base-inputs', count: 1 },
-        experiment_count: experiments.length,
-        experiments,
-        restore: { success: true, restored: true },
-      };
+          experiment_count: experiments.length,
+          experiments,
+          restore: { success: true, restored: true },
+        };
+      },
+      executeSymbolAttempt: async ({ attempt, symbol, experiment }) => {
+        const key = `${experiment.parameter_set.name}:${symbol}`;
+        calls.attempts.push(key);
+        if (onAttempt) await onAttempt({ key, symbol, experiment });
+        if (fatalSymbol === key) {
+          throw new CoreOperationError('CDP disconnected', {
+            code: 'CDP_CONNECTION_FAILED', phase: 'cdp',
+          });
+        }
+        if (failedSymbol === key) {
+          throw new CoreOperationError('temporary switch failure', {
+            code: 'SYMBOL_SWITCH_FAILED', phase: 'symbol_switch',
+          });
+        }
+        await attempt.writeJson('report.json', { symbol });
+        await closeTradeArtifact(attempt);
+        await attempt.writeJson('reconciliation.json', { success: true });
+        const [report, trades, reconciliation] = await Promise.all([
+          attempt.artifactInfo('report.json'),
+          attempt.artifactInfo('trades.csv'),
+          attempt.artifactInfo('reconciliation.json'),
+        ]);
+        return {
+          resolved_symbol: symbol.replace('TWSE:', 'TWSE_DLY:'),
+          snapshot_id: `sha256:${'1'.repeat(64)}`,
+          total_trades: 1,
+          batch_count: 1,
+          artifacts: { report, trades, reconciliation },
+        };
+      },
     },
-    exportStrategySnapshotIntoRun: async (args) => {
-      calls.snapshots.push(args.snapshot);
-      calls.namespaces.push(args.namespace);
-      const manifestPath = `${args.namespace}/manifest.json`;
-      const failed = partial && args.namespace.endsWith('/fast');
-      const summary = {
-        requested: args.snapshot.symbols.length,
-        succeeded: failed ? 1 : args.snapshot.symbols.length,
-        failed: failed ? 1 : 0,
-        skipped: 0,
-      };
-      await args.transaction.replaceJson(manifestPath, {
-        status: failed ? 'partial' : 'succeeded', summary,
-      });
-      for (const symbol of args.snapshot.symbols) {
-        const directory = `${args.namespace}/symbols/${symbol.replace(':', '_')}`;
-        await args.transaction.writeJson(`${directory}/report.json`, { symbol });
-        await args.transaction.writeJson(`${directory}/reconciliation.json`, { success: true });
-        await args.transaction.writeJson(`${directory}/trades.csv`, { format: 'csv' });
-      }
-      return {
-        success: !failed,
-        status: failed ? 'partial' : 'succeeded',
-        summary,
-        artifacts: { manifest: await args.transaction.artifactInfo(manifestPath) },
-        chart_restore: { success: true, restored: true },
-      };
-    },
-    now: () => clock++,
   };
 }
 
 describe('Formal Strategy Run integration', () => {
-  it('publishes canonical artifacts for multiple Parameter Sets using one Snapshot', async () => {
+  it('creates canonical durable artifacts before mutation and succeeds across Experiments', async () => {
     const directory = temporaryDirectory();
     const preflight = formalPreflight(directory);
-    const calls = { sync: [], snapshots: [], namespaces: [] };
+    const calls = { sync: [], attempts: [], events: [] };
     const result = await runStrategyAutomation({
       config_path: '/tmp/run.json', _deps: formalDeps(preflight, calls),
     });
-    assert.equal(result.success, true);
+    assert.equal(result.success, true, JSON.stringify(result, null, 2));
     assert.equal(result.status, 'succeeded');
+    assert.equal(result.durable, true);
+    assert.equal(result.output.atomic, false);
+    assert.equal(result.output.atomic_scope, 'state_file_and_symbol_directory');
+    assert.equal(result.retry_supported, true);
+    assert.equal(result.resume_supported, true);
     assert.equal(calls.sessions, 1);
-    assert.equal(calls.innerSessions, 2);
+    assert.equal(calls.innerSessions, 1);
     assert.deepEqual(calls.sync, [preflight.strategy_sync]);
-    assert.equal(calls.snapshots.length, 2);
-    assert.equal(calls.snapshots[0], preflight._internal.watchlist);
-    assert.equal(calls.snapshots[1], preflight._internal.watchlist);
-    assert.deepEqual(calls.namespaces, ['experiments/baseline', 'experiments/fast']);
+    assert.deepEqual(calls.events.slice(0, 4), [
+      'leases-acquired', 'pane-rechecked', 'store-created', 'strategy-sync',
+    ]);
+    assert.equal(calls.events.at(-1), 'leases-released');
+    assert.equal(calls.attempts.length, 4);
     assert.equal('symbols' in result.watchlist, false);
     assert.equal('symbols' in result.experiments[0], false);
+    assert.equal(JSON.stringify(result).includes('"symbols":'), false);
+    assert.equal(JSON.stringify(result).includes('"trades":'), false);
 
     const root = result.output.path;
+    assert.deepEqual(readdirSync(directory), ['formal-run']);
     assert.equal(existsSync(join(root, 'run.json')), true);
     assert.equal(existsSync(join(root, 'watchlist.json')), true);
     for (const name of ['baseline', 'fast']) {
       assert.equal(existsSync(join(root, 'experiments', name, 'experiment.json')), true);
       assert.equal(existsSync(join(root, 'experiments', name, 'manifest.json')), true);
-      assert.equal(existsSync(join(root, 'experiments', name, 'symbols', 'TWSE_2330', 'report.json')), true);
+      assert.equal(existsSync(join(root, 'experiments', name, 'symbols', 'TWSE_u3A_2330', 'report.json')), true);
     }
     const runArtifact = JSON.parse(readFileSync(join(root, 'run.json'), 'utf8'));
     const watchlistArtifact = JSON.parse(readFileSync(join(root, 'watchlist.json'), 'utf8'));
     assert.equal(runArtifact.status, 'succeeded');
+    assert.equal(runArtifact.schema_version, 2);
+    assert.equal('completed_at' in runArtifact, false);
     assert.deepEqual(watchlistArtifact.symbols, ['TWSE:2330', 'TWSE:2317']);
-    assert.equal(runArtifact.retry_supported, false);
-    assert.equal(runArtifact.resume_supported, false);
   });
 
-  it('publishes a bounded partial result when one Experiment has Symbol failures', async () => {
+  it('marks retry exhaustion failed but continues remaining Symbols and Experiments', async () => {
     const directory = temporaryDirectory();
     const preflight = formalPreflight(directory);
-    const calls = { sync: [], snapshots: [], namespaces: [] };
+    const calls = { sync: [], attempts: [], events: [] };
     const result = await runStrategyAutomation({
       config_path: '/tmp/run.json',
-      _deps: formalDeps(preflight, calls, { partial: true }),
+      _deps: formalDeps(preflight, calls, { failedSymbol: 'baseline:TWSE:2330' }),
     });
     assert.equal(result.success, false);
-    assert.equal(result.status, 'partial');
-    assert.equal(result.summary.experiments_partial, 1);
+    assert.equal(result.status, 'failed');
+    assert.equal(result.summary.experiments_failed, 1);
     assert.equal(result.summary.symbols_failed, 1);
+    assert.equal(calls.attempts.filter((item) => item === 'baseline:TWSE:2330').length, 3);
+    assert.ok(calls.attempts.includes('fast:TWSE:2317'));
     assert.equal(existsSync(join(result.output.path, 'run.json')), true);
   });
 
@@ -367,35 +444,157 @@ describe('Formal Strategy Run integration', () => {
     const preflight = formalPreflight(directory, {
       parameterSets: [{ name: 'baseline', inputs: {} }],
     });
-    const calls = { sync: [], snapshots: [], namespaces: [] };
+    const calls = { sync: [], attempts: [], events: [] };
     const deps = formalDeps(preflight, calls);
     await runStrategyAutomation({ config_path: '/tmp/run.json', _deps: deps });
     await assert.rejects(
       runStrategyAutomation({ config_path: '/tmp/run.json', _deps: deps }),
-      (error) => error.code === 'OUTPUT_ALREADY_EXISTS',
+      (error) => error.code === 'RUN_OUTPUT_EXISTS',
     );
     assert.equal(calls.sync.length, 1);
   });
 
-  it('aborts staging when Parameter execution or restore fails', async () => {
+  it('keeps initialized durable state when Parameter execution or restore fails', async () => {
     const directory = temporaryDirectory();
     const preflight = formalPreflight(directory);
-    const calls = { sync: [], snapshots: [], namespaces: [] };
+    const calls = { sync: [], attempts: [], events: [] };
     const failure = new CoreOperationError('restore failed', {
       code: 'PARAMETER_SET_RESTORE_FAILED', phase: 'parameter_set_restore',
     });
-    await assert.rejects(
-      runStrategyAutomation({
-        config_path: '/tmp/run.json',
-        _deps: formalDeps(preflight, calls, { parameterError: failure }),
+    const result = await runStrategyAutomation({
+      config_path: '/tmp/run.json',
+      _deps: formalDeps(preflight, calls, { parameterError: failure }),
+    });
+    assert.equal(result.success, false);
+    assert.equal(result.error.code, 'PARAMETER_SET_RESTORE_FAILED');
+    assert.equal(existsSync(join(directory, 'formal-run', 'run.json')), true);
+    assert.equal(JSON.parse(readFileSync(join(directory, 'formal-run', 'run.json'))).status, 'failed');
+  });
+
+  it('stops later Symbols on fatal errors and maps CDP failures', async () => {
+    const directory = temporaryDirectory();
+    const preflight = formalPreflight(directory);
+    const calls = { sync: [], attempts: [], events: [] };
+    const result = await runStrategyAutomation({
+      config_path: '/tmp/run.json',
+      _deps: formalDeps(preflight, calls, { fatalSymbol: 'baseline:TWSE:2330' }),
+    });
+    assert.equal(result.success, false);
+    assert.equal(result.failure_kind, 'cdp_connection');
+    assert.deepEqual(calls.attempts, ['baseline:TWSE:2330']);
+  });
+
+  it('resumes the same Run and executes only the previously failed Symbol', async () => {
+    const directory = temporaryDirectory();
+    const preflight = formalPreflight(directory, {
+      parameterSets: [{ name: 'baseline', inputs: {} }],
+    });
+    const initialCalls = { sync: [], attempts: [], events: [] };
+    const initial = await runStrategyAutomation({
+      config_path: '/tmp/run.json',
+      _deps: formalDeps(preflight, initialCalls, { failedSymbol: 'baseline:TWSE:2330' }),
+    });
+    assert.equal(initial.status, 'failed');
+    const local = await loadStrategyResume({ run_directory: initial.output.path });
+    assert.deepEqual(local.plan.experiments[0].selected_indices, [0]);
+
+    const resumeCalls = { sync: [], attempts: [], events: [] };
+    const resumeDeps = formalDeps(preflight, resumeCalls);
+    const identity = {
+      target: { ...preflight._internal.target, resolution: '1D' },
+      strategy: local.artifacts.run.resolved.strategy,
+    };
+    const resumed = await resumeStrategyAutomation({
+      run_directory: initial.output.path,
+      _deps: {
+        withStrategyResumeContext: async (_options, operation) => operation({ local, identity }),
+        withChartSession: resumeDeps.withChartSession,
+        execution: resumeDeps.execution,
+        now: resumeDeps.now,
+      },
+    });
+    assert.equal(resumed.success, true, JSON.stringify(resumed, null, 2));
+    assert.equal(resumed.resumed, true);
+    assert.equal(resumed.run_id, initial.run_id);
+    assert.deepEqual(resumeCalls.attempts, ['baseline:TWSE:2330']);
+  });
+
+  it('completes setup idempotently when the first invocation failed during Strategy sync', async () => {
+    const directory = temporaryDirectory();
+    const preflight = formalPreflight(directory, {
+      parameterSets: [{ name: 'baseline', inputs: {} }],
+    });
+    const initialCalls = { sync: [], attempts: [], events: [] };
+    const initial = await runStrategyAutomation({
+      config_path: '/tmp/run.json',
+      _deps: formalDeps(preflight, initialCalls, {
+        syncError: new CoreOperationError('sync interrupted', {
+          code: 'STRATEGY_SYNC_FAILED', phase: 'strategy_sync',
+        }),
       }),
-      (error) => error.code === 'PARAMETER_SET_RESTORE_FAILED',
-    );
-    assert.deepEqual(readdirSync(directory), []);
+    });
+    assert.equal(initial.status, 'failed');
+    const local = await loadStrategyResume({ run_directory: initial.output.path });
+    assert.equal(local.plan.setup_required, true);
+
+    const resumeCalls = { sync: [], attempts: [], events: [] };
+    const resumeDeps = formalDeps(preflight, resumeCalls);
+    const setupIdentity = {
+      target: { ...preflight._internal.target, resolution: '1D' },
+      pine: { source: preflight._internal.loaded.pine_source },
+      candidate_schema: preflight._internal.candidate.input_schema,
+      current_schema: preflight._internal.current_schema,
+      strategy_sync: preflight.strategy_sync,
+    };
+    const resumed = await resumeStrategyAutomation({
+      run_directory: initial.output.path,
+      _deps: {
+        withStrategyResumeContext: async (_options, operation) => operation({
+          local, identity: setupIdentity,
+        }),
+        executeStrategySync: resumeDeps.executeStrategySync,
+        prepareParameterSetExecution: resumeDeps.prepareParameterSetExecution,
+        withChartSession: resumeDeps.withChartSession,
+        execution: resumeDeps.execution,
+        now: resumeDeps.now,
+      },
+    });
+    assert.equal(resumed.success, true, JSON.stringify(resumed, null, 2));
+    assert.equal(resumed.run_id, initial.run_id);
+    assert.equal(resumeCalls.attempts.length, 2);
+  });
+
+  it('persists RUN_INTERRUPTED after initialization and returns the signal exit code', async () => {
+    const directory = temporaryDirectory();
+    const preflight = formalPreflight(directory, {
+      parameterSets: [{ name: 'baseline', inputs: {} }],
+    });
+    const calls = { sync: [], attempts: [], events: [] };
+    const controller = new AbortController();
+    const reason = new CoreOperationError('SIGINT', { code: 'RUN_INTERRUPTED', phase: 'signal' });
+    reason.exit_code = 130;
+    reason.signal = 'SIGINT';
+    let aborted = false;
+    const result = await runStrategyAutomation({
+      config_path: '/tmp/run.json',
+      signal: controller.signal,
+      _deps: formalDeps(preflight, calls, {
+        onAttempt: async () => {
+          if (!aborted) {
+            aborted = true;
+            controller.abort(reason);
+          }
+        },
+      }),
+    });
+    assert.equal(result.status, 'failed');
+    assert.equal(result.error.code, 'RUN_INTERRUPTED');
+    assert.equal(result.exit_code, 130);
+    assert.equal(calls.events.at(-1), 'leases-released');
   });
 
   it('returns failed preflight diagnostics without mutation or artifacts', async () => {
-    const calls = { sync: 0, transaction: 0 };
+    const calls = { sync: 0, leases: 0 };
     const result = await runStrategyAutomation({
       config_path: '/tmp/missing.json',
       _deps: {
@@ -404,13 +603,13 @@ describe('Formal Strategy Run integration', () => {
           errors: [{ code: 'RUN_CONFIG_INVALID', message: 'invalid' }], warnings: [],
         }),
         executeStrategySync: async () => { calls.sync += 1; },
-        createArtifactSetTransaction: async () => { calls.transaction += 1; },
+        acquireLeases: async () => { calls.leases += 1; },
       },
     });
     assert.equal(result.success, false);
     assert.equal(result.dry_run, false);
     assert.equal(result.phase, 'preflight');
     assert.equal(calls.sync, 0);
-    assert.equal(calls.transaction, 0);
+    assert.equal(calls.leases, 0);
   });
 });

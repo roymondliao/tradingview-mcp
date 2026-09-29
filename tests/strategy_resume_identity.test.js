@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import {
   loadStrategyResume,
   resolveStrategyResumeIdentity,
+  resolveStrategyResumeSetup,
 } from '../src/core/strategy-resume.js';
 import { effectiveInputsFingerprint } from '../src/core/strategy-parameter-sets.js';
 import {
@@ -110,6 +111,23 @@ function identityDependencies(fixture, overrides = {}) {
 }
 
 describe('Strategy Resume stable identity rebind', () => {
+  it('resolves an idempotent Strategy sync plan for an initialization-only Run', async () => {
+    const fixture = await createResumeFixture({ root: temporaryDirectory() });
+    const { strategy: _strategy, ...resolved } = fixture.run.resolved;
+    const setupRun = { ...fixture.run, resolved };
+    delete setupRun.base_inputs;
+    delete setupRun.base_inputs_fingerprint;
+    delete setupRun.planned_experiments;
+    await fixture.store.replaceRun(setupRun);
+    const local = await loadStrategyResume({ run_directory: fixture.store.run_path });
+    assert.equal(local.plan.setup_required, true);
+    const runtime = identityDependencies(fixture);
+    const setup = await resolveStrategyResumeSetup({ local, _deps: runtime.deps });
+    assert.equal(setup.strategy_sync.account_action, 'reuse');
+    assert.equal(setup.strategy_sync.pane_action, 'reuse');
+    assert.equal(setup.target.target_id, 'new-target');
+  });
+
   it('rebinds volatile target, tab, entity, Symbol, and timeframe IDs', async () => {
     const fixture = await createResumeFixture({ root: temporaryDirectory() });
     const local = await loadStrategyResume({ run_directory: fixture.store.run_path });

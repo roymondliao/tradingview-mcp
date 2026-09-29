@@ -1,7 +1,7 @@
 ---
 id: TASK-006
 title: Run and Resume Orchestration, CLI, and Signals
-status: todo
+status: done
 phase: strategy-durable-export-recovery
 depends_on:
   - TASK-001
@@ -132,15 +132,36 @@ npm run tv -- strategy resume --run-directory <path>
 
 ## Acceptance criteria
 
-- [ ] Formal Run no longer creates randomroot staging。
-- [ ] EveryTradingView mutation happens afterinitial durable artifacts andlease acquisition。
-- [ ] Resume is an explicit separateCLI and Core module。
-- [ ] SameRun ID andexisting succeeded artifacts are preserved acrossResume。
-- [ ] Formal Run public statuses are onlyrunning／succeeded／failed。
-- [ ] Firstsignal performsbounded graceful handling；second signal hasdocumented abrupt semantics。
-- [ ] No catch path deletes avalid initialized Run Directory。
-- [ ] Targeted tests、full unit suite、lint and`git diff --check`pass。
+- [x] Formal Run no longer creates randomroot staging。
+- [x] EveryTradingView mutation happens afterinitial durable artifacts andlease acquisition。
+- [x] Resume is an explicit separateCLI and Core module。
+- [x] SameRun ID andexisting succeeded artifacts are preserved acrossResume。
+- [x] Formal Run public statuses are onlyrunning／succeeded／failed。
+- [x] Firstsignal performsbounded graceful handling；second signal hasdocumented abrupt semantics。
+- [x] No catch path deletes avalid initialized Run Directory。
+- [x] Targeted tests、full unit suite、lint and`git diff --check`pass。
 
 ## Completion record
 
-Not started.
+Completed on 2026-09-29.
+
+Implementation：
+
+- Replaced formal `strategy run` root staging transaction with direct schema-v2 durable Run Directory creation after read-only preflight、Run／Pane leases、collision recheck and pinned Pane validation。
+- Persisted initial `run.json`／`watchlist.json` before Strategy sync mutation；then persisted resolved Strategy、Base Inputs and every deterministic Experiment plan before Parameter mutation。
+- Added shared durable Experiment execution for new Run and Resume, using manifest-selected Symbols、fresh fixed retry budgets、attempt-owned atomic artifacts and per-Symbol Chart restoration。
+- Added terminal Run finalization derived from all authoritative manifests；formal statuses are now only `succeeded` or `failed`, with bounded sanitized Run errors and no completed timestamps。
+- Added `resumeStrategyAutomation()` over TASK-005 ownership／identity validation, preserving the same Run ID and directory while skipping succeeded Symbols／Experiments。
+- Added idempotent setup recovery for crashes before or immediately after Strategy sync, while partial persisted plan sets remain artifact corruption。
+- Added public `strategy resume --run-directory <path>` with no Config、output or retry override surface；`strategy run` collision remains a hard `RUN_OUTPUT_EXISTS` failure and never auto-resumes。
+- Added formal Run／Resume signal wrapper：first SIGINT／SIGTERM aborts gracefully for restore／state finalization and returns 130／143；a repeated signal uses immediate hard-exit semantics。
+- Router now honors structured 130／143 exit codes while retaining normal 0／1／2 behavior and CDP failure mapping。
+- Existing `strategy trading-export` single-Symbol／Active Watchlist paths remain on legacy V1 atomic publication behavior。
+
+Validation：
+
+- Node 22 targeted Run／Resume／durable／legacy-export／CLI set：148 tests passed。
+- Node 24 targeted Run／Resume／durable／legacy-export／CLI set：148 tests passed。
+- Node 22 full unit suite：633 tests passed，0 failed。
+- ESLint：0 errors；repository仍有3個pre-existing unused-variable warnings outside thisTask。
+- `git diff --check`passed。

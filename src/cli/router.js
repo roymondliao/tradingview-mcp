@@ -13,6 +13,7 @@ export function register(name, config) {
 }
 
 export function resultExitCode(result) {
+  if ([130, 143].includes(result?.exit_code)) return result.exit_code;
   if (result?.success !== false) return 0;
   return result.failure_kind === 'cdp_connection' ? 2 : 1;
 }
@@ -171,7 +172,12 @@ function handleError(err) {
     ...(err.timeout_ms !== undefined && { timeout_ms: err.timeout_ms }),
     ...(err.target_id && { target_id: err.target_id }),
     ...(err.chart_id && { chart_id: err.chart_id }),
+    ...([130, 143].includes(err.exit_code) && { exit_code: err.exit_code }),
   };
+  if ([130, 143].includes(err.exit_code)) {
+    console.error(JSON.stringify(payload, null, 2));
+    process.exit(err.exit_code);
+  }
   // Connection failures get exit code 2
   if (String(err.code || '').startsWith('CDP_') || /CDP|connection|ECONNREFUSED|not running/i.test(message)) {
     console.error(JSON.stringify(payload, null, 2));
