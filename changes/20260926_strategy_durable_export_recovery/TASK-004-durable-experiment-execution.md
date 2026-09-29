@@ -1,7 +1,7 @@
 ---
 id: TASK-004
 title: Durable Experiment and Parameter Set Execution
-status: todo
+status: done
 phase: strategy-durable-export-recovery
 depends_on:
   - TASK-001
@@ -96,14 +96,32 @@ scope: experiment-execution
 
 ## Acceptance criteria
 
-- [ ] Base Inputs and allExperiment plans can becommitted before first Parameter mutation。
-- [ ] Manifest is updated after every Symbol transition and is the onlySymbol status source。
-- [ ] Experiment success requires every requested Symbol success。
-- [ ] Resume can execute an arbitraryordered subset without rerunning succeeded Symbols。
-- [ ] Every invocation attempts final Base Inputs restore。
-- [ ] Compatibility wrapper preserves current non-durable callers，直到 TASK-006 switches formal Run。
-- [ ] Targeted tests、full unit suite、lint and`git diff --check`pass。
+- [x] Base Inputs and allExperiment plans can becommitted before first Parameter mutation。
+- [x] Manifest is updated after every Symbol transition and is the onlySymbol status source。
+- [x] Experiment success requires every requested Symbol success。
+- [x] Resume can execute an arbitraryordered subset without rerunning succeeded Symbols。
+- [x] Every invocation attempts final Base Inputs restore。
+- [x] Compatibility wrapper preserves current non-durable callers，直到 TASK-006 switches formal Run。
+- [x] Targeted tests、full unit suite、lint and`git diff --check`pass。
 
 ## Completion record
 
-Not started.
+Completed on 2026-09-29.
+
+Implementation：
+
+- Split Parameter Set execution into Base capture／persistable plan preparation、ordered selected-plan execution、strict persisted-input validation and Base restore seams。
+- Experiment identity hashes now include durable artifact schema version 2；legacy callback artifacts remain schema version 1 for compatibility until TASK-006 switches formal Run。
+- Added a pre-mutation durable Experiment preparation phase that exclusive-creates／validates `experiment.json` and creates／loads the authoritative `manifest.json` before Effective Inputs are applied。
+- Added manifest-driven Symbol execution over TASK-003 retry／atomic-attempt primitives；succeeded Symbols are never dispatched, exhausted Symbols do not stop later Symbols, and fatal errors stop new work。
+- Terminal Experiment status is derived from the complete frozen Watchlist summary and becomes `succeeded` only when every requested Symbol succeeded。
+- Resume-style selected execution accepts current Base or any persisted Effective Inputs fingerprint, restores Base before work, rejects arbitrary external drift and always attempts final Base restore after ownership validation。
+- Existing `executeParameterSets()` remains a compatibility wrapper over the new preparation and selected-execution seams。
+
+Validation：
+
+- Node 22 targeted durable／parameter／state／artifact／retry set：63 tests passed。
+- Node 24 targeted durable／parameter／state／artifact／retry set：63 tests passed。
+- Node 22 full unit suite：608 tests passed，0 failed。
+- ESLint：0 errors；repository仍有3個pre-existing unused-variable warnings outside thisTask。
+- `git diff --check`passed。

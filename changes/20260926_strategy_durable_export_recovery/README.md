@@ -252,11 +252,11 @@ Artifact v2 state + durable store
 | [TASK-001](./TASK-001-durable-contract-state-model.md) | Artifact v2 State Model and Durable Run Store | `done` | Strategy Automation Run V1 |
 | [TASK-002](./TASK-002-run-pane-leases.md) | Cross-process Run and Pane Leases | `done` | TASK-001 |
 | [TASK-003](./TASK-003-symbol-retry-atomic-attempt.md) | Symbol Retry Classifier and Atomic Attempt Export | `done` | TASK-001 |
-| [TASK-004](./TASK-004-durable-experiment-execution.md) | Durable Experiment and Parameter Set Execution | `todo` | TASK-001, TASK-003 |
+| [TASK-004](./TASK-004-durable-experiment-execution.md) | Durable Experiment and Parameter Set Execution | `done` | TASK-001, TASK-003 |
 | [TASK-005](./TASK-005-resume-planning-identity.md) | Resume Loader, Planning, and Identity Rebind | `todo` | TASK-001, TASK-002, TASK-004 |
 | [TASK-006](./TASK-006-run-resume-cli-integration.md) | Run／Resume Orchestration, CLI, and Signals | `todo` | TASK-001～005 |
 | [TASK-007](./TASK-007-regression-benchmark-live-gate.md) | Regression, Benchmark, and Live Delivery Gate | `todo` | TASK-001～006 |
 
 ## Completion record
 
-LLD與implementation task split已完成。TASK-001 artifact v2 state／durable store、TASK-002 Run／Pane leases及TASK-003 Symbol retry／atomic attempt已完成；TASK-004～007尚未開始。D-014量化threshold將由TASK-007 prototype evidence補齊。
+LLD與implementation task split已完成。TASK-001 artifact v2 state／durable store、TASK-002 Run／Pane leases、TASK-003 Symbol retry／atomic attempt及TASK-004 durable Experiment／Parameter Set execution已完成；TASK-005～007尚未開始。D-014量化threshold將由TASK-007 prototype evidence補齊。
