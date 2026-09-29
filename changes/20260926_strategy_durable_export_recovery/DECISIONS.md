@@ -1,28 +1,28 @@
 # Strategy Durable Export Recovery — Design Decisions
 
-Status: `discussion`
+Status: `approved`
 
-本文件追蹤會改變 public contract、artifact recoverability 或 safety boundary 的設計決策。`accepted` 可作為後續 implementation contract；`open` 仍不得在 Task 或 LLD 中寫成已確認行為。
+本文件追蹤會改變 public contract、artifact recoverability 或 safety boundary 的設計決策。`accepted` 是後續 implementation contract；`evidence_pending` 表示設計已固定，但量化門檻需由實測補齊。
 
 ## Decision register
 
 | ID | Topic | Status | Decision |
 | --- | --- | --- | --- |
 | D-001 | Durable Run Directory lifecycle | `accepted` | Preflight 後直接 exclusive-create canonical Run Directory；不再使用 random run-level staging。 |
-| D-002 | Artifact schema version and migration | `open` | 待決定新 schema version、V1 Resume policy 與 unknown version behavior。 |
+| D-002 | Artifact schema version and migration | `accepted` | Formal Run artifacts升級為v2；Config維持v1；V1／unknown artifacts不可Resume且不做migration。 |
 | D-003 | Durable identity and minimal state model | `accepted` | `run.json` 管 Run；Experiment `manifest.json` 管 Symbols；採最小狀態集合。 |
 | D-004 | Per-Symbol atomic publish and commit ordering | `accepted` | Attempt-owned sibling staging → atomic rename → callback atomic-update manifest。 |
 | D-005 | Manifest durability and progress source | `accepted` | 沿用現有 manifest；不新增 progress／checkpoint／result files。 |
 | D-006 | Fixed retry policy | `accepted` | Code constants：每 invocation 最多 3 attempts，delays 為 1s、2s；User 不可設定。 |
-| D-007 | Retry classifier and attempt semantics | `open` | Fresh workflow、new Resume budget 與不保存 `retryable` 已確認；classifier allowlist／CDP reconnect 尚待決定。 |
-| D-008 | Resume identity validation and rebind | `open` | Required identity 已列出；stable／volatile runtime identity 與 Desktop restart rebind 尚待決定。 |
+| D-007 | Retry classifier and attempt semantics | `accepted` | Stable code allowlist；CDP／identity／artifact errors abort invocation，交由明確Resume rebind。 |
+| D-008 | Resume identity validation and rebind | `accepted` | Stable Layout／Pane／Strategy／Inputs／Watchlist identity必須相同；target/tab/entity等runtime IDs可受控rebind。 |
 | D-009 | Same-run Resume lifecycle | `accepted` | Resume 原地沿用同一 Run ID，只執行非 `succeeded` Symbols，不建立 continuation run。 |
 | D-010 | `strategy resume` CLI and errors | `accepted` | Resume 是獨立 Core module／CLI，Run 不自動 Resume。 |
-| D-011 | SIGINT／SIGTERM and abrupt crash semantics | `open` | 待決定 grace period、restore timeout、repeated signal 與 exit code。 |
-| D-012 | Cross-process Run／Pane lease | `open` | 待決定 lock key、location、heartbeat 與 safe stale reclaim。 |
-| D-013 | Stale attempt staging cleanup | `open` | 待決定 cleanup timing、ownership proof 與 cleanup failure behavior。 |
-| D-014 | Benchmark and live acceptance thresholds | `open` | Fixture 與 test shape 已確認；量化 threshold 待 prototype evidence。 |
-| D-015 | Optional `strategy status` command | `open` | 是否需要獨立 local read-only status command 尚未決定，不阻擋 Resume contract。 |
+| D-011 | SIGINT／SIGTERM and abrupt crash semantics | `accepted` | First signal graceful abort/restore；second signal immediate exit；hard crash由下次Resume恢復。 |
+| D-012 | Cross-process Run／Pane lease | `accepted` | OS temp lock directories、stable hashed keys、PID liveness與token-checked reclaim/release。 |
+| D-013 | Stale attempt staging cleanup | `accepted` | 持有Run lease後，只清除非succeeded Symbol可證明ownership的staging／uncommitted final directory。 |
+| D-014 | Benchmark and live acceptance thresholds | `evidence_pending` | 652 × 3 shape已確認；量化threshold由filesystem prototype baseline決定。 |
+| D-015 | Optional `strategy status` command | `accepted` | 本Change不實作；未來如有操作需求再以相同local reader另開Change。 |
 
 ## Accepted decisions
 
@@ -136,7 +136,7 @@ Rejected alternatives:
 
 Compatibility impact:
 
-- V1 `partial` terminal state 不延續到新 durable schema；migration behavior 由 D-002 決定。
+- V1 `partial` terminal state不延續到artifact v2，且不提供migration／Resume。
 - Existing field migration 與 schema version 仍待定。
 
 Failure behavior:
@@ -322,7 +322,7 @@ Rejected alternatives:
 Compatibility impact:
 
 - Existing run collision 仍由 `strategy run` 保護。
-- V1 terminal `partial` 是否可轉換為新 schema 後 Resume，由 D-002 決定。
+- V1 terminal `partial`不可轉換或Resume；artifact v2才支援same-run Resume。
 
 Failure behavior:
 
@@ -372,7 +372,7 @@ Rejected alternatives:
 Compatibility impact:
 
 - 新增 CLI surface，不改變既有 `strategy run` flags。
-- Bounded response／exit-code mapping 仍需在 implementation LLD 固定，但 error meaning 已定案。
+- Bounded response與normal exit codes 0／1／2保持；graceful SIGINT／SIGTERM使用130／143，詳見LLD。
 
 Failure behavior:
 
@@ -385,108 +385,244 @@ Required tests:
 - Core／CLI separation、bounded stdout 與 exit code tests。
 - Local invalid artifact path 不建立 CDP session。
 
-## Open decisions
+## Additional accepted decisions
 
 ### D-002 Artifact schema version and migration
 
-需要決定：
+Decision:
 
-- Durable Run／Experiment／Manifest 是否共用單一 artifact schema version。
-- V1 completed artifacts 是否只可 inspect、不可 Resume。
-- V1 `partial`／`succeeded` artifacts 是否需要 migration tool 或 structured unsupported response。
-- Unknown future schema 如何拒絕，且不能被 current writer 修改。
+- Run Config維持`schema_version: 1`。
+- Formal Strategy Run的`run.json`、`experiment.json`與Experiment `manifest.json`升級為artifact schema version `2`。
+- Trading Report／Data／Snapshot／Reconciliation維持既有schema versions。
+- Resume只接受完整v2 artifacts；V1與unknown future version回傳`RUN_RESUME_VERSION_UNSUPPORTED`。
+- 本Change不提供V1 migration或in-place rewrite。
+
+Rationale:
+
+V1有terminal-only root publication、`partial`與`completed_at`，無法證明中途manifest是正式commit。將其解讀為durable state會產生false success／skip風險。
+
+Rejected alternatives:
+
+- 在schema v1內改變status與durability semantics：Reader無法區分舊、新contract。
+- 自動migrate V1 partial run：沒有足夠evidence判斷哪些Symbol artifacts已正式commit。
+
+Compatibility impact:
+
+- Existing V1 artifacts仍保留且可人工讀取，但不可Resume。
+- Existing `strategy trading-export`繼續產生其V1 artifacts，不受formal Run v2影響。
+
+Failure behavior:
+
+- Unsupported version在任何Desktop connection／artifact mutation前拒絕。
+
+Required tests:
+
+- V1、v2與unknown version loader tests。
+- Resume不得改寫unsupported artifacts。
 
 ### D-007 Retry classifier and attempt semantics
 
-已確認：
+Decision:
 
-- 不依賴 persisted `retryable` boolean。
-- 每次 attempt 重新執行完整 Report A → Data offset 0 → Report B → reconciliation workflow。
-- Resume 對未成功 Symbol 取得新 budget，`attempt_count` 累積。
+- Classifier固定回傳`retry_symbol|fail_symbol|abort_run`，使用stable error-code allowlist。
+- Runtime calculation、switch、snapshot、pagination與reconciliation transient errors可retry。
+- Invalid Symbol request不retry但可繼續其他Symbols。
+- `CDP_*`、Pane／Inputs／Strategy identity drift、restore、schema、artifact I/O與unknown errors abort本invocation。
+- CDP connection module既有bounded reconnect先執行；若仍失敗，不在durable Symbol attempt內切換active target，交由明確Resume re-resolve。
+- Backoff可由AbortSignal取消。
 
-尚待決定：
+完整allowlist見[`LLD.md`](./LLD.md#classifier)。
 
-- Stable retryable error-code allowlist。
-- 哪些 error 必須立即 fail Symbol，哪些必須 abort 整個 Run。
-- CDP reconnect／session repair 是同一 attempt 的 repair，或消耗下一 attempt。
-- Backoff 期間 SIGINT／SIGTERM 如何 cancel。
+Rationale:
+
+只有完整fresh Symbol workflow能安全retry。Connection／identity／storage失效時繼續下一Symbol可能污染更多artifacts，因此採conservative abort。
+
+Rejected alternatives:
+
+- 依賴error的`retryable`boolean：既有fields不構成stable public policy。
+- 所有errors都retry：會重複不可恢復的schema、identity或disk failures。
+- Durable layer在同一attempt自動選擇另一個CDP target：可能控制錯誤Layout／Pane。
+
+Compatibility impact:
+
+- Existing errors可保留`retryable`給legacy callers，但durable executor不讀取。
+- Production retry constants與classifier不接受Config／CLI override。
+
+Failure behavior:
+
+- Retry exhaustion把Symbol標為`failed`並繼續下一Symbol。
+- `abort_run` 把 current Symbol 與 Run 標為 failed，停止新 mutation 並進入 restore。
+
+Required tests:
+
+- 每個allowlist code與unknown default的table-driven tests。
+- Fresh attempts、cancelable backoff、new Resume budget與cumulative attempt count。
 
 ### D-008 Resume identity validation and rebind
 
-Required persisted identity 至少包含：
+Decision:
 
-- Config／artifact schema version及 content hash。
-- Pine source hash、Saved Script ID／version。
-- Layout／Pane／timeframe 與 Strategy ownership。
-- Base／effective Inputs fingerprints。
-- Watchlist Snapshot ID、ordered fingerprint 與 ordered Symbols。
-- Parameter Set names、requested Inputs 與 experiment fingerprints。
+Stable fields必須相同：artifact/persisted config identity、Pine source hash、Saved Layout identity、Pane selector、Saved Strategy script/version/source、Candidate schema、Base／effective Input plans、Watchlist Snapshot與Parameter Set／Experiment fingerprints。Resume以`run.json.requested`為執行來源，不要求原Config file仍存在或未修改；config path/hash只作audit。
 
-尚待決定：
+以下runtime fields可rebind：`target_id`、`tab_index`、CDP session與Pane `entity_id`。Entity只可在同一resolved Pane有恰好一個matching `script_id + version` Strategy且Input schema一致時rebind。Current Symbol／timeframe成為本次Resume restore baseline。
 
-- 哪些 runtime IDs 是 stable identity，變動即拒絕。
-- Desktop restart 後哪些 target／session IDs 可安全 re-resolve，但仍須驗證同一 Layout／Pane／Strategy。
-- Resume 開始前是否強制恢復 base Symbol／Inputs，或由第一個待執行 Experiment 建立 context。
+Current Inputs values只接受persisted Base或任一planned effective fingerprint；其他值視為external drift並拒絕Resume。Resume開始selected experiments前先restore persisted Base Inputs。
+
+Rationale:
+
+Desktop restart必然可能改變renderer target與entity IDs；將它們視為stable會使crash recovery失去作用。但Saved Layout、Pane、Strategy與Inputs intent不能漂移。
+
+Rejected alternatives:
+
+- 所有runtime IDs都必須相同：Desktop restart後無法Resume。
+- 只按Layout name／Pane index繼續：不足以證明Strategy、source與Inputs ownership。
+- 無條件把current Inputs改回Base：可能覆寫User在crash後的手動修改。
+
+Compatibility impact:
+
+- V2 artifacts需persist完整Base Inputs與planned Experiment identities。
+
+Failure behavior:
+
+- Stable mismatch回傳`RUN_RESUME_IDENTITY_MISMATCH`，不修改Chart或artifacts。
+
+Required tests:
+
+- 每個stable field drift rejection。
+- target／tab／entity rebind acceptance。
+- Base／planned Inputs acceptance與arbitrary Inputs rejection。
 
 ### D-011 Signal and crash semantics
 
-需要決定：
+Decision:
 
-- SIGINT／SIGTERM graceful restore 的 grace period與 timeout。
-- Repeated signal 是否立即退出。
-- Signal during retry backoff／artifact commit 的 ordering。
-- Graceful interruption 的 exit code 與 `run.json` 最終 status。
-- SIGKILL／process crash／power loss 由下一次 Resume 如何報告。
+- CLI建立AbortController；Core接收signal，不自行註冊global process handlers。
+- First SIGINT／SIGTERM不開始新attempt，立即cancel backoff，等待current bounded phase後restore Chart／Base Inputs，將Run標為`failed`與`RUN_INTERRUPTED`，release leases。
+- Graceful exit codes為SIGINT `130`、SIGTERM `143`。
+- Second signal立即exit，不再保證cleanup。
+- SIGKILL／crash／power loss不保證state update；下次Resume使用最後atomic state與stale lease rules。
+
+Rationale:
+
+Detached cancellation可能讓CDP mutation在Core已release lease後繼續；因此current phase應依既有timeoutbounded完成，再restore。
+
+Rejected alternatives:
+
+- 第一個signal立即`process.exit()`：失去可達成的restore與state commit。
+- 無限等待restore：CLI可能永遠無法停止。
+
+Compatibility impact:
+
+- CLI router需支援structured 130／143 exit code；normal 0／1／2不變。
+
+Failure behavior:
+
+- Restore失敗沿用`CHART_RESTORE_FAILED`並保留可Resume state。
+
+Required tests:
+
+- Signal during backoff、Symbol phase、manifest commit與restore。
+- Second signal simulated abrupt exit recovery。
 
 ### D-012 Cross-process Run／Pane lease
 
-需要決定：
+Decision:
 
-- Run lock 與 Pane lock 是否分開，及 acquisition ordering。
-- Pane lock identity 應使用哪些 stable fields，而不是 volatile CDP target ID。
-- Lock location、atomic acquisition、PID／process-start metadata 與 heartbeat。
-- 不只依賴 mtime 的 stale-owner validation／reclaim。
-- 第二個 process 應立即拒絕或 bounded wait。
+- 分開Run lease與Pane lease，固定 acquisition order Run → Pane、release order Pane → Run。
+- Lease位於`os.tmpdir()/tradingview-mcp/strategy-leases`。
+- Run key由canonical absolute Run Directory hash建立；New Run以nearest existing ancestor realpath加validated missing segments計算，Resume使用既有Run Directory realpath。Pane key由`stable layout ID + pane ID/index` hash建立。
+- Atomic `mkdir`取得lease；owner metadata保存random token、PID、process start、Run、stable key、acquired／heartbeat time。
+- Stale reclaim只在PID liveness回傳`ESRCH`時進行；`EPERM`視為live。不得只依mtime／heartbeat刪除。
+- Release必須比對owner token。
+
+Rationale:
+
+現有`chartMutationMutex`只保護同一process。OS temp lease可跨CLI processes，stable key又能跨Desktop renderer restart。
+
+Rejected alternatives:
+
+- 只使用Run Directory lock：不同Runs仍可同時控制同一Pane。
+- 只使用Pane lock：同一Run可被兩個Resume processes改寫。
+- 只依mtime reclaim：slow operation可能被誤判stale。
+
+Compatibility impact:
+
+- Formal Run／Resume新增lock errors；legacy commands暫不納入cross-process lease。
+
+Failure behavior:
+
+- Live／無法安全判定的owner回傳`RUN_ALREADY_ACTIVE`，不等待。
+
+Required tests:
+
+- Duplicate Run、different Run same Pane、dead PID reclaim、PID live拒絕、token mismatch release。
 
 ### D-013 Stale attempt staging cleanup
 
-需要決定：
+Decision:
 
-- Resume 在 planning 前、Experiment start 前或 Symbol start 前 cleanup。
-- 如何證明 staging／uncommitted final folder 屬於同一 logical Symbol attempt。
-- Cleanup failure 是 fail Symbol、fail Experiment 或 abort Run。
-- `strategy status` 若實作，是否只報告、不執行 cleanup。
+- Cleanup在每個non-succeeded Symbol attempt開始前執行。
+- 必須已持有Run lease，並驗證path containment、Experiment name、safe Symbol segment與manifest status。
+- 可清除該Symbol的matching staging directories及manifest未標示`succeeded`的final directory。
+- Manifest已`succeeded`時禁止cleanup；artifacts不完整則回報corruption。
+- Cleanup failure屬local artifact fatal error，abort本invocation。
+
+Rationale:
+
+Manifest callback是commit point；rename後callback前的final folder仍是uncommitted attempt，必須重跑而不是推測成功。
+
+Rejected alternatives:
+
+- Resume planning時glob刪除整個Run的staging：ownership scope過大。
+- Folder存在即修復manifest為success：沒有證據證明callback前所有validation完成。
+
+Compatibility impact:
+
+- Attempt staging naming成為internal recovery contract，不是public success evidence。
+
+Failure behavior:
+
+- 無法證明ownership或無法刪除時回傳`RUN_RESUME_ARTIFACT_INVALID`／artifact I/O error。
+
+Required tests:
+
+- Staging-only、rename-before-callback、succeeded-final、path escape與cleanup I/O failures。
 
 ### D-014 Benchmark and live acceptance
 
-已確認：
+Decision status: `evidence_pending`
 
-- Synthetic：652 Symbols × 至少 3 Parameter Sets，涵蓋 manifest atomic replacement、attempt staging、rename 與 final audit。
-- Controlled live：小型 `dev-testing-list` retry、crash／interrupt 與 Resume scenarios。
-- Capacity：exact-name `stock_all_list` expected 652；Durable 完成後執行單一 baseline 652-Symbol endurance run。
-- Existing 448 × 3 result 作為 multi-Parameter-Set live evidence。
+Test shape已定案：
 
-尚待 prototype 量測後決定 time、memory、disk、manifest size 與 Resume planning latency thresholds。
+- Synthetic 652 Symbols × 3 Parameter Sets。
+- Controlled live retry／crash／Resume scenarios。
+- Exact-name`stock_all_list` expected 652的single-baseline endurance Run。
+- Existing 448 × 3 result保留為multi-Parameter-Set live evidence。
+
+量化time、memory、disk、manifest size與Resume planning thresholds必須先由filesystem prototype量測baseline，再更新本項；這是delivery evidence，不阻擋module implementation。
 
 ### D-015 Optional `strategy status` command
 
-`strategy resume` 已定案，不依賴 status command。需另外決定是否值得提供：
-
-```bash
-npm run tv -- strategy status --run-directory <output>/<run-id>
-```
-
-若實作，必須完全 local read-only、bounded，且不得 cleanup、連接 Desktop 或改寫 artifacts。
-
-## Decision record template
-
-每個 Open decision 定案時補齊：
-
-```text
 Decision:
+
+本Change不新增public`strategy status`。Resume loader仍提供pure local read／summary functions供tests與未來重用；若實際操作證明需要status CLI，再另開Change。
+
 Rationale:
+
+目前`run.json`與manifests已可直接inspect；status不是Retry／Resume correctness的必要依賴。
+
 Rejected alternatives:
+
+- 與Resume一起增加CLI：擴大surface與測試範圍，沒有目前manual workflow需求證據。
+
 Compatibility impact:
+
+- 無public command變更；未來可向後相容新增。
+
 Failure behavior:
+
+- 不適用。
+
 Required tests:
-```
+
+- Local reader保持無CDP依賴，供Resume與未來status重用。

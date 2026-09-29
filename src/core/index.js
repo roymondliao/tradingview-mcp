@@ -20,6 +20,8 @@ export * as studies from './studies.js';
 export * as strategy from './strategy.js';
 export * as strategyRun from './strategy-run.js';
 export * as strategyRunConfig from './strategy-run-config.js';
+export * as strategyRunState from './strategy-run-state.js';
+export * as strategyRunArtifacts from './strategy-run-artifacts.js';
 export * as strategyRunResolver from './strategy-run-resolver.js';
 export * as strategyParameterSets from './strategy-parameter-sets.js';
 export * as strategySync from './strategy-sync.js';

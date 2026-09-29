@@ -1,7 +1,7 @@
 ---
 id: FEATURE-20260926-STRATEGY-DURABLE-EXPORT-RECOVERY
 title: Strategy Durable Export Recovery
-status: discussion
+status: planned
 created: 2026-09-26
 depends_on:
   - FEATURE-20260915-STRATEGY-AUTOMATION-RUN
@@ -14,13 +14,15 @@ scope:
 
 # Strategy Durable Export Recovery
 
-Status: `discussion`
+Status: `planned`
 
 ## Objective
 
 讓現有 `strategy run --config` 在大型 Named Watchlist 與多組 Parameter Sets 的長時間執行中，將每個 Experiment／Symbol 的執行狀態與成功 artifacts 即時保存到正式 Run Directory。當單一 Symbol 發生暫時性錯誤時，系統會以固定、有限的 retry policy 重試；當 CLI process、TradingView Desktop 或機器中斷後，User 可透過獨立的 `strategy resume` command，沿用原本的 `run_id`，只執行尚未成功的 Symbols。
 
 本 Change 延續 [`20260915_strategy_automation_run`](../20260915_strategy_automation_run/README.md) 已完成的 Run Config、Strategy Sync、Parameter Sets、Named Watchlist Snapshot、Trading Report／Data normalization 與 reconciliation，不重新設計已足夠的 artifact structure。
+
+Implementation architecture與module-level contract見[`LLD.md`](./LLD.md)；decision rationale見[`DECISIONS.md`](./DECISIONS.md)。
 
 ## Confirmed design baseline
 
@@ -45,6 +47,8 @@ Status: `discussion`
 - 每個 Experiment 的 `manifest.json` 是該 Experiment／Symbols 執行狀態的 authoritative source。
 - Symbol folder 是否存在，不可用來判斷該 Symbol 是否成功。
 - Dry-run 維持 read-only，不建立任何 Run artifacts。
+- Formal Run artifacts升級為schema version 2；Run Config仍維持schema version 1。
+- Existing `strategy trading-export` artifacts保留V1 behavior，不在本Change加入Resume。
 
 ### Direct durable Run Directory
 
@@ -212,31 +216,19 @@ Execution／restore 階段不建立重複 error code，沿用既有 `PANE_CONTEX
 - Named Watchlist capacity fixture 使用 exact-name `stock_all_list`，目前 expected count 為 652。
 - Durable Recovery 完成後只需以單一 baseline Parameter Set 執行 652-Symbol live endurance run；不重複執行 652 × 3。
 
-## Remaining design decisions
+## Design status
 
-以下項目仍待討論，不視為已定案：
-
-- Artifact schema version 與 V1 artifact migration／Resume policy。
-- Retry classifier allowlist 與 CDP reconnect 是否消耗 attempt。
-- TradingView Desktop restart 後 stable／volatile identity 的 rebind rules。
-- SIGINT／SIGTERM 的 grace period、restore timeout 與 repeated signal behavior。
-- Cross-process lock key、location、heartbeat 與 safe stale reclaim。
-- Stale attempt staging 的 cleanup timing 與 failure behavior。
-- Synthetic benchmark 與 live acceptance 的量化 thresholds。
-- 是否需要獨立的 local read-only `strategy status` command；此項不阻擋已確認的 Resume design。
-
-詳細狀態記錄於 [`DECISIONS.md`](./DECISIONS.md)。
+Artifact v2、retry classifier、identity rebind、signal handling、cross-process leases、stale attempt cleanup與不實作`strategy status`皆已定案。唯一仍為`evidence_pending`的是D-014量化benchmark thresholds：先由652 × 3 filesystem prototype取得baseline，再把實測threshold補回[`DECISIONS.md`](./DECISIONS.md)。此項不阻擋module implementation。
 
 ## Delivery sequence
 
 ```text
-Finalize remaining contract decisions
-  → artifact schema and atomic state writer
-  → shared retry executor
-  → resume planner and identity validation
-  → signals / cross-process lock / cleanup
-  → Strategy Run integration
-  → regression / benchmark / live gate
+Artifact v2 state + durable store
+  → lease and retry/atomic Symbol foundations
+  → durable Experiment + Parameter Set seams
+  → Resume loader/planner/identity rebind
+  → Run + Resume orchestration/CLI/signals
+  → regression/benchmark/controlled live gate
 ```
 
 ## Acceptance criteria
@@ -253,12 +245,18 @@ Finalize remaining contract decisions
 - [ ] 652 × 3 synthetic benchmark、fault injection 與完整 deterministic regression 通過。
 - [ ] `stock_all_list` Snapshot 完整性及 652-Symbol single-baseline live endurance acceptance 通過。
 
-## Current task
+## Tasks
 
 | ID | Task | Status | Depends on |
 | --- | --- | --- | --- |
-| [TASK-001](./TASK-001-durable-contract-state-model.md) | Durable contract and state model | `discussion` | Strategy Automation Run V1 |
+| [TASK-001](./TASK-001-durable-contract-state-model.md) | Artifact v2 State Model and Durable Run Store | `done` | Strategy Automation Run V1 |
+| [TASK-002](./TASK-002-run-pane-leases.md) | Cross-process Run and Pane Leases | `todo` | TASK-001 |
+| [TASK-003](./TASK-003-symbol-retry-atomic-attempt.md) | Symbol Retry Classifier and Atomic Attempt Export | `todo` | TASK-001 |
+| [TASK-004](./TASK-004-durable-experiment-execution.md) | Durable Experiment and Parameter Set Execution | `todo` | TASK-001, TASK-003 |
+| [TASK-005](./TASK-005-resume-planning-identity.md) | Resume Loader, Planning, and Identity Rebind | `todo` | TASK-001, TASK-002, TASK-004 |
+| [TASK-006](./TASK-006-run-resume-cli-integration.md) | Run／Resume Orchestration, CLI, and Signals | `todo` | TASK-001～005 |
+| [TASK-007](./TASK-007-regression-benchmark-live-gate.md) | Regression, Benchmark, and Live Delivery Gate | `todo` | TASK-001～006 |
 
 ## Completion record
 
-Design discussion in progress. Confirmed decisions are recorded; remaining blocking decisions must be finalized before production implementation tasks are split.
+LLD與implementation task split已完成。TASK-001 artifact v2 state／durable store foundation已完成；TASK-002～007尚未開始。D-014量化threshold將由TASK-007 prototype evidence補齊。
