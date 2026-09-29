@@ -13,7 +13,7 @@ TASK-008 automated gate已完成deterministic regression、完整448-Symbol Watc
 - 測試Watchlist使用exact name`dev-testing-list`。
 - 正式run會依序處理Watchlist內每一個Symbol乘上每一個Parameter Set。執行前應先確認測試Watchlist大小；若只驗證流程，使用少量Symbols的專用Watchlist，避免意外啟動大型工作。
 - 正式run可能建立或更新private Account Saved Strategy version，並安全refresh指定Pane Instance；不會Publish Pine Script。
-- V1沒有retry、checkpoint或resume。中斷後需使用新的`run_id`重新開始。
+- Formal Run artifact v2具備固定Symbol retry與same-run `strategy resume`；詳細恢復驗收見`docs/strategy_durable_export_recovery_manual_test.md`。Legacy `strategy trading-export`仍維持artifact v1且不支援Resume。
 
 ## 1. Prepare a Run Config
 
@@ -66,6 +66,8 @@ Exit codes：
 - `0`：所有Experiments與Symbols成功。
 - `1`：validation failure、partial Symbol failure或其他一般錯誤。
 - `2`：CDP connection failure，包含已發布partial run中出現CDP failure的情況。
+- `130`：收到第一次`SIGINT`並完成graceful durable finalization。
+- `143`：收到第一次`SIGTERM`並完成graceful durable finalization。
 
 ## 4. Verify artifacts
 

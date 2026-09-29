@@ -1,7 +1,7 @@
 ---
 id: FEATURE-20260926-STRATEGY-DURABLE-EXPORT-RECOVERY
 title: Strategy Durable Export Recovery
-status: planned
+status: in_progress
 created: 2026-09-26
 depends_on:
   - FEATURE-20260915-STRATEGY-AUTOMATION-RUN
@@ -14,7 +14,7 @@ scope:
 
 # Strategy Durable Export Recovery
 
-Status: `planned`
+Status: `in_progress`
 
 ## Objective
 
@@ -218,7 +218,7 @@ Execution／restore 階段不建立重複 error code，沿用既有 `PANE_CONTEX
 
 ## Design status
 
-Artifact v2、retry classifier、identity rebind、signal handling、cross-process leases、stale attempt cleanup與不實作`strategy status`皆已定案。唯一仍為`evidence_pending`的是D-014量化benchmark thresholds：先由652 × 3 filesystem prototype取得baseline，再把實測threshold補回[`DECISIONS.md`](./DECISIONS.md)。此項不阻擋module implementation。
+Artifact v2、retry classifier、identity rebind、signal handling、cross-process leases、stale attempt cleanup與不實作`strategy status`皆已定案。D-014已依652 × 3 filesystem baseline補齊量化thresholds並改為`accepted`；目前只剩controlled live與`stock_all_list` 652-Symbol single-baseline gate。
 
 ## Delivery sequence
 
@@ -233,16 +233,16 @@ Artifact v2 state + durable store
 
 ## Acceptance criteria
 
-- [ ] Blocking design decisions皆有明確 decision、理由、rejected alternatives、compatibility impact、failure behavior 與 required tests。
-- [ ] Run 開始後直接建立 canonical Run Directory，且 collision behavior 維持不變。
-- [ ] `run.json` 與 Experiment `manifest.json` 可在每次 process restart 後決定未完成工作。
-- [ ] 每個 Symbol 成功 artifacts 使用 attempt-owned staging + atomic rename，並由 manifest callback commit `succeeded`。
-- [ ] Retry 使用固定 3-attempt policy、stable classifier 與 fresh Report A／offset 0。
-- [ ] `strategy resume` 沿用同一 `run_id`，只重跑不是 `succeeded` 的 Symbols。
-- [ ] Resume 在 identity 相同時繼續工作，在 required identity drift 或 artifact corruption 時安全拒絕。
-- [ ] Graceful interruption完成 bounded restore；abrupt crash 可由下一次 Resume 分類與恢復。
-- [ ] 相同 Run／Pane 的第二個 mutation process 會在 mutation 前被 lock 拒絕。
-- [ ] 652 × 3 synthetic benchmark、fault injection 與完整 deterministic regression 通過。
+- [x] Blocking design decisions皆有明確 decision、理由、rejected alternatives、compatibility impact、failure behavior 與 required tests。
+- [x] Run 開始後直接建立 canonical Run Directory，且 collision behavior 維持不變。
+- [x] `run.json` 與 Experiment `manifest.json` 可在每次 process restart 後決定未完成工作。
+- [x] 每個 Symbol 成功 artifacts 使用 attempt-owned staging + atomic rename，並由 manifest callback commit `succeeded`。
+- [x] Retry 使用固定 3-attempt policy、stable classifier 與 fresh Report A／offset 0。
+- [x] `strategy resume` 沿用同一 `run_id`，只重跑不是 `succeeded` 的 Symbols。
+- [x] Resume 在 identity 相同時繼續工作，在 required identity drift 或 artifact corruption 時安全拒絕。
+- [x] Graceful interruption完成 bounded restore；abrupt crash 可由下一次 Resume 分類與恢復。
+- [x] 相同 Run／Pane 的第二個 mutation process會在 mutation 前被 lock 拒絕。
+- [x] 652 × 3 synthetic benchmark、fault injection與完整 deterministic regression通過。
 - [ ] `stock_all_list` Snapshot 完整性及 652-Symbol single-baseline live endurance acceptance 通過。
 
 ## Tasks
@@ -255,8 +255,8 @@ Artifact v2 state + durable store
 | [TASK-004](./TASK-004-durable-experiment-execution.md) | Durable Experiment and Parameter Set Execution | `done` | TASK-001, TASK-003 |
 | [TASK-005](./TASK-005-resume-planning-identity.md) | Resume Loader, Planning, and Identity Rebind | `done` | TASK-001, TASK-002, TASK-004 |
 | [TASK-006](./TASK-006-run-resume-cli-integration.md) | Run／Resume Orchestration, CLI, and Signals | `done` | TASK-001～005 |
-| [TASK-007](./TASK-007-regression-benchmark-live-gate.md) | Regression, Benchmark, and Live Delivery Gate | `todo` | TASK-001～006 |
+| [TASK-007](./TASK-007-regression-benchmark-live-gate.md) | Regression, Benchmark, and Live Delivery Gate | `in_progress` | TASK-001～006 |
 
 ## Completion record
 
-LLD與implementation task split已完成。TASK-001 artifact v2 state／durable store、TASK-002 Run／Pane leases、TASK-003 Symbol retry／atomic attempt、TASK-004 durable Experiment／Parameter Set execution、TASK-005 Resume planning／identity rebind及TASK-006 Run／Resume CLI integration已完成；僅TASK-007 delivery gate尚未開始。D-014量化threshold將由TASK-007 prototype evidence補齊。
+TASK-001～006 implementation皆已完成。TASK-007的deterministic fault matrix、Node 22／24 full regression、652 × 3 × 3 filesystem benchmark、D-014 thresholds及manual guide已完成；Feature仍為`in_progress`，等待controlled TradingView scenarios及exact-name`stock_all_list` 652-Symbol single-baseline live acceptance。詳細數據與未完成項目見TASK-007 completion record。

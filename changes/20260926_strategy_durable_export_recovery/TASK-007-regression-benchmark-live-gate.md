@@ -1,7 +1,7 @@
 ---
 id: TASK-007
 title: Regression, Benchmark, and Live Delivery Gate
-status: todo
+status: in_progress
 phase: strategy-durable-export-recovery
 depends_on:
   - TASK-001
@@ -90,16 +90,28 @@ Fault injection must useexplicit test seam or documentedmanual timing; productio
 
 ## Acceptance criteria
 
-- [ ] Allfault windows have deterministic test ordocumented controlled live evidence。
-- [ ] Node 22 unit／relevant all suites andlint pass。
-- [ ] 652 × 3 benchmark evidence is recorded andD-014 becomes`accepted`withmeasured thresholds。
+- [x] Allfault windows have deterministic test ordocumented controlled live evidence。
+- [x] Node 22 unit／relevant all suites andlint pass。
+- [x] 652 × 3 benchmark evidence is recorded andD-014 becomes`accepted`withmeasured thresholds。
 - [ ] Retry success、retry exhaustion、graceful interrupt、hard crash andDesktop restart Resume are verified。
-- [ ] SameRun ID Resume skips allsucceeded Symbols。
+- [ ] SameRun ID Resume skips allsucceeded Symbols in controlled live evidence。
 - [ ] `stock_all_list`complete Snapshot count is652 andsingle-baseline Run reaches652／652 succeeded。
-- [ ] Legacy formal dry-run、single-Symbol andActive Watchlist exports have no regression。
-- [ ] Manual test document andallcompletion records are current。
-- [ ] `git diff --check`passes andworking tree contains no generated output artifacts。
+- [x] Legacy formal dry-run、single-Symbol andActive Watchlist exports have no regression。
+- [x] Manual test document andallcompletion records are current。
+- [x] `git diff --check`passes andworking tree contains no generated output artifacts。
 
 ## Completion record
 
-Not started.
+Automated delivery phase完成，controlled live phase待執行：
+
+- 新增`test:durable`，涵蓋Run/Resume state、atomic JSON／Symbol attempts、retry、leases、identity、signals、formal orchestration及dedicated fault matrix；Node 22與Node 24皆105 tests passed。
+- Node 22與CI current Node 24完整unit suite皆642 tests passed；額外Node 26.5.1同樣642 tests passed。
+- `npm run lint`為0 errors；只有既有`src/core/data.js`兩筆與`src/tools/watchlist.js`一筆unused-variable warnings。
+- 新增filesystem-only`benchmark:strategy-durable`。Node 22.16.0／Darwin arm64／filesystem type 26／4096-byte block的三輪baseline：median 68,637.081 ms、worst 71,345.192 ms、peak RSS 107,593,728 bytes、logical writes 897,936,681 bytes、final disk 1,613,708 bytes、largest manifest 447,766 bytes、Resume audit+planning worst 4,531.916 ms、pure planning worst 8.598 ms。
+- 固定D-014 thresholds後重新執行正式gate，`thresholds_enforced: true`；median 72,327.298 ms、worst 74,482.608 ms，1956/1956 Symbol executions於每輪皆成功且所有thresholds通過。
+- 每個synthetic artifact使用Experiment／Symbol／artifact distinct markers並逐一audit，驗證attempt data沒有混用；所有temporary benchmark artifacts已自動清除。
+- D-014已改為`accepted`；完整baseline、thresholds與headroom rationale記錄於`DECISIONS.md`。
+- 新增`docs/strategy_durable_export_recovery_manual_test.md`，包含commands、bounded expectations、artifact checks、interrupt／crash points、same-run Resume、identity／lease scenarios、652 capacity gate及cleanup guidance。
+- Existing multi-Parameter-Set evidence：2026-09-23 Run `obv-v3-20260923T092539Z-d87d94f0`，Snapshot `sha256:527cedc5ca74658fad8700b8bbd9e13e9f9920fb26595c72f6e1bfe5fd061b09`，3 Experiments × 448 Symbols，1344/1344 succeeded。這項只作為既有448 × 3 evidence，不取代artifact-v2 controlled live或652 single-baseline gate。
+
+尚未完成且不可先標記done：controlled live retry／exhaustion、SIGINT／hard crash、rename-before-callback、Desktop restart rebind、stable drift、duplicate ownership，以及exact-name`stock_all_list` 652-Symbol single-baseline Run。完成並回填sanitized evidence後，才可將TASK與Feature改為`done`。

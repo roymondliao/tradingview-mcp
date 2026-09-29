@@ -21,7 +21,7 @@ Status: `approved`
 | D-011 | SIGINT／SIGTERM and abrupt crash semantics | `accepted` | First signal graceful abort/restore；second signal immediate exit；hard crash由下次Resume恢復。 |
 | D-012 | Cross-process Run／Pane lease | `accepted` | OS temp lock directories、stable hashed keys、PID liveness與token-checked reclaim/release。 |
 | D-013 | Stale attempt staging cleanup | `accepted` | 持有Run lease後，只清除非succeeded Symbol可證明ownership的staging／uncommitted final directory。 |
-| D-014 | Benchmark and live acceptance thresholds | `evidence_pending` | 652 × 3 shape已確認；量化threshold由filesystem prototype baseline決定。 |
+| D-014 | Benchmark and live acceptance thresholds | `accepted` | 652 × 3 filesystem baseline已量測；採具硬體餘裕的固定gate與652-symbol single-baseline live acceptance。 |
 | D-015 | Optional `strategy status` command | `accepted` | 本Change不實作；未來如有操作需求再以相同local reader另開Change。 |
 
 ## Accepted decisions
@@ -590,7 +590,7 @@ Required tests:
 
 ### D-014 Benchmark and live acceptance
 
-Decision status: `evidence_pending`
+Decision status: `accepted`
 
 Test shape已定案：
 
@@ -599,7 +599,39 @@ Test shape已定案：
 - Exact-name`stock_all_list` expected 652的single-baseline endurance Run。
 - Existing 448 × 3 result保留為multi-Parameter-Set live evidence。
 
-量化time、memory、disk、manifest size與Resume planning thresholds必須先由filesystem prototype量測baseline，再更新本項；這是delivery evidence，不阻擋module implementation。
+2026-09-29 filesystem baseline：
+
+- Environment：Node `v22.16.0`、Darwin arm64、filesystem type `26`、block size 4096 bytes。
+- 三次獨立repetitions；每次652 Symbols × 3 Parameter Sets，共1956個Symbol executions。
+- 每個Symbol實際執行manifest `running`／`succeeded` atomic replacements、attempt staging、3個最小marker artifacts、directory rename、artifact audit、Resume planning及Run finalization。
+- Wall time median `68,637.081 ms`，worst `71,345.192 ms`。
+- Peak RSS `107,593,728 bytes`；peak heap used `35,725,288 bytes`。
+- Logical bytes written `897,936,681 bytes`；final Run Directory `1,613,708 bytes`。
+- 最大manifest `447,766 bytes`。
+- Resume完整artifact audit + planning worst `4,531.916 ms`；pure planning worst `8.598 ms`。
+
+Accepted deterministic thresholds：
+
+| Metric | Gate |
+| --- | ---: |
+| Median wall time | `<= 120,000 ms` |
+| Worst wall time | `<= 180,000 ms` |
+| Peak RSS | `<= 268,435,456 bytes` |
+| Logical bytes written | `<= 1,610,612,736 bytes` |
+| Final Run Directory | `<= 4,194,304 bytes` |
+| Largest manifest | `<= 1,048,576 bytes` |
+| Resume audit + planning | `<= 15,000 ms` |
+| Pure Resume planning | `<= 250 ms` |
+
+Time與memory gates保留約1.7～29倍headroom，避免把一般CI／developer hardware差異誤判為regression；disk與manifest gates則主要限制artifact growth。Canonical `652 × 3 × 3 repetitions`才套用量化gate，小型unit smoke只驗證correctness。Benchmark payload刻意維持最小marker，不把Report／Trades payload生成成本混入state-layer量測。
+
+執行方式：
+
+```bash
+fnm exec --using=22 npm run benchmark:strategy-durable
+```
+
+Capacity live gate仍須依manual test完成exact-name `stock_all_list` 652-Symbol single-baseline Run；量化threshold的acceptance不代表live gate已通過。
 
 ### D-015 Optional `strategy status` command
 
