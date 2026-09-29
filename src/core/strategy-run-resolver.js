@@ -3,11 +3,134 @@ import { list as listTabs, evaluateTarget } from './tab.js';
 import { listScripts, getSavedScript } from './pine.js';
 import { buildStudyInputCatalog, fingerprintStudyInputs } from './studies.js';
 import { normalizedPineSourceSha256 } from './pine-input-schema.js';
+import { CoreOperationError } from './errors.js';
+import { stableJsonStringify } from './stable-json.js';
 
 function resolutionError(code, message, context = {}) {
   const error = new Error(message);
   Object.assign(error, { code, phase: 'resource_resolution', retryable: false, ...context });
   return error;
+}
+
+function resumeIdentityError(message, cause) {
+  return new CoreOperationError(message, {
+    code: 'RUN_RESUME_IDENTITY_MISMATCH',
+    phase: 'resume_identity',
+    cause,
+  });
+}
+
+function sameIdentityValue(left, right) {
+  if (left == null || right == null) return left == null && right == null;
+  return String(left) === String(right);
+}
+
+/** Compare persisted stable Layout/Pane identity while accepting volatile target rebinding. */
+export function rebindStrategyResumeTarget({ persisted, current } = {}) {
+  if (!persisted || !current) {
+    throw resumeIdentityError('Persisted and current Layout identities are required.');
+  }
+  if (
+    persisted.layout_name !== current.layout_name
+    || persisted.pane_index !== current.pane_index
+  ) {
+    throw resumeIdentityError('Current Layout name or Pane index differs from the persisted Run.');
+  }
+  if (persisted.saved_layout_id != null) {
+    if (!sameIdentityValue(persisted.saved_layout_id, current.saved_layout_id)) {
+      throw resumeIdentityError('Current Saved Layout identity differs from the persisted Run.');
+    }
+  } else if (persisted.layout_id != null) {
+    if (!sameIdentityValue(persisted.layout_id, current.layout_id)) {
+      throw resumeIdentityError('Current Layout identity differs from the persisted Run.');
+    }
+  } else if (!sameIdentityValue(persisted.url_chart_id, current.url_chart_id)) {
+    throw resumeIdentityError('Current Chart URL identity differs from the persisted Run.');
+  }
+  if (
+    persisted.pane_id != null
+    && !sameIdentityValue(persisted.pane_id, current.pane_id)
+  ) {
+    throw resumeIdentityError('Current Pane identity differs from the persisted Run.');
+  }
+  return Object.freeze({
+    ...current,
+    resolution: current.resolution ?? current.timeframe ?? null,
+  });
+}
+
+/** Verify the exact persisted Account Strategy identity and source. */
+export function assertStrategyResumeAccountIdentity({
+  persisted,
+  resolved_account,
+  account_detail,
+} = {}) {
+  const script = resolved_account?.script;
+  if (!persisted || resolved_account?.exists !== true || !script || !account_detail) {
+    throw resumeIdentityError('Persisted Saved Strategy is not available in the current Account.');
+  }
+  const scriptId = script.script_id || script.id;
+  if (
+    String(scriptId || '') !== String(persisted.script_id || '')
+    || String(script.version ?? '') !== String(persisted.version ?? '')
+    || account_detail.source_sha256 !== persisted.source_sha256
+  ) {
+    throw resumeIdentityError('Current Saved Strategy identity differs from the persisted Run.');
+  }
+  return Object.freeze({
+    script_id: String(scriptId),
+    version: String(script.version),
+    source_sha256: account_detail.source_sha256,
+  });
+}
+
+function inputDefinition(input) {
+  const value = { ...input };
+  delete value.value;
+  delete value.value_iso;
+  delete value.active;
+  return value;
+}
+
+function assertRuntimeInputCatalog(expected, actual) {
+  const expectedDefinitions = (expected || []).map(inputDefinition);
+  const actualDefinitions = (actual || []).map(inputDefinition);
+  if (stableJsonStringify(expectedDefinitions) !== stableJsonStringify(actualDefinitions)) {
+    throw resumeIdentityError('Current Pane Strategy Input catalog differs from the persisted Run.');
+  }
+}
+
+/** Resolve exactly one matching Pane Strategy and allow only its volatile entity ID to rebind. */
+export function rebindStrategyResumePaneInstance({
+  pane_state,
+  persisted_strategy,
+  base_inputs,
+} = {}) {
+  if (!persisted_strategy?.script_id || persisted_strategy.version == null) {
+    throw resumeIdentityError('Persisted Strategy identity is incomplete.');
+  }
+  const matches = listPaneStrategyInstances({
+    pane_state,
+    script_id: persisted_strategy.script_id,
+  });
+  if (matches.length !== 1) {
+    throw resumeIdentityError(
+      `Current Pane must contain exactly one matching Strategy; found ${matches.length}.`,
+    );
+  }
+  const instance = matches[0];
+  if (String(instance.version ?? '') !== String(persisted_strategy.version)) {
+    throw resumeIdentityError('Current Pane Strategy version differs from the persisted Run.');
+  }
+  assertRuntimeInputCatalog(base_inputs, instance.inputs);
+  return Object.freeze({
+    entity_id: instance.entity_id,
+    script_id: persisted_strategy.script_id,
+    version: String(instance.version),
+    source_sha256: persisted_strategy.source_sha256,
+    inputs: instance.inputs,
+    inputs_fingerprint: instance.inputs_fingerprint || fingerprintStudyInputs(instance.inputs),
+  });
 }
 
 /** Extract one exact Account Pine ID from a TradingView Study definition ID. */

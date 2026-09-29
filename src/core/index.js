@@ -25,6 +25,7 @@ export * as strategyRunArtifacts from './strategy-run-artifacts.js';
 export * as strategyRunLease from './strategy-run-lease.js';
 export * as strategyRunRetry from './strategy-run-retry.js';
 export * as strategyDurableExperiment from './strategy-durable-experiment.js';
+export * as strategyResume from './strategy-resume.js';
 export * as strategyRunResolver from './strategy-run-resolver.js';
 export * as strategyParameterSets from './strategy-parameter-sets.js';
 export * as strategySync from './strategy-sync.js';

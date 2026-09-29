@@ -1,7 +1,7 @@
 ---
 id: TASK-005
 title: Resume Loader, Planning, and Identity Rebind
-status: todo
+status: done
 phase: strategy-durable-export-recovery
 depends_on:
   - TASK-001
@@ -101,14 +101,33 @@ scope: resume-core
 
 ## Acceptance criteria
 
-- [ ] Resume planning is complete before anyTradingView mutation。
-- [ ] Onlymanifest `succeeded`entries are skipped。
-- [ ] All succeeded artifacts are audited beforeexecution。
-- [ ] Desktop restart volatile IDs can rebind without weakeningstable identity checks。
-- [ ] Current Watchlist state is never used toreplace thefrozen Snapshot。
-- [ ] Every local/artifact/identity failure uses thestructured error taxonomy。
-- [ ] Targeted tests、full unit suite、lint and`git diff --check`pass。
+- [x] Resume planning is complete before anyTradingView mutation。
+- [x] Onlymanifest `succeeded`entries are skipped。
+- [x] All succeeded artifacts are audited beforeexecution。
+- [x] Desktop restart volatile IDs can rebind without weakeningstable identity checks。
+- [x] Current Watchlist state is never used toreplace thefrozen Snapshot。
+- [x] Every local/artifact/identity failure uses thestructured error taxonomy。
+- [x] Targeted tests、full unit suite、lint and`git diff --check`pass。
 
 ## Completion record
 
-Not started.
+Completed on 2026-09-29.
+
+Implementation：
+
+- Added `strategy-resume.js` with a local-only durable artifact loader、bounded summary and immutable Resume plan that selects every non-`succeeded` Symbol solely from Experiment manifests。
+- Added strict Run／Watchlist／Parameter Set／Experiment identity audit, deterministic schema-v2 Experiment ID and Input fingerprint recomputation, unplanned Experiment directory rejection and succeeded Symbol artifact verification。
+- Added cleanup targets for selected non-succeeded Symbols without inspecting folder presence as success evidence or performing cleanup during planning。
+- Added Run→Pane ownership wrapper that acquires leases from the persisted stable Pane key, rereads and replans artifacts after both leases, exposes a held-lease callback and releases in reverse order。
+- Added local Pine source hash／Candidate schema verification and exact Layout、Saved Strategy、Pane Strategy、runtime Input catalog re-resolution。
+- Stable Layout／Pane／script／version／source／schema／Input mismatches fail closed while volatile `target_id`、`tab_index`、Pane `entity_id`、current Symbol and timeframe can rebind after Desktop restart。
+- Current runtime Inputs are accepted only when matching persisted Base or one planned Effective Inputs fingerprint；current Account Watchlist is never read or substituted for `watchlist.json`。
+- Added reusable target、Account Strategy and Pane Strategy rebind helpers to `strategy-run-resolver.js`。
+
+Validation：
+
+- Node 22 targeted TASK-001～005 compatibility set：102 tests passed。
+- Node 24 targeted TASK-001～005 compatibility set：102 tests passed。
+- Node 22 full unit suite：625 tests passed，0 failed。
+- ESLint：0 errors；repository仍有3個pre-existing unused-variable warnings outside thisTask。
+- `git diff --check`passed。
