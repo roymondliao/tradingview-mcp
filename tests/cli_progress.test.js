@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   createStrategyProgressRenderer,
   formatStrategyProgress,
+  formatStrategyStatus,
 } from '../src/cli/progress.js';
 
 function event(overrides = {}) {
@@ -17,6 +18,12 @@ function event(overrides = {}) {
 }
 
 describe('Strategy CLI progress formatter', () => {
+  it('formats fixed process information without percentage details', () => {
+    const line = formatStrategyStatus({ stage: 'validating_watchlist' });
+    assert.equal(line, 'Process: Validating Watchlist Symbols...');
+    assert.doesNotMatch(line, /%|processed|succeeded|failed/);
+  });
+
   it('formats 0%, intermediate, and 100% in the required information order', () => {
     const zero = formatStrategyProgress(event(), { columns: 160, unicode: false });
     assert.match(zero, /0\.0%  0\/10 processed \| Experiment 1\/3: baseline \| succeeded 0 \| failed 0$/);
@@ -52,11 +59,13 @@ describe('Strategy CLI progress renderer', () => {
       write(value) { writes.push(value); },
     };
     const renderer = createStrategyProgressRenderer({ stream, unicode: false });
+    renderer.status({ stage: 'validating_watchlist' });
     renderer.update(event());
     renderer.update(event({ processed: 1, succeeded: 1 }));
     renderer.finish();
     renderer.finish();
     assert.equal(renderer.enabled, true);
+    assert.match(writes[0], /Process: Validating Watchlist Symbols/);
     assert.equal(writes.filter((value) => value === '\n').length, 1);
     assert.ok(writes.slice(0, -1).every((value) => value.startsWith('\r')));
     assert.ok(writes.slice(0, -1).every((value) => !value.includes('\n')));

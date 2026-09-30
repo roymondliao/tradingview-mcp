@@ -4,6 +4,18 @@ const DEFAULT_COLUMNS = 120;
 const MAX_EXPERIMENT_NAME_LENGTH = 100;
 const MAX_BAR_WIDTH = 20;
 
+const STATUS_LABELS = Object.freeze({
+  preflight: 'Validating Run configuration',
+  acquiring_ownership: 'Acquiring Run and Pane ownership',
+  initializing_run: 'Initializing durable Run artifacts',
+  resolving_resume: 'Loading and validating Resume state',
+  validating_watchlist: 'Validating Watchlist Symbols',
+  synchronizing_strategy: 'Synchronizing Strategy',
+  preparing_experiments: 'Preparing Experiments',
+  executing_experiments: 'Starting Experiment execution',
+  finalizing_run: 'Finalizing durable Run state',
+});
+
 function boundedInteger(value, minimum = 0) {
   const number = Number(value);
   if (!Number.isFinite(number)) return minimum;
@@ -60,6 +72,12 @@ export function formatStrategyProgress(event, {
   return `[${bar}] ${details}`;
 }
 
+/** Format one fixed process-stage event without a percentage or progress bar. */
+export function formatStrategyStatus(event) {
+  const label = STATUS_LABELS[event?.stage];
+  return `Process: ${label || 'Working'}...`;
+}
+
 /** Create a failure-isolated renderer that writes only to an interactive stderr-like stream. */
 export function createStrategyProgressRenderer({
   stream = process.stderr,
@@ -85,6 +103,15 @@ export function createStrategyProgressRenderer({
       columns: stream.columns,
       unicode,
     });
+    render(line);
+  }
+
+  function status(event) {
+    if (!enabled || finished) return;
+    render(formatStrategyStatus(event));
+  }
+
+  function render(line) {
     const padding = ' '.repeat(Math.max(0, previousLength - line.length));
     if (safeWrite(`\r${line}${padding}`)) {
       started = true;
@@ -98,5 +125,5 @@ export function createStrategyProgressRenderer({
     if (enabled && started) safeWrite('\n');
   }
 
-  return Object.freeze({ enabled, update, finish });
+  return Object.freeze({ enabled, update, status, finish });
 }

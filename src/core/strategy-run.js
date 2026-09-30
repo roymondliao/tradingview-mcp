@@ -37,6 +37,7 @@ import {
   executeDurableStrategyPlan,
   finalizeDurableStrategyRun,
 } from './strategy-resume.js';
+import { emitStrategyAutomationStatus } from './strategy-progress.js';
 
 function diagnostic(error, fallbackCode, phase) {
   return Object.freeze({
@@ -379,8 +380,10 @@ export async function runStrategyAutomation({
   config_path,
   signal,
   on_progress,
+  on_status,
   _deps = {},
 } = {}) {
+  await emitStrategyAutomationStatus(on_status, 'preflight');
   const runPreflight = _deps.dryRunStrategyAutomation || dryRunStrategyAutomation;
   const preflight = await runPreflight({
     config_path,
@@ -395,6 +398,7 @@ export async function runStrategyAutomation({
     });
   }
 
+  await emitStrategyAutomationStatus(on_status, 'acquiring_ownership');
   const internal = preflight._internal;
   const requested = internal.loaded.requested;
   const runContext = Object.freeze({
@@ -424,6 +428,7 @@ export async function runStrategyAutomation({
   let strategyIdentity = null;
   try {
     assertNotAborted(signal);
+    await emitStrategyAutomationStatus(on_status, 'initializing_run');
     const recheckPane = _deps.assertPaneContext || assertPaneContext;
     await recheckPane({
       context: runContext,
@@ -447,6 +452,7 @@ export async function runStrategyAutomation({
     await runWithSession({ context: runContext, _deps: _deps.session }, async () => {
       const alreadyLockedSession = async (_options, operation) => operation();
       assertNotAborted(signal);
+      await emitStrategyAutomationStatus(on_status, 'validating_watchlist');
       const validateWatchlist = _deps.validateNamedWatchlistSymbols
         || validateNamedWatchlistSymbols;
       const symbolValidation = await validateWatchlist({
@@ -472,6 +478,7 @@ export async function runStrategyAutomation({
         );
       }
       assertNotAborted(signal);
+      await emitStrategyAutomationStatus(on_status, 'synchronizing_strategy');
       const runSync = _deps.executeStrategySync || executeStrategySync;
       const sync = await runSync({
         saved_name: requested.strategy.saved_name,
@@ -499,6 +506,7 @@ export async function runStrategyAutomation({
       });
       await store.replaceRun(run);
 
+      await emitStrategyAutomationStatus(on_status, 'preparing_experiments');
       const prepare = _deps.prepareParameterSetExecution || prepareParameterSetExecution;
       const prepared = await prepare({
         candidate_schema: internal.candidate.input_schema,
@@ -518,6 +526,7 @@ export async function runStrategyAutomation({
       });
       await store.replaceRun(run);
       assertNotAborted(signal);
+      await emitStrategyAutomationStatus(on_status, 'executing_experiments');
       await executeDurableStrategyPlan({
         store,
         run,
@@ -556,6 +565,7 @@ export async function runStrategyAutomation({
         code: 'STRATEGY_RUN_FAILED', phase: 'strategy_run_initialization',
       });
     }
+    await emitStrategyAutomationStatus(on_status, 'finalizing_run');
     const finalized = await finalizeDurableStrategyRun({
       store,
       error: primaryError,

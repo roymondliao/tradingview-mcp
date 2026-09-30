@@ -411,9 +411,11 @@ describe('Formal Strategy Run integration', () => {
     const preflight = formalPreflight(directory);
     const calls = { sync: [], attempts: [], events: [] };
     const progress = [];
+    const statuses = [];
     const result = await runStrategyAutomation({
       config_path: '/tmp/run.json',
       on_progress: async (event) => { progress.push(event); },
+      on_status: async (event) => { statuses.push(event.stage); },
       _deps: formalDeps(preflight, calls),
     });
     assert.equal(result.success, true, JSON.stringify(result, null, 2));
@@ -466,6 +468,16 @@ describe('Formal Strategy Run integration', () => {
       { processed: 2, total: 4, succeeded: 2, failed: 0, experiment: '2/2:fast' },
       { processed: 3, total: 4, succeeded: 3, failed: 0, experiment: '2/2:fast' },
       { processed: 4, total: 4, succeeded: 4, failed: 0, experiment: '2/2:fast' },
+    ]);
+    assert.deepEqual(statuses, [
+      'preflight',
+      'acquiring_ownership',
+      'initializing_run',
+      'validating_watchlist',
+      'synchronizing_strategy',
+      'preparing_experiments',
+      'executing_experiments',
+      'finalizing_run',
     ]);
   });
 
@@ -613,6 +625,7 @@ describe('Formal Strategy Run integration', () => {
     const resumeCalls = { sync: [], attempts: [], events: [] };
     const resumeDeps = formalDeps(preflight, resumeCalls);
     const progress = [];
+    const statuses = [];
     const identity = {
       target: { ...preflight._internal.target, resolution: '1D' },
       strategy: local.artifacts.run.resolved.strategy,
@@ -620,6 +633,7 @@ describe('Formal Strategy Run integration', () => {
     const resumed = await resumeStrategyAutomation({
       run_directory: initial.output.path,
       on_progress: async (event) => { progress.push(event); },
+      on_status: async (event) => { statuses.push(event.stage); },
       _deps: {
         withStrategyResumeContext: async (_options, operation) => operation({ local, identity }),
         withChartSession: resumeDeps.withChartSession,
@@ -643,6 +657,13 @@ describe('Formal Strategy Run integration', () => {
         processed: 1, total: 1, succeeded: 1, failed: 0,
         experiment: { index: 1, count: 1, name: 'baseline' },
       },
+    ]);
+    assert.deepEqual(statuses, [
+      'resolving_resume',
+      'validating_watchlist',
+      'preparing_experiments',
+      'executing_experiments',
+      'finalizing_run',
     ]);
   });
 
@@ -669,6 +690,19 @@ describe('Formal Strategy Run integration', () => {
     const resumeCalls = { sync: [], attempts: [], events: [] };
     const resumeDeps = formalDeps(preflight, resumeCalls);
     const progress = [];
+    const reboundTarget = {
+      ...preflight._internal.target,
+      tab_index: 9,
+      target_id: 'new-target',
+      url_chart_id: 'new-url-chart',
+      layout_id: 'new-runtime-layout',
+      symbol: 'TPEX:5483',
+      resolution: '60',
+    };
+    const reboundStrategy = {
+      ...local.artifacts.run.resolved.strategy,
+      entity_id: 'new-entity',
+    };
     const resumed = await resumeStrategyAutomation({
       run_directory: initial.output.path,
       on_progress: async (event) => { progress.push(event); },
@@ -676,17 +710,32 @@ describe('Formal Strategy Run integration', () => {
         withStrategyResumeContext: async (_options, operation) => operation({
           local,
           identity: {
-            target: { ...preflight._internal.target, resolution: '1D' },
-            strategy: local.artifacts.run.resolved.strategy,
+            target: reboundTarget,
+            strategy: reboundStrategy,
           },
         }),
-        withChartSession: resumeDeps.withChartSession,
+        withChartSession: async ({ context }, operation) => {
+          assert.equal(context.symbol, 'TPEX:5483');
+          assert.equal(context.resolution, '60');
+          return operation({ context });
+        },
         execution: resumeDeps.execution,
         now: resumeDeps.now,
       },
     });
     assert.equal(resumed.success, true, JSON.stringify(resumed, null, 2));
     assert.deepEqual(resumeCalls.attempts, ['candidate-check:TWSE:2330']);
+    const reboundRun = JSON.parse(readFileSync(join(initial.output.path, 'run.json'), 'utf8'));
+    const persistedExperiment = JSON.parse(readFileSync(join(
+      initial.output.path,
+      'experiments/candidate-check/experiment.json',
+    ), 'utf8'));
+    assert.equal(reboundRun.resolved.target.symbol, 'TPEX:5483');
+    assert.equal(reboundRun.resolved.target.resolution, '60');
+    assert.equal(reboundRun.resolved.strategy.entity_id, 'new-entity');
+    assert.equal(persistedExperiment.target.symbol, preflight._internal.target.symbol);
+    assert.equal(persistedExperiment.target.resolution, '1D');
+    assert.equal(persistedExperiment.strategy.entity_id, 'entity-1');
     assert.deepEqual(progress, [
       {
         processed: 0, total: 1, succeeded: 0, failed: 0,
@@ -775,8 +824,10 @@ describe('Formal Strategy Run integration', () => {
 
   it('returns failed preflight diagnostics without mutation or artifacts', async () => {
     const calls = { sync: 0, leases: 0 };
+    const statuses = [];
     const result = await runStrategyAutomation({
       config_path: '/tmp/missing.json',
+      on_status: async (event) => { statuses.push(event.stage); },
       _deps: {
         dryRunStrategyAutomation: async () => ({
           success: false, valid: false, dry_run: true,
@@ -791,5 +842,6 @@ describe('Formal Strategy Run integration', () => {
     assert.equal(result.phase, 'preflight');
     assert.equal(calls.sync, 0);
     assert.equal(calls.leases, 0);
+    assert.deepEqual(statuses, ['preflight']);
   });
 });

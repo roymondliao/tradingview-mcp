@@ -107,7 +107,7 @@ export async function withStrategyAutomationSignals(operation, {
     process_facade.on(signalName, handlers[signalName]);
   }
   try {
-    return await operation(controller.signal, renderer.update);
+    return await operation(controller.signal, renderer.update, renderer.status);
   } finally {
     renderer.finish();
     for (const [signalName, handler] of Object.entries(handlers)) {
@@ -134,10 +134,11 @@ register('strategy', {
         if (opts['dry-run']) {
           return dryRunStrategyAutomation({ config_path: opts.config });
         }
-        return withStrategyAutomationSignals((signal, onProgress) => runStrategyAutomation({
+        return withStrategyAutomationSignals((signal, onProgress, onStatus) => runStrategyAutomation({
           config_path: opts.config,
           signal,
           on_progress: onProgress,
+          on_status: onStatus,
         }));
       },
     }],
@@ -158,10 +159,11 @@ register('strategy', {
             code: 'RUN_RESUME_ARTIFACT_INVALID', phase: 'request_validation', retryable: false,
           });
         }
-        return withStrategyAutomationSignals((signal, onProgress) => resumeStrategyAutomation({
+        return withStrategyAutomationSignals((signal, onProgress, onStatus) => resumeStrategyAutomation({
           run_directory: opts['run-directory'],
           signal,
           on_progress: onProgress,
+          on_status: onStatus,
         }));
       },
     }],

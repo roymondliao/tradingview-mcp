@@ -243,6 +243,14 @@ fnm exec --using=22 npm run tv -- strategy run --config "$SMALL_CONFIG"
 
 在interactive terminal直接執行formal Run或Resume時，`stderr.isTTY === true`才顯示單行progress：
 
+在還沒有Symbol progress時，先顯示目前process，例如：
+
+```text
+Process: Validating Watchlist Symbols...
+```
+
+Watchlist validation只顯示process information，不顯示百分比。Run／Resume會依實際路徑顯示Run Config preflight、ownership、durable initialization／Resume resolution、Watchlist validation、Strategy sync、Experiment preparation／execution與finalization。
+
 ```text
 [██████████████░░░░░░] 68.4%  892/1304 processed | Experiment 2/3: candidate-check | succeeded 891 | failed 1
 ```

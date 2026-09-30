@@ -56,11 +56,14 @@ function processFacade() {
 
 function progressRenderer() {
   const events = [];
+  const statuses = [];
   let finished = false;
   return {
     events,
+    statuses,
     get finished() { return finished; },
     update(event) { events.push(event); },
+    status(event) { statuses.push(event); },
     finish() { finished = true; },
   };
 }
@@ -69,7 +72,8 @@ describe('Strategy automation CLI signals', () => {
   it('aborts gracefully on the first signal and removes listeners', async () => {
     const facade = processFacade();
     const progress = progressRenderer();
-    const result = await withStrategyAutomationSignals(async (signal, onProgress) => {
+    const result = await withStrategyAutomationSignals(async (signal, onProgress, onStatus) => {
+      onStatus({ stage: 'preflight' });
       onProgress({ processed: 0 });
       facade.emit('SIGINT');
       assert.equal(signal.aborted, true);
@@ -80,16 +84,19 @@ describe('Strategy automation CLI signals', () => {
     assert.deepEqual(facade.exits, []);
     assert.equal(facade.listenerCount(), 0);
     assert.deepEqual(progress.events, [{ processed: 0 }]);
+    assert.deepEqual(progress.statuses, [{ stage: 'preflight' }]);
     assert.equal(progress.finished, true);
   });
 
   it('always finishes progress after normal completion or a thrown error', async () => {
     const completed = progressRenderer();
-    await withStrategyAutomationSignals(async (_signal, onProgress) => {
+    await withStrategyAutomationSignals(async (_signal, onProgress, onStatus) => {
+      onStatus({ stage: 'executing_experiments' });
       onProgress({ processed: 1 });
       return { success: true };
     }, { process_facade: processFacade(), progress_renderer: completed });
     assert.equal(completed.finished, true);
+    assert.deepEqual(completed.statuses, [{ stage: 'executing_experiments' }]);
 
     const failed = progressRenderer();
     await assert.rejects(withStrategyAutomationSignals(async () => {

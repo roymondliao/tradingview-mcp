@@ -204,6 +204,67 @@ describe('Durable Strategy Experiment artifacts', () => {
       (error) => error.code === 'RUN_RESUME_ARTIFACT_INVALID',
     );
   });
+
+  it('separates stable Experiment identity from volatile runtime bindings', async () => {
+    const symbols = ['TWSE:2330'];
+    const existing = existingArtifacts(symbols);
+    const harness = storeHarness();
+    const reboundTarget = {
+      ...existing.run.resolved.target,
+      tab_index: 9,
+      target_id: 'new-renderer-target',
+      layout_id: 'new-runtime-layout-id',
+      url_chart_id: 'new-runtime-url-id',
+      symbol: 'TPEX:5483',
+      resolution: '60',
+    };
+    const reboundStrategy = {
+      ...existing.run.resolved.strategy,
+      entity_id: 'new-pane-entity',
+    };
+    const prepared = await prepareDurableStrategyExperiment({
+      store: harness.store,
+      run: existing.run,
+      experiment_plan: plan(),
+      experiment: existing.experiment,
+      manifest: existing.manifest,
+      requested_symbols: symbols,
+      strategy: reboundStrategy,
+      target: reboundTarget,
+      timeframe: '1D',
+      format: 'csv',
+    });
+    assert.deepEqual(prepared.experiment.target, existing.experiment.target);
+    assert.deepEqual(prepared.experiment.strategy, existing.experiment.strategy);
+
+    await assert.rejects(prepareDurableStrategyExperiment({
+      store: harness.store,
+      run: existing.run,
+      experiment_plan: plan(),
+      experiment: existing.experiment,
+      manifest: existing.manifest,
+      requested_symbols: symbols,
+      strategy: { ...reboundStrategy, script_id: 'USER;other' },
+      target: reboundTarget,
+      timeframe: '1D',
+      format: 'csv',
+    }), (error) => error.code === 'RUN_RESUME_ARTIFACT_INVALID'
+      && /stable Strategy identity/.test(error.message));
+
+    await assert.rejects(prepareDurableStrategyExperiment({
+      store: harness.store,
+      run: existing.run,
+      experiment_plan: plan(),
+      experiment: existing.experiment,
+      manifest: existing.manifest,
+      requested_symbols: symbols,
+      strategy: reboundStrategy,
+      target: { ...reboundTarget, saved_layout_id: 999 },
+      timeframe: '1D',
+      format: 'csv',
+    }), (error) => error.code === 'RUN_RESUME_ARTIFACT_INVALID'
+      && /stable target identity/.test(error.message));
+  });
 });
 
 describe('Durable Strategy Experiment execution', () => {

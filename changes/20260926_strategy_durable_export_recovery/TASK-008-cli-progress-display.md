@@ -33,6 +33,17 @@ scope: cli-progress-presentation
 
 不顯示目前Symbol、完整Watchlist、attempt history、error message、Trades或其他unbounded內容。
 
+在還沒有Symbol denominator可呈現的階段，使用同一個TTY單行區域顯示fixed process information，例如：
+
+```text
+Process: Validating Watchlist Symbols...
+```
+
+- Watchlist validation不顯示百分比或per-Symbol進度。
+- Run／Resume可顯示Preflight、ownership、durable initialization、Resume resolution、Watchlist validation、Strategy sync、Experiment preparation／execution及finalization等fixed stages。
+- Process event只包含bounded stage enum，不包含Symbol、路徑、錯誤或任意User文字。
+- 進入Experiment Symbol execution後，同一行切換為既有percentage progress。
+
 ## Progress semantics
 
 ### Invocation denominator
@@ -87,6 +98,12 @@ on_progress({
     name,
   },
 })
+```
+
+非Symbol execution階段另提供optional bounded callback：
+
+```js
+on_status({ stage: 'validating_watchlist' })
 ```
 
 - Event只在authoritative manifest transition成功persist後發出。
@@ -184,6 +201,7 @@ on_progress({
 ## Acceptance criteria
 
 - [x] Formal `strategy run`與`strategy resume`在TTY顯示單行progress。
+- [x] Run／Resume在Preflight、Watchlist validation、Strategy sync、Experiment preparation及finalization等階段顯示bounded process information；Watchlist validation不顯示百分比。
 - [x] 顯示內容僅包含百分比／processed、Experiment、succeeded／failed。
 - [x] Retry不重複計數；retry exhaustion算processed failed並繼續。
 - [x] Resume denominator只包含locked plan中的non-succeeded Symbols。
@@ -200,10 +218,11 @@ on_progress({
 Completed on 2026-09-30.
 
 - 新增failure-isolated TTY renderer；使用carriage return更新單行，normal／failure／signal／exception結束時只補一個newline，non-TTY完全不寫入。
+- 新增bounded `on_status({ stage })` seam；Run／Resume在沒有Symbol progress可顯示時提供fixed process information，Watchlist validation只顯示`Process: Validating Watchlist Symbols...`。
 - 顯示順序固定為percentage／processed、original Experiment identity、succeeded／failed；terminal較窄時先縮短bar及Experiment name，不省略必要labels。
 - Run與Resume共用durable execution progress seam。Initial event由locked invocation selection計算total；terminal counters只在`manifest.json`的`succeeded`／`failed`transition成功persist後更新。
 - Retry的`running`／`retry_wait`不計數；attempt 2／3 success只算一次。Retry exhaustion與fatal error已durably保存failed時各算一次，未執行Symbols不計入。
 - Resume denominator只包含locked post-lease plan選取的non-succeeded Symbols；只Resume原始Experiment 2/3時仍顯示`Experiment 2/3`。
 - CLI只為formal `strategy run`與`strategy resume`建立renderer；dry-run、legacy exporter、MCP及programmatic Core在沒有callback時不輸出progress。
-- Targeted CLI／Experiment／Run／Resume suites：63 tests passed。Node 22與Node 24完整unit suites各661/661 passed；lint為0 errors（保留3筆既有warnings），`git diff --check`通過。
+- Targeted CLI／Experiment／Run／Resume suites：64 tests passed。Node 22與Node 24完整unit suites各664/664 passed；lint為0 errors（保留3筆既有warnings），`git diff --check`通過。
 - Controlled PTY smoke確認0%／66.7%／100%原地更新、100%仍可搭配failed final JSON，且JSON從新行開始；non-TTY smoke只輸出JSON，沒有carriage-return progress。

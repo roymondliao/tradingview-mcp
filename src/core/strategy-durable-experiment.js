@@ -23,6 +23,30 @@ function equal(left, right) {
   return stableJsonStringify(left) === stableJsonStringify(right);
 }
 
+/** Stable Strategy identity; Pane entity_id is a volatile runtime binding. */
+export function stableDurableStrategyIdentity(strategy) {
+  return Object.freeze({
+    script_id: strategy?.script_id,
+    version: strategy?.version == null ? null : String(strategy.version),
+    source_sha256: strategy?.source_sha256,
+  });
+}
+
+/** Stable Layout/Pane identity; Chart state and renderer bindings are volatile. */
+export function stableDurableTargetIdentity(target) {
+  const savedLayoutId = target?.saved_layout_id ?? null;
+  return Object.freeze({
+    layout_name: target?.layout_name,
+    saved_layout_id: savedLayoutId,
+    ...(savedLayoutId == null && {
+      layout_id: target?.layout_id ?? null,
+      url_chart_id: target?.url_chart_id ?? null,
+    }),
+    pane_index: target?.pane_index,
+    pane_id: target?.pane_id ?? null,
+  });
+}
+
 function parameterSetFromPlan(plan) {
   return Object.freeze({
     index: plan.parameter_set.index,
@@ -153,8 +177,6 @@ function assertExperimentIdentity(actual, expected) {
     'run_id',
     'experiment_id',
     'parameter_set',
-    'strategy',
-    'target',
     'base_inputs_fingerprint',
     'inputs_fingerprint',
     'effective_inputs',
@@ -163,6 +185,18 @@ function assertExperimentIdentity(actual, expected) {
     if (!equal(actual[field], expected[field])) {
       throw artifactInvalid(`experiment.json ${field} does not match the persisted Run plan.`);
     }
+  }
+  if (!equal(
+    stableDurableStrategyIdentity(actual.strategy),
+    stableDurableStrategyIdentity(expected.strategy),
+  )) {
+    throw artifactInvalid('experiment.json stable Strategy identity does not match the persisted Run plan.');
+  }
+  if (!equal(
+    stableDurableTargetIdentity(actual.target),
+    stableDurableTargetIdentity(expected.target),
+  )) {
+    throw artifactInvalid('experiment.json stable target identity does not match the persisted Run plan.');
   }
 }
 

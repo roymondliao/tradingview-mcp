@@ -45,6 +45,8 @@ import { executeStrategySync } from './strategy-sync.js';
 import {
   executeDurableStrategyExperiment,
   prepareDurableStrategyExperiment,
+  stableDurableStrategyIdentity,
+  stableDurableTargetIdentity,
 } from './strategy-durable-experiment.js';
 import {
   executeDurableStrategySymbolAttempt,
@@ -53,6 +55,7 @@ import { withChartSession } from './chart-session.js';
 import { sha256Hex, stableJsonStringify } from './stable-json.js';
 import { reconnectTo } from '../connection.js';
 import { validateNamedWatchlistSymbols } from './watchlist.js';
+import { emitStrategyAutomationStatus } from './strategy-progress.js';
 
 const PINE_SOURCE_MAX_BYTES = 8 * 1024 * 1024;
 
@@ -168,25 +171,6 @@ function assertPlanIdentity(run) {
   return true;
 }
 
-function stableTargetIdentity(target) {
-  return {
-    layout_name: target?.layout_name,
-    saved_layout_id: target?.saved_layout_id ?? null,
-    layout_id: target?.layout_id ?? null,
-    url_chart_id: target?.url_chart_id ?? null,
-    pane_index: target?.pane_index,
-    pane_id: target?.pane_id ?? null,
-  };
-}
-
-function stableStrategyIdentity(strategy) {
-  return {
-    script_id: strategy?.script_id,
-    version: strategy?.version == null ? null : String(strategy.version),
-    source_sha256: strategy?.source_sha256,
-  };
-}
-
 function assertExperimentArtifacts(artifacts) {
   const { run, experiments, manifests } = artifacts;
   const experimentById = new Map(experiments.map((item) => [item.experiment_id, item]));
@@ -198,12 +182,12 @@ function assertExperimentArtifacts(artifacts) {
       if (
         !valuesEqual(experiment.base_inputs_fingerprint, run.base_inputs_fingerprint)
         || !valuesEqual(
-          stableStrategyIdentity(experiment.strategy),
-          stableStrategyIdentity(run.resolved.strategy),
+          stableDurableStrategyIdentity(experiment.strategy),
+          stableDurableStrategyIdentity(run.resolved.strategy),
         )
         || !valuesEqual(
-          stableTargetIdentity(experiment.target),
-          stableTargetIdentity(run.resolved.target),
+          stableDurableTargetIdentity(experiment.target),
+          stableDurableTargetIdentity(run.resolved.target),
         )
       ) {
         throw resumeError(
@@ -215,8 +199,8 @@ function assertExperimentArtifacts(artifacts) {
       if (
         !experiment
         || !valuesEqual(
-          stableStrategyIdentity(manifest.strategy),
-          stableStrategyIdentity(run.resolved.strategy),
+          stableDurableStrategyIdentity(manifest.strategy),
+          stableDurableStrategyIdentity(run.resolved.strategy),
         )
         || !valuesEqual(manifest.inputs_fingerprint, plan.inputs_fingerprint)
         || manifest.watchlist.snapshot_id !== run.resolved.watchlist.snapshot_id
@@ -1097,8 +1081,10 @@ export async function resumeStrategyAutomation({
   run_directory,
   signal,
   on_progress,
+  on_status,
   _deps = {},
 } = {}) {
+  await emitStrategyAutomationStatus(on_status, 'resolving_resume');
   const runWithResumeContext = _deps.withStrategyResumeContext || withStrategyResumeContext;
   return runWithResumeContext({
     run_directory,
@@ -1116,6 +1102,7 @@ export async function resumeStrategyAutomation({
         const alreadyLockedSession = async (_options, operation) => operation();
         let executionWatchlist = local.artifacts.watchlist;
         if (local.artifacts.watchlist.symbol_validation?.performed === false) {
+          await emitStrategyAutomationStatus(on_status, 'validating_watchlist');
           const validateWatchlist = _deps.validateNamedWatchlistSymbols
             || validateNamedWatchlistSymbols;
           const symbolValidation = await validateWatchlist({
@@ -1145,6 +1132,7 @@ export async function resumeStrategyAutomation({
         let prepared;
         let selections;
         if (local.plan.setup_required) {
+          await emitStrategyAutomationStatus(on_status, 'synchronizing_strategy');
           const runSync = _deps.executeStrategySync || executeStrategySync;
           const sync = await runSync({
             saved_name: run.requested.strategy.saved_name,
@@ -1170,6 +1158,7 @@ export async function resumeStrategyAutomation({
             patch: { resolved: { ...run.resolved, strategy } },
           });
           await store.replaceRun(run);
+          await emitStrategyAutomationStatus(on_status, 'preparing_experiments');
           const prepare = _deps.prepareParameterSetExecution || prepareParameterSetExecution;
           prepared = await prepare({
             candidate_schema: identity.candidate_schema,
@@ -1194,6 +1183,7 @@ export async function resumeStrategyAutomation({
             format: run.requested.output.format,
           }));
         } else {
+          await emitStrategyAutomationStatus(on_status, 'preparing_experiments');
           strategy = identity.strategy;
           runtimeStrategy = strategy;
           context = identity.target;
@@ -1206,12 +1196,14 @@ export async function resumeStrategyAutomation({
               resolved: {
                 ...run.resolved,
                 target: { ...run.resolved.target, ...sanitizeCoreContext(context) },
+                strategy: { ...run.resolved.strategy, ...strategy },
               },
             },
           });
           await store.replaceRun(run);
         }
         assertNotAborted(signal);
+        await emitStrategyAutomationStatus(on_status, 'executing_experiments');
         await executeDurableStrategyPlan({
           store,
           run,
@@ -1233,6 +1225,7 @@ export async function resumeStrategyAutomation({
     } catch (error) {
       primaryError = error;
     }
+    await emitStrategyAutomationStatus(on_status, 'finalizing_run');
     const finalized = await finalizeDurableStrategyRun({
       store,
       error: primaryError,
