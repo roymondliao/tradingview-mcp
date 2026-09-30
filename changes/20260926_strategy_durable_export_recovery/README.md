@@ -222,7 +222,7 @@ Execution／restore 階段不建立重複 error code，沿用既有 `PANE_CONTEX
 
 ## Design status
 
-Artifact v2、retry classifier、identity rebind、signal handling、cross-process leases、stale attempt cleanup與不實作`strategy status`皆已定案。D-014已依652 × 3 filesystem baseline補齊量化thresholds並改為`accepted`；TASK-008～010已完成，TASK-011將移除durable workflow中的incidental Chart Symbol／resolution persistence與restore，之後再完成其餘controlled live scenarios及`stock_all_list` 652-Symbol single-baseline gate。
+Artifact v2、retry classifier、identity rebind、durable worker Pane、signal handling、cross-process leases、stale attempt cleanup與不實作`strategy status`皆已定案。D-014已依652 × 3 filesystem baseline補齊量化thresholds並改為`accepted`；TASK-008～011已完成，之後再完成其餘controlled live scenarios及`stock_all_list` 652-Symbol single-baseline gate。
 
 ## Delivery sequence
 
@@ -267,8 +267,8 @@ Artifact v2 state + durable store
 | [TASK-008](./TASK-008-cli-progress-display.md) | Strategy Run and Resume CLI Progress Display | `done` | TASK-006 |
 | [TASK-009](./TASK-009-watchlist-symbol-validation.md) | TradingView Watchlist Symbol Resolvability Validation | `done` | TASK-002, TASK-006 |
 | [TASK-010](./TASK-010-resume-stable-identity-boundary.md) | Resume Stable Identity and Runtime Binding Boundary | `done` | TASK-005, TASK-006 |
-| [TASK-011](./TASK-011-remove-incidental-chart-state.md) | Remove Incidental Chart Symbol and Resolution State | `todo` | TASK-006, TASK-009, TASK-010 |
+| [TASK-011](./TASK-011-remove-incidental-chart-state.md) | Remove Incidental Chart Symbol and Resolution State | `done` | TASK-006, TASK-009, TASK-010 |
 
 ## Completion record
 
-TASK-001～006及TASK-008～010 implementation皆已完成。TASK-011已建立、尚未實作，用來移除durable Run／Resume的incidental Chart Symbol／resolution artifact fields、response exposure與restore behavior。TASK-007的deterministic fault matrix、Node 22／24 full regression、652 × 3 × 3 filesystem benchmark、D-014 thresholds及manual guide已完成；Feature仍為`in_progress`，等待TASK-011、其他controlled TradingView scenarios及exact-name`stock_all_list` 652-Symbol single-baseline live acceptance。詳細數據與未完成項目見TASK-007～011 completion records。
+TASK-001～006及TASK-008～011 implementation皆已完成。TASK-011已移除durable Run／Resume的incidental Chart Symbol／resolution artifact fields、response exposure與restore behavior，同時保持legacy restore與舊artifact-v2相容。TASK-007的deterministic fault matrix、Node 22／24 full regression、652 × 3 × 3 filesystem benchmark、D-014 thresholds及manual guide已完成；Feature仍為`in_progress`，等待其他controlled TradingView scenarios及exact-name`stock_all_list` 652-Symbol single-baseline live acceptance。詳細數據與未完成項目見TASK-007～011 completion records。

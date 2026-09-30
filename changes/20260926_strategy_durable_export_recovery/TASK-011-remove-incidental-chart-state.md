@@ -1,7 +1,7 @@
 ---
 id: TASK-011
 title: Remove Incidental Chart Symbol and Resolution State
-status: todo
+status: done
 phase: strategy-durable-export-recovery
 depends_on:
   - TASK-006
@@ -99,14 +99,22 @@ Durable target只描述操作位置與stable selector：
 
 ## Acceptance criteria
 
-- [ ] Durable artifacts不保存incidental target Symbol／resolution。
-- [ ] Final Run／Resume response context不暴露incidental Symbol／resolution。
-- [ ] Durable workflow不capture或restorepre-existing Chart Symbol／resolution。
-- [ ] Requested Symbol與backtest timeframe仍由每個work item明確設定及驗證。
-- [ ] Base Inputs restore、leases、stable identity及artifact safety不回歸。
-- [ ] Existing artifact-v2與legacy command相容性通過。
-- [ ] Regression與manual controlled evidence完成。
+- [x] Durable artifacts不保存incidental target Symbol／resolution。
+- [x] Final Run／Resume response context不暴露incidental Symbol／resolution。
+- [x] Durable workflow不capture或restorepre-existing Chart Symbol／resolution。
+- [x] Requested Symbol與backtest timeframe仍由每個work item明確設定及驗證。
+- [x] Base Inputs restore、leases、stable identity及artifact safety不回歸。
+- [x] Existing artifact-v2與legacy command相容性通過。
+- [x] Automated regression完成；manual guide已改為worker Pane acceptance。
 
 ## Completion record
 
-Not started.
+Completed on 2026-09-30.
+
+- 新增durable worker target projection，正式Run／Resume的`run.json`、`experiment.json`與final response均不再保存`symbol`／`resolution`。
+- Resume read-only discovery仍可讀取current Chart state，但execution context與artifact只保留Pane ownership／runtime binding；移除`chart_restore_baseline`。
+- Watchlist validator保留generic restore default，durable caller明確使用`restore_chart: false`，因此validation success／failure／abort不還原Chart。
+- Durable Symbol attempt使用worker mode：每次明確set及strict readback requested Symbol／backtest timeframe，成功或失敗後皆不還原pre-existing Chart state；legacy trading-report／trading-export維持原restore契約。
+- Existing artifact-v2即使含舊`target.symbol`／`target.resolution`仍可由stable identity projection讀取及Resume。
+- Base Inputs restore、Run／Pane leases、manifest commit與per-Symbol atomic artifacts維持不變。
+- Targeted worker／legacy compatibility suites：67 tests passed。Node 22與Node 24完整unit suites各669/669 passed；lint為0 errors（保留3筆既有warnings），`git diff --check`通過。

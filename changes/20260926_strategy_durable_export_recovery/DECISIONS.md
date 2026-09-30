@@ -23,6 +23,7 @@ Status: `approved`
 | D-013 | Stale attempt staging cleanup | `accepted` | 持有Run lease後，只清除非succeeded Symbol可證明ownership的staging／uncommitted final directory。 |
 | D-014 | Benchmark and live acceptance thresholds | `accepted` | 652 × 3 filesystem baseline已量測；採具硬體餘裕的固定gate與652-symbol single-baseline live acceptance。 |
 | D-015 | Optional `strategy status` command | `accepted` | 本Change不實作；未來如有操作需求再以相同local reader另開Change。 |
+| D-016 | Durable worker Pane Chart state | `accepted` | Formal Run／Resume不保存或restore invocation前Symbol／timeframe；每個work item自行set與readback。 |
 
 ## Accepted decisions
 
@@ -464,7 +465,7 @@ Decision:
 
 Stable fields必須相同：artifact/persisted config identity、Pine source hash、Saved Layout identity、Pane selector、Saved Strategy script/version/source、Candidate schema、Base／effective Input plans、Watchlist Snapshot與Parameter Set／Experiment fingerprints。Resume以`run.json.requested`為執行來源，不要求原Config file仍存在或未修改；config path/hash只作audit。
 
-以下runtime fields可rebind：`target_id`、`tab_index`、CDP session與Pane `entity_id`。Entity只可在同一resolved Pane有恰好一個matching `script_id + version` Strategy且Input schema一致時rebind。Current Symbol／timeframe成為本次Resume restore baseline。
+以下runtime fields可rebind：`target_id`、`tab_index`、CDP session與Pane `entity_id`。Entity只可在同一resolved Pane有恰好一個matching `script_id + version` Strategy且Input schema一致時rebind。Current Symbol／timeframe只用於read-only runtime discovery，不成為identity、artifact或restore baseline。
 
 Current Inputs values只接受persisted Base或任一planned effective fingerprint；其他值視為external drift並拒絕Resume。Resume開始selected experiments前先restore persisted Base Inputs。
 
@@ -497,7 +498,7 @@ Required tests:
 Decision:
 
 - CLI建立AbortController；Core接收signal，不自行註冊global process handlers。
-- First SIGINT／SIGTERM不開始新attempt，立即cancel backoff，等待current bounded phase後restore Chart／Base Inputs，將Run標為`failed`與`RUN_INTERRUPTED`，release leases。
+- First SIGINT／SIGTERM不開始新attempt，立即cancel backoff，等待current bounded phase後restore Base Inputs，將Run標為`failed`與`RUN_INTERRUPTED`，release leases；durable worker Pane不restore Chart Symbol／timeframe。
 - Graceful exit codes為SIGINT `130`、SIGTERM `143`。
 - Second signal立即exit，不再保證cleanup。
 - SIGKILL／crash／power loss不保證state update；下次Resume使用最後atomic state與stale lease rules。
@@ -517,11 +518,11 @@ Compatibility impact:
 
 Failure behavior:
 
-- Restore失敗沿用`CHART_RESTORE_FAILED`並保留可Resume state。
+- Base Inputs restore失敗沿用既有Parameter Set error並保留可Resume state；durable worker沒有Chart restore failure階段。
 
 Required tests:
 
-- Signal during backoff、Symbol phase、manifest commit與restore。
+- Signal during backoff、Symbol phase、manifest commit與Base Inputs restore。
 - Second signal simulated abrupt exit recovery。
 
 ### D-012 Cross-process Run／Pane lease
@@ -658,3 +659,41 @@ Failure behavior:
 Required tests:
 
 - Local reader保持無CDP依賴，供Resume與未來status重用。
+
+### D-016 Durable worker Pane Chart state
+
+Decision:
+
+- Formal `strategy run`／`strategy resume`持有Pane lease期間將該Pane視為worker。
+- `run.json.resolved.target`、`experiment.json.target`及final response `context`不保存current／pre-existing Symbol與resolution。
+- Watchlist validation與durable Symbol attempt不restore invocation前Chart state；下一個work item必須明確set自己的Symbol與backtest timeframe並strict readback。
+- Base Inputs restore維持必要correctness guard。
+- Existing artifact-v2若包含舊`symbol`／`resolution`仍可Resume；這些欄位忽略且不參與identity。
+- Standalone trading-report與legacy trading-export保持原本Chart restore contract。
+
+Rationale:
+
+Pane開始時顯示的Symbol／timeframe是偶發UI state，無法代表Run intent，也不能在crash後提供可靠restore。Durable execution的正確來源是frozen Watchlist、manifest index及persisted backtest timeframe。
+
+Rejected alternatives:
+
+- 將current Symbol當Resume identity：會因crash停留位置不同而錯誤拒絕Resume。
+- 每個attempt restore invocation baseline：增加mutation與failure surface，且下一個work item仍必須重新set目標。
+- 僅從response隱藏但繼續persist／restore：仍保留錯誤的runtime dependency。
+
+Compatibility impact:
+
+- 新artifact-v2不再寫入這兩個optional舊欄位；schema version不變。
+- Legacy commands不受影響。
+
+Failure behavior:
+
+- Symbol／timeframe set或readback failure依既有retry policy處理；不額外嘗試restore prior Chart state。
+- Signal／fatal error仍persist最後durable state、restore Base Inputs並release leases。
+
+Required tests:
+
+- 新Run／Experiment／response不含Symbol／resolution。
+- 舊artifact-v2含這些欄位仍可Resume。
+- Durable Watchlist／attempt success、failure與abort都不呼叫Chart restore。
+- Legacy Chart restore regression維持通過。

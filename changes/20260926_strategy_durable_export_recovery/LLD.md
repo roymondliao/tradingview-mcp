@@ -27,7 +27,7 @@ Report A
 - 每個 Experiment `manifest.json` 的 durable state transitions。
 - 獨立的 `strategy resume --run-directory` Core／CLI。
 - Stable identity validation、Desktop restart target rebind、Run／Pane cross-process locks。
-- SIGINT／SIGTERM graceful stop、restore 與 next-process recovery。
+- SIGINT／SIGTERM graceful stop、Base Inputs restore與next-process recovery。
 - Deterministic fault injection、652 × 3 synthetic benchmark 與 652-Symbol live endurance gate。
 
 ### Compatibility boundary
@@ -48,7 +48,7 @@ Report A
 | `src/core/strategy-parameter-sets.js` | Base Inputs capture、plans、sequential apply、fresh Report、final restore | 目前一次執行全部 Parameter Sets，且 completed results只存在 memory；需支援 persisted plan、selected pending Experiments與 Resume-start Base Inputs restore。 |
 | `src/core/strategy-run-config.js` | Strict Config v1、relative paths、source hash、output collision | New Run保持此 preflight；Resume不重新讀 Config，也不能因 Run Directory collision走此入口。 |
 | `src/core/strategy-run-resolver.js` | Exact Layout／Saved Strategy／Pane Strategy resolution | 可重用於 Resume stable identity re-resolution；`target_id`／`tab_index`／`entity_id`需視為可 rebind runtime IDs。 |
-| `src/core/chart-session.js` | In-process mutex、strict Pane readback、Symbol/Timeframe restore | Mutex不能阻擋另一個 CLI process；保留 mutex並在外層加入 cross-process Pane lease。 |
+| `src/core/chart-session.js` | In-process mutex、strict Pane readback、optional Symbol/Timeframe restore | Mutex不能阻擋另一個 CLI process；formal Run／Resume使用worker mode且不restore Chart，legacy callers保留restore。 |
 | `src/connection.js` | CDP discovery與 connection-level bounded retries | 已有最多5次 connection retries；durable Symbol retry不再額外把 `CDP_*` 當一般 Symbol transient error，CDP failure終止本 invocation，交由明確 Resume re-resolve。 |
 | `src/cli/commands/strategy.js` | `strategy run`與 trading commands | 新增 `strategy resume`，並為 Run／Resume注入 graceful abort signal。 |
 | `src/cli/router.js` | JSON output與 exit code 0／1／2 | 新增 explicit signal exit code handling；既有一般與 CDP exit codes保持。 |
@@ -195,7 +195,7 @@ Rules：
 
 - Initial `run.json`可暫時沒有post-sync `resolved.strategy`、`base_inputs`與`planned_experiments`；Strategy sync與Base capture成功後必須在任何Parameter mutation前atomic update補齊。
 - Resume看到setup metadata尚未完成時，可依persisted `requested`與local source hash重新執行idempotent Strategy sync／Base capture。
-- `entity_id`、`target_id`與`tab_index`只作audit；Resume可更新成新runtime binding，但stable target／strategy fields必須匹配。
+- `entity_id`、`target_id`與`tab_index`只作audit；Resume可更新成新runtime binding，但stable target／strategy fields必須匹配。Target不保存Symbol／resolution。
 - `status`只允許`running|succeeded|failed`。
 - `summary`與`experiments`是derived bounded view；authoritative Symbol detail仍在manifests。
 - `updated_at`只在Run-level transition、setup commit、Experiment terminal update與finalization更新，不需每個Symbol重寫`run.json`。
@@ -556,7 +556,7 @@ npm run tv -- strategy resume \
    set run and selected Experiment status=running; update updated_at
    restore Base Inputs
    execute selected Experiments/Symbols with fresh retry budgets
-   restore Base Inputs and Chart context
+   restore Base Inputs；worker Pane保留最後一個work item的Chart state
 
 6. finalization
    derive summaries from manifests
@@ -588,7 +588,7 @@ Volatile, may rebind afterDesktop restart：
 - `tab_index`
 - CDP websocket/session identity
 - Pane Strategy `entity_id`，但只有在同一Pane恰有一個matching `script_id + version` Strategy且Input schema一致時。
-- Current Pane Symbol／timeframe；它們成為本次invocation的Chart restore baseline，不必等於首次Run開始時的值。
+- Current Pane Symbol／timeframe不屬於identity或artifact；runtime discovery可讀取，但execution不保存或restore它們。
 
 Current Inputs values不是任意volatile identity：只接受persisted Base或任一planned effective fingerprint，避免Resume覆寫User在crash後手動修改的Inputs。
 
@@ -648,7 +648,7 @@ New Run取得lease時Run Directory尚未建立，因此canonical path由「neare
 - 不開始下一個attempt／Symbol／Experiment。
 - Retry backoff立即cancel。
 - 已開始的CDP phase不以detached Promise強制中斷，而是依現有bounded timeout結束。
-- `finally`執行Chart與Base Inputs restore。
+- `finally`執行Base Inputs restore；不執行Chart Symbol／timeframe restore。
 - 可完成state write時，current Experiment／Run轉`failed`，error code為`RUN_INTERRUPTED`。
 - Release leases。
 - CLI exit code：SIGINT `130`，SIGTERM `143`。
@@ -693,13 +693,12 @@ Message限制1000 characters；不保存stack、cause、raw TradingView payload�
 - Every requested Experiment manifest is`succeeded`。
 - Every requested Symbol entry is`succeeded`且artifact verification通過。
 - Base Inputs restore成功。
-- Final Chart restore成功。
 - Atomic replace `run.json`為`succeeded`並更新summary／updated_at。
 
 ### Failed completion
 
 - Retry exhaustion可繼續其他Symbols，但Experiment與Run最後是`failed`。
-- Fatal identity／CDP／artifact／restore error停止本invocation並將Run標為`failed`；未開始工作保留pending或skipped。
+- Fatal identity／CDP／artifact／Base Inputs restore error停止本invocation並將Run標為`failed`；未開始工作保留pending或skipped。
 - 若state write本身失敗，回傳原始／state error，disk上的最後valid status可能仍是`running`；Resume local validation必須處理。
 - 不使用`partial`。
 
@@ -826,7 +825,7 @@ Inject failure/crash at：
 - Desktop target／entity volatile IDs rebind成功。
 - Source、Layout、Pane、Strategy version、Inputs或Watchlist drift拒絕。
 - Duplicate Run／Pane processes在mutation前blocked。
-- SIGINT graceful restore；second signal／simulated hard crash由Resume恢復。
+- SIGINT graceful Base Inputs restore；second signal／simulated hard crash由Resume恢復。
 - Existing single-Symbol／Active Watchlist V1 tests不回歸。
 
 ### Capacity and live gates

@@ -256,7 +256,7 @@ describe('Single-Symbol Strategy Trading export', () => {
     assert.equal(reconciliation.reconciliation.success, true);
   });
 
-  it('uses the explicit durable attempt wrapper and the same verified export workflow', async () => {
+  it('uses the verified export workflow without restoring the durable worker Pane', async () => {
     const directory = temporaryDirectory();
     const store = await createDurableRunStore({ output_directory: directory, run_id: 'durable-run' });
     const attempt = await store.beginSymbolAttempt({
@@ -275,13 +275,13 @@ describe('Single-Symbol Strategy Trading export', () => {
       batch_limit: 1,
       _deps: {
         export: runtime.deps,
-        restoreSymbolSession: runtime.deps.restoreSymbolSession,
       },
     });
     assert.deepEqual(runtime.calls.batches, [0, 1]);
-    assert.equal(runtime.calls.restored, 1);
+    assert.equal(runtime.calls.restored, 0);
     assert.equal(result.reconciliation.success, true);
-    assert.equal(result.chart_restore.success, true);
+    assert.equal('chart_restore' in result, false);
+    assert.equal('symbol_session' in result, false);
     assert.equal(
       result.artifacts.report.relative_path,
       'experiments/baseline/symbols/TWSE_u3A_2344/report.json',

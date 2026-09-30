@@ -128,7 +128,7 @@ describe('Strategy Resume stable identity rebind', () => {
     assert.equal(setup.target.target_id, 'new-target');
   });
 
-  it('rebinds volatile target, tab, entity, Symbol, and timeframe IDs', async () => {
+  it('rebinds volatile target, tab, and entity IDs without exposing Chart state', async () => {
     const fixture = await createResumeFixture({ root: temporaryDirectory() });
     const local = await loadStrategyResume({ run_directory: fixture.store.run_path });
     const runtime = identityDependencies(fixture);
@@ -136,11 +136,9 @@ describe('Strategy Resume stable identity rebind', () => {
     assert.equal(result.target.target_id, 'new-target');
     assert.equal(result.target.tab_index, 9);
     assert.equal(result.strategy.entity_id, 'new-entity');
-    assert.equal(result.target.symbol, 'TPEX:5483');
-    assert.equal(result.target.resolution, '60');
-    assert.deepEqual(result.chart_restore_baseline, {
-      symbol: 'TPEX:5483', resolution: '60',
-    });
+    assert.equal('symbol' in result.target, false);
+    assert.equal('resolution' in result.target, false);
+    assert.equal('chart_restore_baseline' in result, false);
     assert.equal(runtime.calls.watchlist, 0);
   });
 

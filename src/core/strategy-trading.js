@@ -156,6 +156,7 @@ async function executeFreshStrategySymbol({
   context,
   timeout_ms,
   command,
+  worker_mode = false,
   _deps,
 }, operation) {
   validateStrategySymbolRequest({ entity_id, symbol, context, command });
@@ -185,6 +186,9 @@ async function executeFreshStrategySymbol({
     symbol: requestedSymbol,
     timeframe,
     timeout_ms,
+    assert_initial_chart_state: !worker_mode,
+    capture_original_chart_state: !worker_mode,
+    restore_on_failure: !worker_mode,
     _deps,
   });
   const onSymbolSession = _deps?.onSymbolSession;
@@ -662,6 +666,7 @@ export async function executeStrategySymbolExport({
   batch_limit,
   timeout_ms,
   artifact_writer,
+  worker_mode = false,
   _deps = {},
 } = {}) {
   validateStrategySymbolRequest({
@@ -679,7 +684,7 @@ export async function executeStrategySymbolExport({
   try {
     const execution = await executeFreshStrategySymbol({
       entity_id, symbol, timeframe, context, timeout_ms,
-      command: 'trading_export', _deps,
+      command: 'trading_export', worker_mode, _deps,
     }, async ({ entity_id: requestedEntityId, inspected, session, observation }) => {
       const reportA = canonicalReportResult({
         entity_id: requestedEntityId, inspected, session, observation, context,
@@ -845,7 +850,7 @@ export async function executeStrategySymbolExport({
 
 /**
  * Execute one durable Run/Resume Symbol attempt through the canonical export workflow.
- * The retry executor owns staging commit/abort; this wrapper owns per-attempt Chart restore.
+ * The retry executor owns staging commit/abort. The durable Pane is a worker and is not restored.
  */
 export async function executeDurableStrategySymbolAttempt({
   attempt,
@@ -861,34 +866,20 @@ export async function executeDurableStrategySymbolAttempt({
 } = {}) {
   const writer = createStrategySymbolAttemptArtifactWriter({ attempt, format });
   const executeExport = _deps.executeStrategySymbolExport || executeStrategySymbolExport;
-  const restoreSession = _deps.restoreSymbolSession || _restoreSymbolSession;
-  let symbolSession = null;
-  let result = null;
-  try {
-    result = await executeExport({
-      entity_id: entity_id || identity?.entity_id,
-      symbol,
-      timeframe,
-      context,
-      format,
-      batch_limit,
-      timeout_ms,
-      artifact_writer: writer,
-      _deps: {
-        ..._deps.export,
-        onSymbolSession: async (session) => { symbolSession = session; },
-      },
-    });
-    return result;
-  } finally {
-    if (symbolSession) {
-      const restore = await restoreSession(symbolSession, {
-        timeout_ms,
-        _deps: _deps.export,
-      });
-      if (result) result.chart_restore = restore;
-    }
-  }
+  const result = await executeExport({
+    entity_id: entity_id || identity?.entity_id,
+    symbol,
+    timeframe,
+    context,
+    format,
+    batch_limit,
+    timeout_ms,
+    artifact_writer: writer,
+    worker_mode: true,
+    _deps: _deps.export,
+  });
+  const { symbol_session: _symbolSession, chart_restore: _chartRestore, ...publicResult } = result;
+  return publicResult;
 }
 
 /** Export one standalone Strategy/Symbol with the legacy V1 artifact transaction. */

@@ -86,16 +86,16 @@ Fault injection must useexplicit test seam or documentedmanual timing; productio
 - Manual test document includes commands、expected bounded responses、artifact checks、interrupt points、Resume commands andcleanup guidance。
 - Recordrun IDs、snapshot IDs、counts、summary andsanitized failure codes；do not commitUser-specific absolute paths orlarge output artifacts。
 - Update everyTask status／completion record only afterits acceptance passes。
-- Updatefeature README to`done`only afterdeterministic andlive gates pass。
+- Update feature README to`done`only afterdeterministic andlive gates pass。
 
 ## Acceptance criteria
 
 - [x] Allfault windows have deterministic test ordocumented controlled live evidence。
 - [x] Node 22 unit／relevant all suites andlint pass。
-- [x] 652 × 3 benchmark evidence is recorded andD-014 becomes`accepted`withmeasured thresholds。
-- [ ] Retry success、retry exhaustion、graceful interrupt、hard crash andDesktop restart Resume are verified。
-- [ ] SameRun ID Resume skips allsucceeded Symbols in controlled live evidence。
-- [ ] `stock_all_list`complete Snapshot count is652 andsingle-baseline Run reaches652／652 succeeded。
+- [x] 652 × 3 benchmark evidence is recorded and D-014 becomes `accepted` with measured thresholds。
+- [ ] Retry success、retry exhaustion、graceful interrupt、hard crash and Desktop restart Resume are verified。
+- [ ] SameRun ID Resume skips all succeeded Symbols in controlled live evidence。
+- [ ] `stock_all_list`complete Snapshot count is 652 and single-baseline Run reaches 652／652 succeeded。
 - [x] Legacy formal dry-run、single-Symbol andActive Watchlist exports have no regression。
 - [x] Manual test document andallcompletion records are current。
 - [x] `git diff --check`passes andworking tree contains no generated output artifacts。

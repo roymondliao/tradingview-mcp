@@ -47,6 +47,13 @@ export function stableDurableTargetIdentity(target) {
   });
 }
 
+/** Persistable worker Pane context; current Chart Symbol/timeframe are not Run identity. */
+export function durableStrategyTargetContext(target) {
+  const context = sanitizeCoreContext(target) || {};
+  const { symbol: _symbol, resolution: _resolution, ...workerContext } = context;
+  return Object.freeze(workerContext);
+}
+
 function parameterSetFromPlan(plan) {
   return Object.freeze({
     index: plan.parameter_set.index,
@@ -83,7 +90,7 @@ function targetIdentity(run, target) {
   if (!resolved || !resolved.layout_name || !Number.isInteger(resolved.pane_index)) {
     throw artifactInvalid('A resolved target identity is required for an Experiment.');
   }
-  return Object.freeze({ ...resolved });
+  return durableStrategyTargetContext(resolved);
 }
 
 /** Build immutable experiment.json v2 from a persisted Run plan. */

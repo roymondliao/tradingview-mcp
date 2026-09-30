@@ -295,14 +295,19 @@ function formalDeps(preflight, calls, {
       calls.events.push('store-created');
       return createDurableRunStore(options);
     },
-    withChartSession: async ({ context: sessionContext }, operation) => {
+    withChartSession: async ({ context: sessionContext, capture_chart_state: captureChartState }, operation) => {
       calls.sessions = (calls.sessions || 0) + 1;
-      assert.equal(sessionContext.resolution, '1D');
+      assert.equal(captureChartState, false);
+      assert.equal('symbol' in sessionContext, false);
+      assert.equal('resolution' in sessionContext, false);
       return operation({ context: sessionContext });
     },
     dryRunStrategyAutomation: async () => preflight,
-    validateNamedWatchlistSymbols: async ({ snapshot, timeframe }) => {
+    validateNamedWatchlistSymbols: async ({ snapshot, timeframe, context, restore_chart: restoreChart }) => {
       calls.events.push('watchlist-validated');
+      assert.equal(restoreChart, false);
+      assert.equal('symbol' in context, false);
+      assert.equal('resolution' in context, false);
       const artifact = JSON.parse(readFileSync(
         join(preflight._internal.loaded.requested.output.run_path, 'watchlist.json'),
         'utf8',
@@ -423,6 +428,8 @@ describe('Formal Strategy Run integration', () => {
     assert.equal(result.durable, true);
     assert.equal(result.output.atomic, false);
     assert.equal(result.output.atomic_scope, 'state_file_and_symbol_directory');
+    assert.equal('symbol' in result.context, false);
+    assert.equal('resolution' in result.context, false);
     assert.equal(result.retry_supported, true);
     assert.equal(result.resume_supported, true);
     assert.equal(calls.sessions, 1);
@@ -446,12 +453,20 @@ describe('Formal Strategy Run integration', () => {
       assert.equal(existsSync(join(root, 'experiments', name, 'experiment.json')), true);
       assert.equal(existsSync(join(root, 'experiments', name, 'manifest.json')), true);
       assert.equal(existsSync(join(root, 'experiments', name, 'symbols', 'TWSE_u3A_2330', 'report.json')), true);
+      const experimentArtifact = JSON.parse(readFileSync(
+        join(root, 'experiments', name, 'experiment.json'),
+        'utf8',
+      ));
+      assert.equal('symbol' in experimentArtifact.target, false);
+      assert.equal('resolution' in experimentArtifact.target, false);
     }
     const runArtifact = JSON.parse(readFileSync(join(root, 'run.json'), 'utf8'));
     const watchlistArtifact = JSON.parse(readFileSync(join(root, 'watchlist.json'), 'utf8'));
     assert.equal(runArtifact.status, 'succeeded');
     assert.equal(runArtifact.schema_version, 2);
     assert.equal('completed_at' in runArtifact, false);
+    assert.equal('symbol' in runArtifact.resolved.target, false);
+    assert.equal('resolution' in runArtifact.resolved.target, false);
     assert.deepEqual(watchlistArtifact.symbols, ['TWSE:2330', 'TWSE:2317']);
     assert.equal(watchlistArtifact.symbol_validation.success, true);
     assert.equal(result.watchlist.symbol_validation.success, true);
@@ -715,8 +730,8 @@ describe('Formal Strategy Run integration', () => {
           },
         }),
         withChartSession: async ({ context }, operation) => {
-          assert.equal(context.symbol, 'TPEX:5483');
-          assert.equal(context.resolution, '60');
+          assert.equal('symbol' in context, false);
+          assert.equal('resolution' in context, false);
           return operation({ context });
         },
         execution: resumeDeps.execution,
@@ -730,11 +745,11 @@ describe('Formal Strategy Run integration', () => {
       initial.output.path,
       'experiments/candidate-check/experiment.json',
     ), 'utf8'));
-    assert.equal(reboundRun.resolved.target.symbol, 'TPEX:5483');
-    assert.equal(reboundRun.resolved.target.resolution, '60');
+    assert.equal('symbol' in reboundRun.resolved.target, false);
+    assert.equal('resolution' in reboundRun.resolved.target, false);
     assert.equal(reboundRun.resolved.strategy.entity_id, 'new-entity');
-    assert.equal(persistedExperiment.target.symbol, preflight._internal.target.symbol);
-    assert.equal(persistedExperiment.target.resolution, '1D');
+    assert.equal('symbol' in persistedExperiment.target, false);
+    assert.equal('resolution' in persistedExperiment.target, false);
     assert.equal(persistedExperiment.strategy.entity_id, 'entity-1');
     assert.deepEqual(progress, [
       {

@@ -392,6 +392,27 @@ describe('TradingView Watchlist Symbol validation', () => {
     assert.equal(attempts, 3);
   });
 
+  it('supports a durable worker Pane without requiring or restoring prior Chart state', async () => {
+    let restored = 0;
+    const assertions = [];
+    const result = await validateNamedWatchlistSymbols({
+      snapshot: { symbols: ['TWSE:2330'] },
+      context: { target_id: 'target-1', pane_index: 0 },
+      timeframe: '1D',
+      restore_chart: false,
+      _deps: {
+        assertPaneContext: async (request) => { assertions.push(request); },
+        probeSymbol: async ({ symbol }) => validationObservation(symbol),
+        restoreChart: async () => { restored += 1; },
+      },
+    });
+    assert.equal(result.success, true);
+    assert.equal(restored, 0);
+    assert.equal(assertions.length, 1);
+    assert.equal(assertions[0].symbol, null);
+    assert.equal(assertions[0].timeframe, undefined);
+  });
+
   it('honors AbortSignal and still restores the original Chart', async () => {
     const controller = new AbortController();
     controller.abort(new Error('stop validation'));

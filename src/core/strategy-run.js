@@ -22,7 +22,7 @@ import {
 import { planStrategySync } from './strategy-sync.js';
 import { executeStrategySync } from './strategy-sync.js';
 import { withChartSession } from './chart-session.js';
-import { CoreOperationError, sanitizeCoreContext } from './errors.js';
+import { CoreOperationError } from './errors.js';
 import { unixMillisecondsToIso } from './time.js';
 import { reconnectTo } from '../connection.js';
 import { assertPaneContext } from './pane.js';
@@ -37,6 +37,7 @@ import {
   executeDurableStrategyPlan,
   finalizeDurableStrategyRun,
 } from './strategy-resume.js';
+import { durableStrategyTargetContext } from './strategy-durable-experiment.js';
 import { emitStrategyAutomationStatus } from './strategy-progress.js';
 
 function diagnostic(error, fallbackCode, phase) {
@@ -343,7 +344,7 @@ function initialRunArtifact({ internal, context, startedAt }) {
     source_sha256: requested.strategy.source_sha256,
     candidate_schema_fingerprint: internal.candidate.input_schema.input_schema_fingerprint,
     resolved: {
-      target: sanitizeCoreContext(context),
+      target: durableStrategyTargetContext(context),
       watchlist: {
         name: watchlist.watchlist.name,
         snapshot_id: watchlist.snapshot.snapshot_id,
@@ -401,10 +402,7 @@ export async function runStrategyAutomation({
   await emitStrategyAutomationStatus(on_status, 'acquiring_ownership');
   const internal = preflight._internal;
   const requested = internal.loaded.requested;
-  const runContext = Object.freeze({
-    ...internal.target,
-    resolution: internal.target.resolution ?? internal.target.timeframe ?? null,
-  });
+  const runContext = durableStrategyTargetContext(internal.target);
   const runWatchlist = Object.freeze({
     ...internal.watchlist,
     symbol_validation: pendingWatchlistSymbolValidation({
@@ -432,8 +430,8 @@ export async function runStrategyAutomation({
     const recheckPane = _deps.assertPaneContext || assertPaneContext;
     await recheckPane({
       context: runContext,
-      symbol: runContext.symbol,
-      timeframe: runContext.resolution,
+      symbol: null,
+      timeframe: null,
       phase: 'strategy_run_precreate',
       _deps: _deps.pane,
     });
@@ -449,7 +447,11 @@ export async function runStrategyAutomation({
     initialized = true;
 
     const runWithSession = _deps.withChartSession || withChartSession;
-    await runWithSession({ context: runContext, _deps: _deps.session }, async () => {
+    await runWithSession({
+      context: runContext,
+      capture_chart_state: false,
+      _deps: _deps.session,
+    }, async () => {
       const alreadyLockedSession = async (_options, operation) => operation();
       assertNotAborted(signal);
       await emitStrategyAutomationStatus(on_status, 'validating_watchlist');
@@ -459,6 +461,7 @@ export async function runStrategyAutomation({
         snapshot: runWatchlist,
         context: runContext,
         timeframe: requested.backtest.timeframe,
+        restore_chart: false,
         signal,
         _deps: _deps.watchlist_validation,
       });

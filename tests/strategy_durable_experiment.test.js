@@ -139,6 +139,11 @@ function existingArtifacts(symbols) {
   const experiment = createDurableExperimentArtifact({
     run,
     experiment_plan: plan(),
+    target: {
+      ...run.resolved.target,
+      symbol: 'TWSE_DLY:2330',
+      resolution: '1D',
+    },
     started_at: 1000,
   });
   const manifest = createDurableExperimentManifest({
@@ -189,6 +194,8 @@ describe('Durable Strategy Experiment artifacts', () => {
     assert.equal(experiment.schema_version, 2);
     assert.equal(experiment.experiment_id, run.planned_experiments[0].experiment_id);
     assert.equal('completed_at' in experiment, false);
+    assert.equal('symbol' in experiment.target, false);
+    assert.equal('resolution' in experiment.target, false);
     assert.equal(manifest.status, 'running');
     assert.equal(manifest.summary.pending, 2);
     assert.deepEqual(manifest.symbols, []);
@@ -209,6 +216,25 @@ describe('Durable Strategy Experiment artifacts', () => {
     const symbols = ['TWSE:2330'];
     const existing = existingArtifacts(symbols);
     const harness = storeHarness();
+    const legacyRun = {
+      ...existing.run,
+      resolved: {
+        ...existing.run.resolved,
+        target: {
+          ...existing.run.resolved.target,
+          symbol: 'TWSE_DLY:2330',
+          resolution: '1D',
+        },
+      },
+    };
+    const legacyExperiment = {
+      ...existing.experiment,
+      target: {
+        ...existing.experiment.target,
+        symbol: 'TWSE_DLY:2330',
+        resolution: '1D',
+      },
+    };
     const reboundTarget = {
       ...existing.run.resolved.target,
       tab_index: 9,
@@ -224,9 +250,9 @@ describe('Durable Strategy Experiment artifacts', () => {
     };
     const prepared = await prepareDurableStrategyExperiment({
       store: harness.store,
-      run: existing.run,
+      run: legacyRun,
       experiment_plan: plan(),
-      experiment: existing.experiment,
+      experiment: legacyExperiment,
       manifest: existing.manifest,
       requested_symbols: symbols,
       strategy: reboundStrategy,
@@ -234,14 +260,14 @@ describe('Durable Strategy Experiment artifacts', () => {
       timeframe: '1D',
       format: 'csv',
     });
-    assert.deepEqual(prepared.experiment.target, existing.experiment.target);
-    assert.deepEqual(prepared.experiment.strategy, existing.experiment.strategy);
+    assert.deepEqual(prepared.experiment.target, legacyExperiment.target);
+    assert.deepEqual(prepared.experiment.strategy, legacyExperiment.strategy);
 
     await assert.rejects(prepareDurableStrategyExperiment({
       store: harness.store,
-      run: existing.run,
+      run: legacyRun,
       experiment_plan: plan(),
-      experiment: existing.experiment,
+      experiment: legacyExperiment,
       manifest: existing.manifest,
       requested_symbols: symbols,
       strategy: { ...reboundStrategy, script_id: 'USER;other' },
@@ -253,9 +279,9 @@ describe('Durable Strategy Experiment artifacts', () => {
 
     await assert.rejects(prepareDurableStrategyExperiment({
       store: harness.store,
-      run: existing.run,
+      run: legacyRun,
       experiment_plan: plan(),
-      experiment: existing.experiment,
+      experiment: legacyExperiment,
       manifest: existing.manifest,
       requested_symbols: symbols,
       strategy: reboundStrategy,

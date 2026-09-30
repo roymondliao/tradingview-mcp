@@ -111,7 +111,7 @@ async function waitForStrictReadback({
 }
 
 /** Serialize a full chart-mutating operation and pin its immutable context. */
-export async function withChartSession({ context, _deps } = {}, operation) {
+export async function withChartSession({ context, capture_chart_state = true, _deps } = {}, operation) {
   if (typeof operation !== 'function') throw new TypeError('Chart Session operation must be a function');
   const expectedContext = immutableContext(context);
   const mutex = _deps?.mutex || chartMutationMutex;
@@ -127,8 +127,10 @@ export async function withChartSession({ context, _deps } = {}, operation) {
     const startedAt = (_deps?.now || Date.now)();
     const chartSession = Object.freeze({
       context: expectedContext,
-      original_symbol: initial.symbol,
-      original_timeframe: initial.resolution,
+      ...(capture_chart_state && {
+        original_symbol: initial.symbol,
+        original_timeframe: initial.resolution,
+      }),
       started_at: startedAt,
       started_at_iso: unixMillisecondsToIso(startedAt),
     });
@@ -143,6 +145,9 @@ export async function prepareSymbolSession({
   timeframe,
   entity_id,
   timeout_ms,
+  assert_initial_chart_state = true,
+  capture_original_chart_state = true,
+  restore_on_failure = true,
   _deps,
 } = {}) {
   const expectedContext = immutableContext(context);
@@ -152,8 +157,8 @@ export async function prepareSymbolSession({
   const setTimeframe = _deps?.setTimeframe || _setTimeframe;
   const before = await assertContext({
     context: expectedContext,
-    symbol: expectedContext.symbol,
-    timeframe: expectedContext.resolution,
+    symbol: assert_initial_chart_state ? expectedContext.symbol : null,
+    timeframe: assert_initial_chart_state ? expectedContext.resolution : null,
     phase: 'symbol_session_start',
     _deps,
   });
@@ -179,6 +184,7 @@ export async function prepareSymbolSession({
       _deps,
     });
   } catch (error) {
+    if (!restore_on_failure) throw error;
     try {
       if (symbolChanged) await setSymbol({ symbol: before.symbol, _deps });
       if (timeframeChanged) await setTimeframe({ timeframe: before.resolution, _deps });
@@ -205,8 +211,10 @@ export async function prepareSymbolSession({
   return Object.freeze({
     context: expectedContext,
     ...(entity_id && { entity_id }),
-    original_symbol: before.symbol,
-    original_timeframe: before.resolution,
+    ...(capture_original_chart_state && {
+      original_symbol: before.symbol,
+      original_timeframe: before.resolution,
+    }),
     requested_symbol: requestedSymbol,
     resolved_symbol: readback.symbol,
     symbol: requestedSymbol,

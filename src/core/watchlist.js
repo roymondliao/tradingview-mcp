@@ -157,19 +157,24 @@ function validationError({ index, symbol, code, attemptCount, message, observati
 
 /**
  * Validate one frozen ordered Watchlist through the pinned TradingView Desktop Pane.
- * The caller owns the outer Chart-session mutex; this service always restores the original Symbol.
+ * Generic callers restore the original Chart; durable worker callers leave the Pane at the last probe.
  */
 export async function validateNamedWatchlistSymbols({
   snapshot,
   context,
   timeframe,
   signal,
+  restore_chart = true,
   _deps = {},
 } = {}) {
   const symbols = Array.isArray(snapshot?.symbols)
     ? snapshot.symbols.map((item) => (typeof item === 'string' ? item : item?.symbol))
     : [];
-  if (!context || typeof context !== 'object' || !context.symbol) {
+  if (
+    !context
+    || typeof context !== 'object'
+    || (restore_chart && !context.symbol)
+  ) {
     throw new CoreOperationError('Pinned Pane context is required for Watchlist Symbol validation.', {
       code: 'CHART_SESSION_INVALID', phase: 'watchlist_symbol_validation', context,
     });
@@ -190,7 +195,7 @@ export async function validateNamedWatchlistSymbols({
   const errors = [];
   let valid = 0;
   let lastObservation = null;
-  let currentSymbol = context.symbol;
+  let currentSymbol = context.symbol ?? null;
   try {
     for (const [index, symbol] of symbols.entries()) {
       interruptedValidation(signal);
@@ -245,37 +250,39 @@ export async function validateNamedWatchlistSymbols({
       }));
     }
   } finally {
-    const restore = _deps.restoreChart || (async () => {
-      await assertContext({
-        context,
-        symbol: currentSymbol,
-        timeframe: context.resolution,
-        phase: 'chart_restore_start',
-        _deps: _deps.pane,
-      });
-      const restored = await probe({
-        symbol: context.symbol,
-        context,
-        timeframe: context.resolution,
-        timeout_ms: WATCHLIST_SYMBOL_RESTORE_TIMEOUT_MS,
-        poll_ms: WATCHLIST_SYMBOL_VALIDATION_POLL_MS,
-        signal: null,
-      });
-      if (!symbolIdentitiesMatch(context.symbol, restored?.api_symbol)) {
-        throw new CoreOperationError('Failed to restore the original Chart after Watchlist validation.', {
-          code: 'CHART_RESTORE_FAILED', phase: 'chart_restore', symbol: context.symbol, context,
+    if (restore_chart) {
+      const restore = _deps.restoreChart || (async () => {
+        await assertContext({
+          context,
+          symbol: currentSymbol,
+          timeframe: context.resolution,
+          phase: 'chart_restore_start',
+          _deps: _deps.pane,
         });
-      }
-      await assertContext({
-        context,
-        symbol: context.symbol,
-        timeframe: context.resolution,
-        phase: 'chart_restore',
-        _deps: _deps.pane,
+        const restored = await probe({
+          symbol: context.symbol,
+          context,
+          timeframe: context.resolution,
+          timeout_ms: WATCHLIST_SYMBOL_RESTORE_TIMEOUT_MS,
+          poll_ms: WATCHLIST_SYMBOL_VALIDATION_POLL_MS,
+          signal: null,
+        });
+        if (!symbolIdentitiesMatch(context.symbol, restored?.api_symbol)) {
+          throw new CoreOperationError('Failed to restore the original Chart after Watchlist validation.', {
+            code: 'CHART_RESTORE_FAILED', phase: 'chart_restore', symbol: context.symbol, context,
+          });
+        }
+        await assertContext({
+          context,
+          symbol: context.symbol,
+          timeframe: context.resolution,
+          phase: 'chart_restore',
+          _deps: _deps.pane,
+        });
+        return restored;
       });
-      return restored;
-    });
-    await restore({ context, timeframe, last_observation: lastObservation });
+      await restore({ context, timeframe, last_observation: lastObservation });
+    }
   }
   const validatedAt = now();
   return Object.freeze({

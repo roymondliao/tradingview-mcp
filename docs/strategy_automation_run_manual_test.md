@@ -101,7 +101,7 @@ Exit codes：
 - 每個Experiment的manifest使用相同Watchlist Snapshot與固定Strategy revision。
 - 每個成功Symbol同時具有Report、Trading Data與Reconciliation artifacts。
 - `reconciliation.success`為`true`，且沿用總損益、勝率、總交易、獲利交易與虧損交易五項比對。
-- `run.json`記錄resolved Layout／Pane／Strategy identity、source／schema／Inputs fingerprints、Experiment summary與final restore結果。
+- `run.json`記錄resolved Layout／Pane／Strategy identity、source／schema／Inputs fingerprints與Experiment summary；target不保存偶發的Chart Symbol／resolution。
 - Partial run仍會發布可檢查的terminal manifest；未完成Symbol不會留下被誤認為成功的partial artifacts。
 
 ## 5. Verify Desktop restoration
@@ -110,7 +110,7 @@ Formal run結束後確認：
 
 - Strategy仍為sync後的latest Account version與同一個latest Pane `entity_id`。
 - Strategy Inputs已恢復為batch開始時捕捉的Base Inputs。
-- Chart Symbol與Timeframe已恢復為run開始時的值。
+- Base Inputs已恢復；Chart Symbol與Timeframe允許停留在最後處理的work item，不作為Run結果或restore acceptance。
 - 沒有新增額外的matching Strategy Instance。
 - Parameter mutation的Report使用1秒polling interval，連續2次相同stable signature後才開始該Experiment export。
 
@@ -227,7 +227,7 @@ fnm exec --using=22 npm run tv -- strategy run \
 - Top-level error為`WATCHLIST_SYMBOL_VALIDATION_FAILED`、phase為`watchlist_symbol_validation`。
 - `watchlist.json.symbol_validation`以atomic replacement保存bounded failed summary；Snapshot ID、ordered fingerprint及ordered Symbols完全不變。
 - 不建立Experiment artifacts、不執行Strategy sync或Parameter mutation。
-- Chart Symbol與Timeframe還原為validation前的值。
+- Chart允許停留在最後驗證的Symbol；後續work item會明確set並驗證自己的Symbol／timeframe。
 
 修正Account Named Watchlist後，使用新Run ID重新執行；不得修改failed Run的`watchlist.json`後Resume。新的successful Run必須顯示`symbol_validation.success: true`才能進入Experiments。
 
@@ -324,7 +324,7 @@ fnm exec --using=22 npm run tv -- strategy run --config "$SMALL_CONFIG"
 
 - CLI以130結束，response與`run.json.error.code`皆為`RUN_INTERRUPTED`。
 - `run.json.status`為`failed`，已成功Symbol的manifest state及artifacts仍存在。
-- Desktop restore完成，Run／Pane lease已釋放。
+- Base Inputs restore完成，Run／Pane lease已釋放；Chart state不要求還原。
 
 記錄已成功entry的`attempt_count`、`updated_at`與artifact byte sizes，再執行：
 
@@ -461,7 +461,7 @@ Final acceptance：
 - Interrupt／crash前後的succeeded count，以及先前成功artifacts是否未變。
 - Formal Run的Experiment數與每個Experiment requested／succeeded／failed Symbols。
 - 所有成功Symbol是否具有Report、Trading Data及`reconciliation.success: true`。
-- Final Desktop readback：Account version、Pane entity identity是否rebound、Inputs fingerprint、Symbol、Timeframe及matching Instance count。
+- Final Desktop readback：Account version、Pane entity identity是否rebound、Inputs fingerprint及matching Instance count；最後Symbol／Timeframe僅作觀察，不是acceptance identity。
 - Capacity Run的652/652 summary及artifact audit結果。
 
 只保存bounded evidence，不提交完整Symbols、Trades、User-specific absolute paths或Account secrets。若發生partial／failure，保存對應manifest error code與phase；不得手動修改manifest或拼接artifact來製造成功結果。

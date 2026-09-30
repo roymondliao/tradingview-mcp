@@ -10,7 +10,7 @@ import {
   join,
   resolve,
 } from 'node:path';
-import { CoreOperationError, sanitizeCoreContext } from './errors.js';
+import { CoreOperationError } from './errors.js';
 import { check as checkPine } from './pine.js';
 import { normalizedPineSourceSha256 } from './pine-input-schema.js';
 import {
@@ -45,6 +45,7 @@ import { executeStrategySync } from './strategy-sync.js';
 import {
   executeDurableStrategyExperiment,
   prepareDurableStrategyExperiment,
+  durableStrategyTargetContext,
   stableDurableStrategyIdentity,
   stableDurableTargetIdentity,
 } from './strategy-durable-experiment.js';
@@ -595,12 +596,7 @@ export async function resolveStrategyResumeSetup({ local, _deps = {} } = {}) {
   return Object.freeze({
     pine,
     candidate_schema: candidate.input_schema,
-    target: Object.freeze({
-      ...context,
-      symbol: paneState.symbol ?? context.symbol,
-      timeframe: paneState.timeframe ?? context.timeframe,
-      resolution: paneState.timeframe ?? context.resolution,
-    }),
+    target: durableStrategyTargetContext(context),
     account,
     account_detail: accountDetail,
     pane_state: paneState,
@@ -692,12 +688,7 @@ export async function resolveStrategyResumeIdentity({ local, _deps = {} } = {}) 
     source_sha256: rebound.source_sha256,
     entity_id: rebound.entity_id,
   });
-  const reboundContext = Object.freeze({
-    ...context,
-    symbol: paneState.symbol ?? context.symbol,
-    timeframe: paneState.timeframe ?? context.timeframe,
-    resolution: paneState.timeframe ?? context.resolution,
-  });
+  const reboundContext = durableStrategyTargetContext(context);
   const prepared = preparedInputsFromRun(run, strategy, reboundContext);
   try {
     assertPreparedInputFingerprint({
@@ -711,10 +702,6 @@ export async function resolveStrategyResumeIdentity({ local, _deps = {} } = {}) 
     pine,
     candidate_schema: candidate.input_schema,
     target: reboundContext,
-    chart_restore_baseline: Object.freeze({
-      symbol: paneState.symbol ?? context.symbol,
-      resolution: paneState.timeframe ?? context.resolution,
-    }),
     strategy,
     current_inputs_fingerprint: rebound.inputs_fingerprint,
     prepared_inputs: prepared,
@@ -747,7 +734,7 @@ export async function withStrategyResumeContext({
       ...owned,
       local: owned.locked,
       identity,
-      context: sanitizeCoreContext(identity.target),
+      context: durableStrategyTargetContext(identity.target),
     }));
   });
 }
@@ -1045,7 +1032,7 @@ export async function durableStrategyRunResponse({
       replaced: false,
     }),
     strategy: strategy || finalized.run.resolved.strategy || null,
-    context: sanitizeCoreContext(context || finalized.run.resolved.target),
+    context: durableStrategyTargetContext(context || finalized.run.resolved.target),
     watchlist: Object.freeze({
       name: finalized.run.resolved.watchlist.name,
       snapshot_id: finalized.run.resolved.watchlist.snapshot_id,
@@ -1067,7 +1054,7 @@ function setupRunPatch(run, { strategy, target, prepared }) {
   return {
     resolved: {
       ...run.resolved,
-      target: { ...run.resolved.target, ...sanitizeCoreContext(target) },
+      target: durableStrategyTargetContext(target),
       strategy,
     },
     base_inputs: prepared.base_inputs,
@@ -1092,13 +1079,17 @@ export async function resumeStrategyAutomation({
   }, async ({ local, identity }) => {
     const store = local.artifacts.store;
     let run = local.artifacts.run;
-    let context = identity.target;
+    let context = durableStrategyTargetContext(identity.target);
     let runtimeStrategy = run.resolved.strategy || null;
     let primaryError = null;
     try {
       assertNotAborted(signal);
       const runWithSession = _deps.withChartSession || withChartSession;
-      await runWithSession({ context, _deps: _deps.session }, async () => {
+      await runWithSession({
+        context,
+        capture_chart_state: false,
+        _deps: _deps.session,
+      }, async () => {
         const alreadyLockedSession = async (_options, operation) => operation();
         let executionWatchlist = local.artifacts.watchlist;
         if (local.artifacts.watchlist.symbol_validation?.performed === false) {
@@ -1109,6 +1100,7 @@ export async function resumeStrategyAutomation({
             snapshot: local.artifacts.watchlist,
             context,
             timeframe: run.requested.backtest.timeframe,
+            restore_chart: false,
             signal,
             _deps: _deps.watchlist_validation,
           });
@@ -1186,7 +1178,7 @@ export async function resumeStrategyAutomation({
           await emitStrategyAutomationStatus(on_status, 'preparing_experiments');
           strategy = identity.strategy;
           runtimeStrategy = strategy;
-          context = identity.target;
+          context = durableStrategyTargetContext(identity.target);
           prepared = executablePreparedRun(run, strategy, context);
           selections = local.plan.experiments;
           run = transitionRunState(run, {
@@ -1195,7 +1187,7 @@ export async function resumeStrategyAutomation({
             patch: {
               resolved: {
                 ...run.resolved,
-                target: { ...run.resolved.target, ...sanitizeCoreContext(context) },
+                target: durableStrategyTargetContext(context),
                 strategy: { ...run.resolved.strategy, ...strategy },
               },
             },
