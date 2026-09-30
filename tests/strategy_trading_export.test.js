@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { CoreOperationError } from '../src/core/errors.js';
 import { createDurableRunStore } from '../src/core/strategy-run-artifacts.js';
 import {
-  createStrategySymbolAttemptArtifactWriter,
+  executeDurableStrategySymbolAttempt,
   exportStrategySymbol,
 } from '../src/core/strategy-trading.js';
 
@@ -256,7 +256,7 @@ describe('Single-Symbol Strategy Trading export', () => {
     assert.equal(reconciliation.reconciliation.success, true);
   });
 
-  it('reuses the same verified workflow with a durable Symbol attempt writer', async () => {
+  it('uses the explicit durable attempt wrapper and the same verified export workflow', async () => {
     const directory = temporaryDirectory();
     const store = await createDurableRunStore({ output_directory: directory, run_id: 'durable-run' });
     const attempt = await store.beginSymbolAttempt({
@@ -265,20 +265,23 @@ describe('Single-Symbol Strategy Trading export', () => {
       attempt_count: 1,
       format: 'json',
     });
-    const writer = createStrategySymbolAttemptArtifactWriter({ attempt, format: 'json' });
     const runtime = harness();
-    const result = await exportStrategySymbol({
-      entity_id: 'strategy-2',
+    const result = await executeDurableStrategySymbolAttempt({
+      attempt,
+      identity: { entity_id: 'strategy-2' },
       symbol: 'TWSE:2344',
       context,
       format: 'json',
       batch_limit: 1,
-      _run: { artifact_writer: writer },
-      _deps: runtime.deps,
+      _deps: {
+        export: runtime.deps,
+        restoreSymbolSession: runtime.deps.restoreSymbolSession,
+      },
     });
     assert.deepEqual(runtime.calls.batches, [0, 1]);
-    assert.equal(runtime.calls.restored, 0);
+    assert.equal(runtime.calls.restored, 1);
     assert.equal(result.reconciliation.success, true);
+    assert.equal(result.chart_restore.success, true);
     assert.equal(
       result.artifacts.report.relative_path,
       'experiments/baseline/symbols/TWSE_u3A_2344/report.json',

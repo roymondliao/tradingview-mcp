@@ -649,7 +649,11 @@ function summaryForSymbols(symbols, requested = symbols.length) {
   };
 }
 
-async function exportStrategySymbolIntoRun({
+/**
+ * Execute the one canonical Strategy/Symbol Report, Trades, and Reconciliation workflow.
+ * Artifact lifecycle and Chart-session ownership belong to the calling wrapper.
+ */
+export async function executeStrategySymbolExport({
   entity_id,
   symbol,
   timeframe,
@@ -657,25 +661,15 @@ async function exportStrategySymbolIntoRun({
   format,
   batch_limit,
   timeout_ms,
-  transaction,
-  namespace,
   artifact_writer,
-  _deps,
-}) {
+  _deps = {},
+} = {}) {
   validateStrategySymbolRequest({
     entity_id, symbol, context, command: 'strategy trading-export',
   });
   const resolvedFormat = resolveTradingDataFormat({ format });
   const pagination = paginationValues({ offset: 0, limit: batch_limit });
-  const artifactWriter = assertSymbolArtifactWriter(
-    artifact_writer || transactionSymbolArtifactWriter({
-      transaction,
-      symbol,
-      format: resolvedFormat,
-      namespace,
-    }),
-    resolvedFormat,
-  );
+  const artifactWriter = assertSymbolArtifactWriter(artifact_writer, resolvedFormat);
   const createEncoder = _deps?.createTradingDataEncoder || createTradingDataEncoder;
   const createAccumulator = _deps?.createTradingDataMetricsAccumulator
     || createTradingDataMetricsAccumulator;
@@ -850,18 +844,55 @@ async function exportStrategySymbolIntoRun({
 }
 
 /**
- * Export one Strategy/Symbol. An internal run transaction lets the Watchlist
- * orchestrator reuse this exact workflow without nested publication/restores.
+ * Execute one durable Run/Resume Symbol attempt through the canonical export workflow.
+ * The retry executor owns staging commit/abort; this wrapper owns per-attempt Chart restore.
  */
-export async function exportStrategySymbol(options = {}) {
-  if (options?._run?.transaction || options?._run?.artifact_writer) {
-    return exportStrategySymbolIntoRun({
-      ...options,
-      transaction: options._run.transaction,
-      namespace: options._run.namespace,
-      artifact_writer: options._run.artifact_writer,
+export async function executeDurableStrategySymbolAttempt({
+  attempt,
+  entity_id,
+  identity,
+  symbol,
+  timeframe,
+  context,
+  format,
+  batch_limit,
+  timeout_ms,
+  _deps = {},
+} = {}) {
+  const writer = createStrategySymbolAttemptArtifactWriter({ attempt, format });
+  const executeExport = _deps.executeStrategySymbolExport || executeStrategySymbolExport;
+  const restoreSession = _deps.restoreSymbolSession || _restoreSymbolSession;
+  let symbolSession = null;
+  let result = null;
+  try {
+    result = await executeExport({
+      entity_id: entity_id || identity?.entity_id,
+      symbol,
+      timeframe,
+      context,
+      format,
+      batch_limit,
+      timeout_ms,
+      artifact_writer: writer,
+      _deps: {
+        ..._deps.export,
+        onSymbolSession: async (session) => { symbolSession = session; },
+      },
     });
+    return result;
+  } finally {
+    if (symbolSession) {
+      const restore = await restoreSession(symbolSession, {
+        timeout_ms,
+        _deps: _deps.export,
+      });
+      if (result) result.chart_restore = restore;
+    }
   }
+}
+
+/** Export one standalone Strategy/Symbol with the legacy V1 artifact transaction. */
+export async function exportStrategySymbol(options = {}) {
   const {
     entity_id, symbol, timeframe, context, output_directory, format, force = false,
     batch_limit, run_id, timeout_ms, _deps,
@@ -889,9 +920,14 @@ export async function exportStrategySymbol(options = {}) {
     const exported = await withChartSession({ context, _deps }, async () => {
       let result;
       try {
-        result = await exportStrategySymbolIntoRun({
+        result = await executeStrategySymbolExport({
           entity_id, symbol, timeframe, context, format: resolvedFormat,
-          batch_limit, timeout_ms, transaction,
+          batch_limit, timeout_ms,
+          artifact_writer: transactionSymbolArtifactWriter({
+            transaction,
+            symbol,
+            format: resolvedFormat,
+          }),
           _deps: {
             ..._deps,
             onSymbolSession: async (session) => { symbolSession = session; },
@@ -1028,7 +1064,7 @@ export async function exportStrategySnapshotIntoRun({
   const manifestPath = namespacedArtifactPath(safeNamespace, 'manifest.json');
   const now = _deps.now || Date.now;
   const restoreSymbolSession = _deps.restoreSymbolSession || _restoreSymbolSession;
-  const exportSymbol = _deps.exportStrategySymbol || exportStrategySymbol;
+  const executeExport = _deps.executeStrategySymbolExport || executeStrategySymbolExport;
   const startedAt = now();
   const symbolResults = [];
   const seen = new Map();
@@ -1097,10 +1133,16 @@ export async function exportStrategySnapshotIntoRun({
           seen.set(requestedSymbol, index);
           const currentContext = contextAtCurrentChart(context, lastSession);
           try {
-            const exported = await exportSymbol({
+            const exported = await executeExport({
               entity_id, symbol: requestedSymbol, timeframe,
               context: currentContext, format: resolvedFormat,
-              batch_limit, timeout_ms, _run: { transaction, namespace: safeNamespace },
+              batch_limit, timeout_ms,
+              artifact_writer: transactionSymbolArtifactWriter({
+                transaction,
+                symbol: requestedSymbol,
+                format: resolvedFormat,
+                namespace: safeNamespace,
+              }),
               _deps: {
                 ..._deps,
                 onSymbolSession: async (session) => { lastSession = session; },

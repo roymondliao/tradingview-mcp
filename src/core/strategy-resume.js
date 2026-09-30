@@ -47,10 +47,8 @@ import {
   prepareDurableStrategyExperiment,
 } from './strategy-durable-experiment.js';
 import {
-  createStrategySymbolAttemptArtifactWriter,
-  exportStrategySymbol,
+  executeDurableStrategySymbolAttempt,
 } from './strategy-trading.js';
-import { restoreSymbolSession } from './chart-session.js';
 import { withChartSession } from './chart-session.js';
 import { sha256Hex, stableJsonStringify } from './stable-json.js';
 import { reconnectTo } from '../connection.js';
@@ -797,48 +795,6 @@ function executablePreparedRun(run, identity, context) {
   });
 }
 
-async function defaultExecuteSymbolAttempt({
-  attempt,
-  symbol,
-  experiment,
-  identity,
-  context,
-  timeframe,
-  format,
-  timeout_ms,
-  _deps,
-}) {
-  const writer = createStrategySymbolAttemptArtifactWriter({ attempt, format });
-  const exportSymbol = _deps.exportStrategySymbol || exportStrategySymbol;
-  const restoreSession = _deps.restoreSymbolSession || restoreSymbolSession;
-  let symbolSession = null;
-  let result = null;
-  try {
-    result = await exportSymbol({
-      entity_id: identity.entity_id,
-      symbol,
-      timeframe,
-      context,
-      format,
-      timeout_ms,
-      _run: { artifact_writer: writer },
-      _deps: {
-        ..._deps.export,
-        onSymbolSession: async (session) => { symbolSession = session; },
-      },
-    });
-    return result;
-  } finally {
-    if (symbolSession) {
-      const restore = await restoreSession(symbolSession, {
-        timeout_ms,
-        _deps: _deps.export,
-      });
-      if (result) result.chart_restore = restore;
-    }
-  }
-}
-
 /** Shared selected-Experiment execution used by new Run and explicit Resume. */
 export async function executeDurableStrategyPlan({
   store,
@@ -907,7 +863,7 @@ export async function executeDurableStrategyPlan({
   const executePlan = _deps.executeSelectedParameterSets || executeSelectedParameterSets;
   const executeExperiment = _deps.executeDurableStrategyExperiment
     || executeDurableStrategyExperiment;
-  const executeAttempt = _deps.executeSymbolAttempt || defaultExecuteSymbolAttempt;
+  const executeAttempt = _deps.executeSymbolAttempt || executeDurableStrategySymbolAttempt;
   const results = await executePlan({
     prepared,
     selected_indices: selected.map((item) => item.index),
