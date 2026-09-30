@@ -410,8 +410,11 @@ describe('Formal Strategy Run integration', () => {
     const directory = temporaryDirectory();
     const preflight = formalPreflight(directory);
     const calls = { sync: [], attempts: [], events: [] };
+    const progress = [];
     const result = await runStrategyAutomation({
-      config_path: '/tmp/run.json', _deps: formalDeps(preflight, calls),
+      config_path: '/tmp/run.json',
+      on_progress: async (event) => { progress.push(event); },
+      _deps: formalDeps(preflight, calls),
     });
     assert.equal(result.success, true, JSON.stringify(result, null, 2));
     assert.equal(result.status, 'succeeded');
@@ -450,14 +453,30 @@ describe('Formal Strategy Run integration', () => {
     assert.deepEqual(watchlistArtifact.symbols, ['TWSE:2330', 'TWSE:2317']);
     assert.equal(watchlistArtifact.symbol_validation.success, true);
     assert.equal(result.watchlist.symbol_validation.success, true);
+    assert.deepEqual(progress.map((event) => ({
+      processed: event.processed,
+      total: event.total,
+      succeeded: event.succeeded,
+      failed: event.failed,
+      experiment: `${event.experiment.index}/${event.experiment.count}:${event.experiment.name}`,
+    })), [
+      { processed: 0, total: 4, succeeded: 0, failed: 0, experiment: '1/2:baseline' },
+      { processed: 1, total: 4, succeeded: 1, failed: 0, experiment: '1/2:baseline' },
+      { processed: 2, total: 4, succeeded: 2, failed: 0, experiment: '1/2:baseline' },
+      { processed: 2, total: 4, succeeded: 2, failed: 0, experiment: '2/2:fast' },
+      { processed: 3, total: 4, succeeded: 3, failed: 0, experiment: '2/2:fast' },
+      { processed: 4, total: 4, succeeded: 4, failed: 0, experiment: '2/2:fast' },
+    ]);
   });
 
   it('marks retry exhaustion failed but continues remaining Symbols and Experiments', async () => {
     const directory = temporaryDirectory();
     const preflight = formalPreflight(directory);
     const calls = { sync: [], attempts: [], events: [] };
+    const progress = [];
     const result = await runStrategyAutomation({
       config_path: '/tmp/run.json',
+      on_progress: async (event) => { progress.push(event); },
       _deps: formalDeps(preflight, calls, { failedSymbol: 'baseline:TWSE:2330' }),
     });
     assert.equal(result.success, false);
@@ -467,6 +486,14 @@ describe('Formal Strategy Run integration', () => {
     assert.equal(calls.attempts.filter((item) => item === 'baseline:TWSE:2330').length, 3);
     assert.ok(calls.attempts.includes('fast:TWSE:2317'));
     assert.equal(existsSync(join(result.output.path, 'run.json')), true);
+    assert.deepEqual(progress.at(-1), {
+      processed: 4,
+      total: 4,
+      succeeded: 3,
+      failed: 1,
+      experiment: { index: 2, count: 2, name: 'fast' },
+    });
+    assert.deepEqual(progress.map((event) => event.processed), [0, 1, 2, 2, 3, 4]);
   });
 
   it('persists invalid Watchlist evidence and blocks Strategy mutation', async () => {
@@ -545,13 +572,22 @@ describe('Formal Strategy Run integration', () => {
     const directory = temporaryDirectory();
     const preflight = formalPreflight(directory);
     const calls = { sync: [], attempts: [], events: [] };
+    const progress = [];
     const result = await runStrategyAutomation({
       config_path: '/tmp/run.json',
+      on_progress: async (event) => { progress.push(event); },
       _deps: formalDeps(preflight, calls, { fatalSymbol: 'baseline:TWSE:2330' }),
     });
     assert.equal(result.success, false);
     assert.equal(result.failure_kind, 'cdp_connection');
     assert.deepEqual(calls.attempts, ['baseline:TWSE:2330']);
+    assert.deepEqual(progress.at(-1), {
+      processed: 1,
+      total: 4,
+      succeeded: 0,
+      failed: 1,
+      experiment: { index: 1, count: 2, name: 'baseline' },
+    });
   });
 
   it('resumes the same Run and executes only the previously failed Symbol', async () => {
@@ -576,12 +612,14 @@ describe('Formal Strategy Run integration', () => {
 
     const resumeCalls = { sync: [], attempts: [], events: [] };
     const resumeDeps = formalDeps(preflight, resumeCalls);
+    const progress = [];
     const identity = {
       target: { ...preflight._internal.target, resolution: '1D' },
       strategy: local.artifacts.run.resolved.strategy,
     };
     const resumed = await resumeStrategyAutomation({
       run_directory: initial.output.path,
+      on_progress: async (event) => { progress.push(event); },
       _deps: {
         withStrategyResumeContext: async (_options, operation) => operation({ local, identity }),
         withChartSession: resumeDeps.withChartSession,
@@ -596,6 +634,69 @@ describe('Formal Strategy Run integration', () => {
     assert.deepEqual(resumeCalls.attempts, ['baseline:TWSE:2330']);
     assert.ok(resumeCalls.events.includes('watchlist-validated'));
     assert.equal(resumed.watchlist.symbol_validation.success, true);
+    assert.deepEqual(progress, [
+      {
+        processed: 0, total: 1, succeeded: 0, failed: 0,
+        experiment: { index: 1, count: 1, name: 'baseline' },
+      },
+      {
+        processed: 1, total: 1, succeeded: 1, failed: 0,
+        experiment: { index: 1, count: 1, name: 'baseline' },
+      },
+    ]);
+  });
+
+  it('keeps original Experiment identity when Resume selects only Experiment 2 of 3', async () => {
+    const directory = temporaryDirectory();
+    const preflight = formalPreflight(directory, {
+      parameterSets: [
+        { name: 'baseline', inputs: {} },
+        { name: 'candidate-check', inputs: { Length: 5 } },
+        { name: 'rsi-check', inputs: { Length: 6 } },
+      ],
+    });
+    const initialCalls = { sync: [], attempts: [], events: [] };
+    const initial = await runStrategyAutomation({
+      config_path: '/tmp/run.json',
+      _deps: formalDeps(preflight, initialCalls, {
+        failedSymbol: 'candidate-check:TWSE:2330',
+      }),
+    });
+    assert.equal(initial.status, 'failed');
+    const local = await loadStrategyResume({ run_directory: initial.output.path });
+    assert.deepEqual(local.plan.experiments.map((item) => item.selected_indices), [[], [0], []]);
+
+    const resumeCalls = { sync: [], attempts: [], events: [] };
+    const resumeDeps = formalDeps(preflight, resumeCalls);
+    const progress = [];
+    const resumed = await resumeStrategyAutomation({
+      run_directory: initial.output.path,
+      on_progress: async (event) => { progress.push(event); },
+      _deps: {
+        withStrategyResumeContext: async (_options, operation) => operation({
+          local,
+          identity: {
+            target: { ...preflight._internal.target, resolution: '1D' },
+            strategy: local.artifacts.run.resolved.strategy,
+          },
+        }),
+        withChartSession: resumeDeps.withChartSession,
+        execution: resumeDeps.execution,
+        now: resumeDeps.now,
+      },
+    });
+    assert.equal(resumed.success, true, JSON.stringify(resumed, null, 2));
+    assert.deepEqual(resumeCalls.attempts, ['candidate-check:TWSE:2330']);
+    assert.deepEqual(progress, [
+      {
+        processed: 0, total: 1, succeeded: 0, failed: 0,
+        experiment: { index: 2, count: 3, name: 'candidate-check' },
+      },
+      {
+        processed: 1, total: 1, succeeded: 1, failed: 0,
+        experiment: { index: 2, count: 3, name: 'candidate-check' },
+      },
+    ]);
   });
 
   it('completes setup idempotently when the first invocation failed during Strategy sync', async () => {

@@ -6,6 +6,7 @@ import { dryRunStrategyAutomation, runStrategyAutomation } from '../../core/stra
 import { resumeStrategyAutomation } from '../../core/strategy-resume.js';
 import { prepareContext } from '../../core/pane.js';
 import { CoreOperationError } from '../../core/errors.js';
+import { createStrategyProgressRenderer } from '../progress.js';
 import {
   PANE_CONTEXT_OPTIONS,
   paneContextArgs,
@@ -79,9 +80,13 @@ const SIGNAL_EXIT_CODES = Object.freeze({ SIGINT: 130, SIGTERM: 143 });
 export async function withStrategyAutomationSignals(operation, {
   process_facade = process,
   AbortControllerClass = AbortController,
+  progress_renderer,
 } = {}) {
   if (typeof operation !== 'function') throw new TypeError('Signal operation callback is required.');
   const controller = new AbortControllerClass();
+  const renderer = progress_renderer || createStrategyProgressRenderer({
+    stream: process_facade.stderr || process.stderr,
+  });
   let received = 0;
   const handlers = {};
   for (const [signalName, exitCode] of Object.entries(SIGNAL_EXIT_CODES)) {
@@ -96,13 +101,15 @@ export async function withStrategyAutomationSignals(operation, {
         controller.abort(reason);
         return;
       }
+      renderer.finish();
       process_facade.exit(exitCode);
     };
     process_facade.on(signalName, handlers[signalName]);
   }
   try {
-    return await operation(controller.signal);
+    return await operation(controller.signal, renderer.update);
   } finally {
+    renderer.finish();
     for (const [signalName, handler] of Object.entries(handlers)) {
       process_facade.off(signalName, handler);
     }
@@ -127,9 +134,10 @@ register('strategy', {
         if (opts['dry-run']) {
           return dryRunStrategyAutomation({ config_path: opts.config });
         }
-        return withStrategyAutomationSignals((signal) => runStrategyAutomation({
+        return withStrategyAutomationSignals((signal, onProgress) => runStrategyAutomation({
           config_path: opts.config,
           signal,
+          on_progress: onProgress,
         }));
       },
     }],
@@ -150,9 +158,10 @@ register('strategy', {
             code: 'RUN_RESUME_ARTIFACT_INVALID', phase: 'request_validation', retryable: false,
           });
         }
-        return withStrategyAutomationSignals((signal) => resumeStrategyAutomation({
+        return withStrategyAutomationSignals((signal, onProgress) => resumeStrategyAutomation({
           run_directory: opts['run-directory'],
           signal,
+          on_progress: onProgress,
         }));
       },
     }],

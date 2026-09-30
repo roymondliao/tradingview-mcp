@@ -375,7 +375,12 @@ function assertNotAborted(signal) {
 }
 
 /** Execute one complete durable Strategy automation Run in its canonical directory. */
-export async function runStrategyAutomation({ config_path, signal, _deps = {} } = {}) {
+export async function runStrategyAutomation({
+  config_path,
+  signal,
+  on_progress,
+  _deps = {},
+} = {}) {
   const runPreflight = _deps.dryRunStrategyAutomation || dryRunStrategyAutomation;
   const preflight = await runPreflight({
     config_path,
@@ -520,6 +525,7 @@ export async function runStrategyAutomation({ config_path, signal, _deps = {} } 
         prepared,
         identity: strategyIdentity,
         context: runContext,
+        on_progress,
         signal,
         timeout_ms: _deps.timeout_ms,
         _deps: { now, ..._deps.execution, parameter_sets: {

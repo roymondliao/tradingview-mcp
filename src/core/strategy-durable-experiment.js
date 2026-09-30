@@ -297,6 +297,7 @@ export async function executeDurableStrategyExperiment({
   signal,
   ownership_confirmed = false,
   execute_symbol_attempt,
+  on_symbol_terminal,
   _deps = {},
 } = {}) {
   assertStore(store, [
@@ -307,6 +308,9 @@ export async function executeDurableStrategyExperiment({
   ]);
   if (typeof execute_symbol_attempt !== 'function') {
     throw new TypeError('execute_symbol_attempt callback is required.');
+  }
+  if (on_symbol_terminal != null && typeof on_symbol_terminal !== 'function') {
+    throw new TypeError('on_symbol_terminal must be a function when provided.');
   }
   const now = _deps.now || Date.now;
   const prepared = prepared_experiment || await prepareDurableStrategyExperiment({
@@ -379,9 +383,23 @@ export async function executeDurableStrategyExperiment({
         index,
         symbol,
         signal,
-        onTransition: async (next) => {
+        onTransition: async (next, metadata) => {
           await store.replaceManifest(next);
           manifest = next;
+          if (
+            on_symbol_terminal
+            && ['attempt_succeeded', 'attempt_failed'].includes(metadata.event)
+          ) {
+            const entry = next.symbols.find((item) => item.index === metadata.index);
+            try {
+              await on_symbol_terminal(Object.freeze({
+                index: metadata.index,
+                status: entry?.status,
+              }));
+            } catch {
+              // Progress presentation cannot change durable execution correctness.
+            }
+          }
         },
         cleanupAttempt: ({ entry }) => store.cleanupUncommittedSymbolArtifacts({
           experiment_name: experiment.parameter_set.name,

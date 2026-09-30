@@ -814,6 +814,7 @@ export async function executeDurableStrategyPlan({
   identity,
   context,
   selected_experiments,
+  on_progress,
   signal,
   timeout_ms,
   _deps = {},
@@ -832,6 +833,36 @@ export async function executeDurableStrategyPlan({
       persisted_plan: plan,
     }));
   const selected = selections.filter((item) => item.selected_indices.length > 0);
+  const progressCallback = typeof on_progress === 'function' ? on_progress : null;
+  const progress = {
+    processed: 0,
+    total: selected.reduce((count, item) => count + item.selected_indices.length, 0),
+    succeeded: 0,
+    failed: 0,
+  };
+  const terminalSelections = new Set();
+  let currentSelection = selected[0] || null;
+  const experimentCount = run.planned_experiments.length;
+  async function emitProgress(selection = currentSelection) {
+    if (!progressCallback || !selection || progress.total === 0) return;
+    const persisted = run.planned_experiments[selection.index];
+    const name = String(persisted.parameter_set.name)
+      .replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
+      .slice(0, 100);
+    try {
+      await progressCallback(Object.freeze({
+        ...progress,
+        experiment: Object.freeze({
+          index: selection.index + 1,
+          count: experimentCount,
+          name,
+        }),
+      }));
+    } catch {
+      // Progress presentation is deliberately isolated from execution.
+    }
+  }
+  await emitProgress();
   const durableStates = new Map();
   const rawNow = _deps.now || Date.now;
   let lastTimestamp = Math.max(
@@ -880,7 +911,14 @@ export async function executeDurableStrategyPlan({
     identity,
     context,
     timeout_ms,
-    before_experiment: async () => { assertNotAborted(signal); },
+    before_experiment: async (parameterSet) => {
+      assertNotAborted(signal);
+      const selection = selected.find((item) => item.index === parameterSet.index);
+      if (selection && selection !== currentSelection) {
+        currentSelection = selection;
+        await emitProgress(selection);
+      }
+    },
     _deps: _deps.parameter_sets,
   }, async (parameterExperiment) => {
     assertNotAborted(signal);
@@ -894,6 +932,17 @@ export async function executeDurableStrategyPlan({
       context,
       signal,
       ownership_confirmed: true,
+      ...(progressCallback && {
+        on_symbol_terminal: async ({ index: symbolIndex, status }) => {
+          const key = `${index}:${symbolIndex}`;
+          if (terminalSelections.has(key)) return;
+          if (!['succeeded', 'failed'].includes(status)) return;
+          terminalSelections.add(key);
+          progress.processed += 1;
+          progress[status] += 1;
+          await emitProgress(selection);
+        },
+      }),
       execute_symbol_attempt: (attempt) => executeAttempt({
         ...attempt,
         identity,
@@ -1047,6 +1096,7 @@ function setupRunPatch(run, { strategy, target, prepared }) {
 export async function resumeStrategyAutomation({
   run_directory,
   signal,
+  on_progress,
   _deps = {},
 } = {}) {
   const runWithResumeContext = _deps.withStrategyResumeContext || withStrategyResumeContext;
@@ -1170,6 +1220,7 @@ export async function resumeStrategyAutomation({
           identity: strategy,
           context,
           selected_experiments: selections,
+          on_progress,
           signal,
           timeout_ms: _deps.timeout_ms,
           _deps: { now: _deps.now, ..._deps.execution, parameter_sets: {

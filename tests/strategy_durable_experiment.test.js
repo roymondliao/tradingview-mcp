@@ -151,7 +151,14 @@ function existingArtifacts(symbols) {
   return { run, experiment, manifest };
 }
 
-function executeOptions({ symbols, harness, existing, execute, selected } = {}) {
+function executeOptions({
+  symbols,
+  harness,
+  existing,
+  execute,
+  selected,
+  onTerminal,
+} = {}) {
   const now = clock();
   const run = existing?.run || runArtifact(symbols);
   return {
@@ -166,6 +173,7 @@ function executeOptions({ symbols, harness, existing, execute, selected } = {}) 
     timeframe: '1D',
     format: 'csv',
     ownership_confirmed: true,
+    on_symbol_terminal: onTerminal,
     execute_symbol_attempt: execute,
     _deps: {
       now,
@@ -340,14 +348,85 @@ describe('Durable Strategy Experiment execution', () => {
     assert.equal(result.manifest.summary.succeeded, 1);
   });
 
+  it('emits one post-persist terminal event per selected Symbol across retries', async () => {
+    const symbols = ['TWSE:2330', 'TWSE:2317'];
+    const harness = storeHarness();
+    const attempts = new Map();
+    const terminal = [];
+    const result = await executeDurableStrategyExperiment(executeOptions({
+      symbols,
+      harness,
+      onTerminal: async (event) => {
+        const persisted = harness.calls.manifests.at(-1).symbols.find(
+          (entry) => entry.index === event.index,
+        );
+        assert.equal(persisted.status, event.status);
+        terminal.push(event);
+      },
+      execute: async ({ symbol }) => {
+        const count = (attempts.get(symbol) || 0) + 1;
+        attempts.set(symbol, count);
+        if (symbol === symbols[0] && count < 3) {
+          throw new CoreOperationError('temporary failure', {
+            code: 'SYMBOL_SWITCH_FAILED', phase: 'test',
+          });
+        }
+        return successResult(symbol);
+      },
+    }));
+    assert.equal(result.success, true);
+    assert.deepEqual(terminal, [
+      { index: 0, status: 'succeeded' },
+      { index: 1, status: 'succeeded' },
+    ]);
+    assert.equal(attempts.get(symbols[0]), 3);
+  });
+
+  it('does not emit terminal progress when its manifest transition is not persisted', async () => {
+    const symbols = ['TWSE:2330'];
+    const harness = storeHarness();
+    const replaceManifest = harness.store.replaceManifest;
+    harness.store.replaceManifest = async (manifest) => {
+      if (manifest.symbols.some((entry) => entry.status === 'succeeded')) {
+        throw new CoreOperationError('manifest disk full', {
+          code: 'OUTPUT_WRITE_FAILED', phase: 'manifest_transition',
+        });
+      }
+      return replaceManifest(manifest);
+    };
+    const terminal = [];
+    await assert.rejects(executeDurableStrategyExperiment(executeOptions({
+      symbols,
+      harness,
+      onTerminal: async (event) => { terminal.push(event); },
+      execute: async ({ symbol }) => successResult(symbol),
+    })), (error) => error.code === 'OUTPUT_WRITE_FAILED');
+    assert.deepEqual(terminal, []);
+  });
+
+  it('isolates terminal progress callback failures from durable execution', async () => {
+    const symbols = ['TWSE:2330'];
+    const harness = storeHarness();
+    const result = await executeDurableStrategyExperiment(executeOptions({
+      symbols,
+      harness,
+      onTerminal: async () => { throw new Error('renderer failed'); },
+      execute: async ({ symbol }) => successResult(symbol),
+    }));
+    assert.equal(result.success, true);
+    assert.equal(result.manifest.summary.succeeded, 1);
+  });
+
   it('marks the Experiment failed and stops new Symbols on a fatal error', async () => {
     const symbols = ['TWSE:2330', 'TWSE:2317'];
     const harness = storeHarness();
     const executed = [];
+    const terminal = [];
     await assert.rejects(
       executeDurableStrategyExperiment(executeOptions({
         symbols,
         harness,
+        onTerminal: async (event) => { terminal.push(event); },
         execute: async ({ symbol }) => {
           executed.push(symbol);
           throw new CoreOperationError('connection lost', {
@@ -362,5 +441,6 @@ describe('Durable Strategy Experiment execution', () => {
     assert.equal(final.status, 'failed');
     assert.equal(final.summary.failed, 1);
     assert.equal(final.summary.pending, 1);
+    assert.deepEqual(terminal, [{ index: 0, status: 'failed' }]);
   });
 });

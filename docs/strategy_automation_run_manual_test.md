@@ -239,6 +239,36 @@ fnm exec --using=22 npm run tv -- strategy run \
 fnm exec --using=22 npm run tv -- strategy run --config "$SMALL_CONFIG"
 ```
 
+### 10.1 TTY progress display
+
+在interactive terminal直接執行formal Run或Resume時，`stderr.isTTY === true`才顯示單行progress：
+
+```text
+[██████████████░░░░░░] 68.4%  892/1304 processed | Experiment 2/3: candidate-check | succeeded 891 | failed 1
+```
+
+確認：
+
+- 顯示順序固定為percentage／processed、`Experiment <original-index>/<original-count>: <name>`、succeeded／failed。
+- Retry期間processed不增加；同一Symbol於attempt 2／3成功只增加一次。
+- Retry exhaustion會增加一次failed並繼續，全部selection處理後即使Run failed也可顯示100%。
+- Resume從`0/<本次selected>`開始，先前已成功Symbols不納入total；若只Resume原始第2個Experiment，仍顯示`Experiment 2/3`。
+- Progress不顯示Symbol、error message、attempt history、Trades或完整Watchlist。
+- Final JSON前會先換行，shell prompt不會黏在progress line後。
+
+以另一個新Run ID執行redirect smoke：
+
+```bash
+fnm exec --using=22 npm run tv -- strategy run \
+  --config "$SMALL_CONFIG" \
+  > ./temp/progress-result.json \
+  2> ./temp/progress-stderr.log
+```
+
+成功Run的`progress-result.json`必須是單一可parse JSON；`progress-stderr.log`不得包含progress carriage returns。Formal failure仍遵循既有CLI error channel，但non-TTY同樣不得產生progress。Dry-run與`strategy trading-export`也不得顯示此progress。
+
+### 10.2 Durable success and succeeded-Run guard
+
 除了第3～5節的通過條件外，另確認：
 
 - Response為`success: true`、`status: "succeeded"`、`durable: true`。

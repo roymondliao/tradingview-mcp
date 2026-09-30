@@ -1,7 +1,7 @@
 ---
 id: TASK-008
 title: Strategy Run and Resume CLI Progress Display
-status: todo
+status: done
 phase: strategy-durable-export-recovery
 depends_on:
   - TASK-006
@@ -183,18 +183,27 @@ on_progress({
 
 ## Acceptance criteria
 
-- [ ] Formal `strategy run`與`strategy resume`在TTY顯示單行progress。
-- [ ] 顯示內容僅包含百分比／processed、Experiment、succeeded／failed。
-- [ ] Retry不重複計數；retry exhaustion算processed failed並繼續。
-- [ ] Resume denominator只包含locked plan中的non-succeeded Symbols。
-- [ ] Original Experiment index／count／name顯示正確。
-- [ ] Progress在manifest terminal transition persisted後才更新。
-- [ ] Progress可以100%但final Run仍因failed Symbols失敗。
-- [ ] Progress只寫stderr；stdout final JSON與non-TTY behavior不回歸。
-- [ ] Dry-run與legacy `strategy trading-export`不顯示此progress。
-- [ ] Node 22／24 targeted與full unit suites、lint及`git diff --check`通過。
-- [ ] Manual TTY、redirect、retry exhaustion與Resume smoke tests通過。
+- [x] Formal `strategy run`與`strategy resume`在TTY顯示單行progress。
+- [x] 顯示內容僅包含百分比／processed、Experiment、succeeded／failed。
+- [x] Retry不重複計數；retry exhaustion算processed failed並繼續。
+- [x] Resume denominator只包含locked plan中的non-succeeded Symbols。
+- [x] Original Experiment index／count／name顯示正確。
+- [x] Progress在manifest terminal transition persisted後才更新。
+- [x] Progress可以100%但final Run仍因failed Symbols失敗。
+- [x] Progress只寫stderr；stdout final JSON與non-TTY behavior不回歸。
+- [x] Dry-run與legacy `strategy trading-export`不顯示此progress。
+- [x] Node 22／24 targeted與full unit suites、lint及`git diff --check`通過。
+- [x] Manual TTY、redirect、retry exhaustion與Resume smoke tests通過。
 
 ## Completion record
 
-Not started.
+Completed on 2026-09-30.
+
+- 新增failure-isolated TTY renderer；使用carriage return更新單行，normal／failure／signal／exception結束時只補一個newline，non-TTY完全不寫入。
+- 顯示順序固定為percentage／processed、original Experiment identity、succeeded／failed；terminal較窄時先縮短bar及Experiment name，不省略必要labels。
+- Run與Resume共用durable execution progress seam。Initial event由locked invocation selection計算total；terminal counters只在`manifest.json`的`succeeded`／`failed`transition成功persist後更新。
+- Retry的`running`／`retry_wait`不計數；attempt 2／3 success只算一次。Retry exhaustion與fatal error已durably保存failed時各算一次，未執行Symbols不計入。
+- Resume denominator只包含locked post-lease plan選取的non-succeeded Symbols；只Resume原始Experiment 2/3時仍顯示`Experiment 2/3`。
+- CLI只為formal `strategy run`與`strategy resume`建立renderer；dry-run、legacy exporter、MCP及programmatic Core在沒有callback時不輸出progress。
+- Targeted CLI／Experiment／Run／Resume suites：63 tests passed。Node 22與Node 24完整unit suites各661/661 passed；lint為0 errors（保留3筆既有warnings），`git diff --check`通過。
+- Controlled PTY smoke確認0%／66.7%／100%原地更新、100%仍可搭配failed final JSON，且JSON從新行開始；non-TTY smoke只輸出JSON，沒有carriage-return progress。

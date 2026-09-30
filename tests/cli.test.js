@@ -13,6 +13,7 @@ import { fileURLToPath } from 'url';
 import { readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { resultExitCode } from '../src/cli/router.js';
 import { withStrategyAutomationSignals } from '../src/cli/commands/strategy.js';
+import './cli_progress.test.js';
 
 function require_fs() { return { writeFileSync, unlinkSync }; }
 
@@ -53,18 +54,48 @@ function processFacade() {
   };
 }
 
+function progressRenderer() {
+  const events = [];
+  let finished = false;
+  return {
+    events,
+    get finished() { return finished; },
+    update(event) { events.push(event); },
+    finish() { finished = true; },
+  };
+}
+
 describe('Strategy automation CLI signals', () => {
   it('aborts gracefully on the first signal and removes listeners', async () => {
     const facade = processFacade();
-    const result = await withStrategyAutomationSignals(async (signal) => {
+    const progress = progressRenderer();
+    const result = await withStrategyAutomationSignals(async (signal, onProgress) => {
+      onProgress({ processed: 0 });
       facade.emit('SIGINT');
       assert.equal(signal.aborted, true);
       assert.equal(signal.reason.exit_code, 130);
       return { success: false, exit_code: signal.reason.exit_code };
-    }, { process_facade: facade });
+    }, { process_facade: facade, progress_renderer: progress });
     assert.equal(result.exit_code, 130);
     assert.deepEqual(facade.exits, []);
     assert.equal(facade.listenerCount(), 0);
+    assert.deepEqual(progress.events, [{ processed: 0 }]);
+    assert.equal(progress.finished, true);
+  });
+
+  it('always finishes progress after normal completion or a thrown error', async () => {
+    const completed = progressRenderer();
+    await withStrategyAutomationSignals(async (_signal, onProgress) => {
+      onProgress({ processed: 1 });
+      return { success: true };
+    }, { process_facade: processFacade(), progress_renderer: completed });
+    assert.equal(completed.finished, true);
+
+    const failed = progressRenderer();
+    await assert.rejects(withStrategyAutomationSignals(async () => {
+      throw new Error('operation failed');
+    }, { process_facade: processFacade(), progress_renderer: failed }), /operation failed/);
+    assert.equal(failed.finished, true);
   });
 
   it('uses immediate hard-exit semantics for a repeated signal', async () => {
