@@ -16,10 +16,284 @@ import { CoreOperationError } from './errors.js';
 import { unixMillisecondsToIso } from './time.js';
 import { sha256Hex, stableJsonStringify } from './stable-json.js';
 import { writeJsonArtifact } from './artifacts.js';
+import { assertPaneContext, symbolIdentitiesMatch } from './pane.js';
 
 const _sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 const SNAPSHOT_READ_ATTEMPTS = 4;
 const SNAPSHOT_RETRY_MS = 100;
+export const WATCHLIST_SYMBOL_VALIDATION_ATTEMPT_TIMEOUT_MS = 1000;
+export const WATCHLIST_SYMBOL_VALIDATION_MAX_ATTEMPTS = 3;
+export const WATCHLIST_SYMBOL_VALIDATION_POLL_MS = 200;
+const WATCHLIST_SYMBOL_RESTORE_TIMEOUT_MS = 8000;
+
+function interruptedValidation(signal) {
+  if (!signal?.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  throw new CoreOperationError('Watchlist Symbol validation was interrupted.', {
+    code: 'RUN_INTERRUPTED', phase: 'signal', cause: signal.reason,
+  });
+}
+
+async function probeWatchlistSymbolInPage(requestedSymbol, timeoutMs, pollMs) {
+  /* global window */
+  var chart = window.TradingViewApi._activeChartWidgetWV.value();
+  var chartContainer = globalThis.document.querySelector('.chart-container.active');
+  function canonicalSymbol(value) {
+    var text = String(value || '').trim().toUpperCase();
+    var separator = text.indexOf(':');
+    if (separator < 1) return text;
+    var exchange = text.slice(0, separator).replace(/_DLY$/, '');
+    return exchange + ':' + text.slice(separator + 1);
+  }
+  function sleep(milliseconds) {
+    return new Promise(function(resolve) { setTimeout(resolve, milliseconds); });
+  }
+  function observation() {
+    var ext = {};
+    try { ext = chart.symbolExt() || {}; } catch {}
+    var bars = null;
+    try { bars = chart._chartWidget.model().mainSeries().bars(); } catch {}
+    var invalidUi = Array.from(
+      chartContainer ? chartContainer.querySelectorAll('[data-name="error-card"]') : [],
+    ).some(function(element) {
+      var rect = element.getBoundingClientRect();
+      var text = element.innerText || element.textContent || '';
+      return rect.width > 0 && rect.height > 0
+        && /商品不存在|無效的商品|invalid symbol|symbol not found/i.test(text);
+    });
+    var fullName = ext.full_name || null;
+    var proName = ext.pro_name || null;
+    var exchange = ext.exchange || null;
+    var ticker = ext.symbol || null;
+    return {
+      api_symbol: chart.symbol() || '',
+      resolution: chart.resolution() || '',
+      metadata_identity: fullName || proName || (exchange && ticker ? exchange + ':' + ticker : null),
+      metadata: {
+        symbol: ticker,
+        full_name: fullName,
+        pro_name: proName,
+        exchange: exchange,
+        description: ext.description || null,
+        type: ext.type || null,
+      },
+      bar_count: bars && typeof bars.size === 'function' ? bars.size() : 0,
+      invalid_ui: invalidUi,
+    };
+  }
+
+  chart.setSymbol(requestedSymbol, {});
+  var deadline = Date.now() + timeoutMs;
+  var last = observation();
+  while (Date.now() < deadline) {
+    last = observation();
+    if (
+      canonicalSymbol(last.api_symbol) === canonicalSymbol(requestedSymbol)
+      && canonicalSymbol(last.metadata_identity) === canonicalSymbol(requestedSymbol)
+    ) return last;
+    await sleep(pollMs);
+  }
+  return observation();
+}
+
+function boundedValidationMetadata(observation = {}) {
+  const metadata = observation.metadata || {};
+  const bounded = (value, maximum = 200) => (
+    value == null ? null : String(value).slice(0, maximum)
+  );
+  return Object.freeze({
+    api_symbol: bounded(observation.api_symbol, 500),
+    metadata_identity: bounded(observation.metadata_identity, 500),
+    exchange: bounded(metadata.exchange),
+    description: bounded(metadata.description, 500),
+    type: bounded(metadata.type),
+    bar_count: Number.isInteger(observation.bar_count) && observation.bar_count >= 0
+      ? observation.bar_count
+      : 0,
+    invalid_ui: observation.invalid_ui === true,
+  });
+}
+
+/** Classify one bounded CDP observation without relying on stale Chart DOM bars. */
+export function classifyWatchlistSymbolObservation({ symbol, observation } = {}) {
+  const metadataIdentity = observation?.metadata_identity;
+  if (
+    symbolIdentitiesMatch(symbol, observation?.api_symbol)
+    && metadataIdentity
+    && symbolIdentitiesMatch(symbol, metadataIdentity)
+  ) {
+    return 'valid';
+  }
+  if (
+    symbolIdentitiesMatch(symbol, observation?.api_symbol)
+    && !metadataIdentity
+    && observation?.invalid_ui === true
+  ) {
+    return 'not_found';
+  }
+  return 'indeterminate';
+}
+
+export function pendingWatchlistSymbolValidation({ timeframe } = {}) {
+  return Object.freeze({
+    schema_version: 1,
+    performed: false,
+    reason: 'pending',
+    timeframe: String(timeframe ?? ''),
+  });
+}
+
+function validationError({ index, symbol, code, attemptCount, message, observation }) {
+  return Object.freeze({
+    index,
+    symbol: String(symbol).slice(0, 500),
+    code,
+    phase: 'watchlist_symbol_validation',
+    attempt_count: attemptCount,
+    message: String(message).slice(0, 500),
+    diagnostics: boundedValidationMetadata(observation),
+  });
+}
+
+/**
+ * Validate one frozen ordered Watchlist through the pinned TradingView Desktop Pane.
+ * The caller owns the outer Chart-session mutex; this service always restores the original Symbol.
+ */
+export async function validateNamedWatchlistSymbols({
+  snapshot,
+  context,
+  timeframe,
+  signal,
+  _deps = {},
+} = {}) {
+  const symbols = Array.isArray(snapshot?.symbols)
+    ? snapshot.symbols.map((item) => (typeof item === 'string' ? item : item?.symbol))
+    : [];
+  if (!context || typeof context !== 'object' || !context.symbol) {
+    throw new CoreOperationError('Pinned Pane context is required for Watchlist Symbol validation.', {
+      code: 'CHART_SESSION_INVALID', phase: 'watchlist_symbol_validation', context,
+    });
+  }
+  if (!symbols.length || symbols.some((symbol) => typeof symbol !== 'string' || !symbol)) {
+    throw watchlistSnapshotError(
+      'WATCHLIST_INVALID_SYMBOLS',
+      'A complete frozen Watchlist is required for Symbol validation.',
+      { phase: 'watchlist_symbol_validation' },
+    );
+  }
+  const probe = _deps.probeSymbol || (async ({ symbol, timeout_ms: timeoutMs, poll_ms: pollMs }) => {
+    const callPageFunction = _deps.callPageFunction || _callPageFunction;
+    return callPageFunction(probeWatchlistSymbolInPage, [symbol, timeoutMs, pollMs]);
+  });
+  const now = _deps.now || Date.now;
+  const assertContext = _deps.assertPaneContext || assertPaneContext;
+  const errors = [];
+  let valid = 0;
+  let lastObservation = null;
+  let currentSymbol = context.symbol;
+  try {
+    for (const [index, symbol] of symbols.entries()) {
+      interruptedValidation(signal);
+      let classified = 'indeterminate';
+      let observation = null;
+      let attemptCount = 0;
+      for (let attempt = 1; attempt <= WATCHLIST_SYMBOL_VALIDATION_MAX_ATTEMPTS; attempt += 1) {
+        interruptedValidation(signal);
+        await assertContext({
+          context,
+          symbol: currentSymbol,
+          timeframe: context.resolution,
+          phase: 'watchlist_symbol_validation',
+          _deps: _deps.pane,
+        });
+        attemptCount = attempt;
+        observation = await probe({
+          symbol,
+          context,
+          timeframe,
+          timeout_ms: WATCHLIST_SYMBOL_VALIDATION_ATTEMPT_TIMEOUT_MS,
+          poll_ms: WATCHLIST_SYMBOL_VALIDATION_POLL_MS,
+          signal,
+        });
+        lastObservation = observation;
+        if (observation?.api_symbol) currentSymbol = observation.api_symbol;
+        classified = classifyWatchlistSymbolObservation({ symbol, observation });
+        if (classified !== 'indeterminate') break;
+      }
+      if (classified === 'valid') {
+        valid += 1;
+        continue;
+      }
+      if (classified === 'not_found') {
+        errors.push(validationError({
+          index,
+          symbol,
+          code: 'WATCHLIST_SYMBOL_NOT_FOUND',
+          attemptCount,
+          message: `TradingView reports that ${symbol} does not exist.`,
+          observation,
+        }));
+        continue;
+      }
+      errors.push(validationError({
+        index,
+        symbol,
+        code: 'WATCHLIST_SYMBOL_VALIDATION_TIMEOUT',
+        attemptCount,
+        message: `TradingView could not resolve Symbol metadata within ${attemptCount} attempts: ${symbol}.`,
+        observation,
+      }));
+    }
+  } finally {
+    const restore = _deps.restoreChart || (async () => {
+      await assertContext({
+        context,
+        symbol: currentSymbol,
+        timeframe: context.resolution,
+        phase: 'chart_restore_start',
+        _deps: _deps.pane,
+      });
+      const restored = await probe({
+        symbol: context.symbol,
+        context,
+        timeframe: context.resolution,
+        timeout_ms: WATCHLIST_SYMBOL_RESTORE_TIMEOUT_MS,
+        poll_ms: WATCHLIST_SYMBOL_VALIDATION_POLL_MS,
+        signal: null,
+      });
+      if (!symbolIdentitiesMatch(context.symbol, restored?.api_symbol)) {
+        throw new CoreOperationError('Failed to restore the original Chart after Watchlist validation.', {
+          code: 'CHART_RESTORE_FAILED', phase: 'chart_restore', symbol: context.symbol, context,
+        });
+      }
+      await assertContext({
+        context,
+        symbol: context.symbol,
+        timeframe: context.resolution,
+        phase: 'chart_restore',
+        _deps: _deps.pane,
+      });
+      return restored;
+    });
+    await restore({ context, timeframe, last_observation: lastObservation });
+  }
+  const validatedAt = now();
+  return Object.freeze({
+    schema_version: 1,
+    performed: true,
+    success: errors.length === 0,
+    source: 'tradingview_desktop_cdp',
+    timeframe: String(timeframe ?? context.resolution ?? ''),
+    requested: symbols.length,
+    valid,
+    failed: errors.length,
+    max_attempts: WATCHLIST_SYMBOL_VALIDATION_MAX_ATTEMPTS,
+    attempt_timeout_ms: WATCHLIST_SYMBOL_VALIDATION_ATTEMPT_TIMEOUT_MS,
+    validated_at: validatedAt,
+    validated_at_iso: unixMillisecondsToIso(validatedAt),
+    errors: Object.freeze(errors),
+  });
+}
 
 function _resolve(deps) {
   return {

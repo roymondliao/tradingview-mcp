@@ -100,7 +100,7 @@ function runArtifact({
   };
 }
 
-function watchlistArtifact() {
+function watchlistArtifact({ symbolValidation } = {}) {
   return {
     success: true,
     snapshot: {
@@ -109,6 +109,25 @@ function watchlistArtifact() {
       complete: true,
     },
     symbols: ['TWSE:2330'],
+    ...(symbolValidation && { symbol_validation: symbolValidation }),
+  };
+}
+
+function completedSymbolValidation() {
+  return {
+    schema_version: 1,
+    performed: true,
+    success: true,
+    source: 'tradingview_desktop_cdp',
+    timeframe: '1D',
+    requested: 1,
+    valid: 1,
+    failed: 0,
+    max_attempts: 3,
+    attempt_timeout_ms: 1000,
+    validated_at: 1800000000000,
+    validated_at_iso: '2027-01-15T08:00:00.000Z',
+    errors: [],
   };
 }
 
@@ -276,6 +295,42 @@ describe('Durable Run store', () => {
       store.writeInitialWatchlist(watchlistArtifact()),
       (error) => error.code === 'RUN_RESUME_ARTIFACT_INVALID',
     );
+  });
+
+  it('atomically completes only Symbol validation while preserving frozen Watchlist identity', async () => {
+    const output = temporaryDirectory();
+    const store = await createDurableRunStore({ output_directory: output, run_id: 'run-1' });
+    const pending = watchlistArtifact({
+      symbolValidation: {
+        schema_version: 1, performed: false, reason: 'pending', timeframe: '1D',
+      },
+    });
+    await store.writeInitialWatchlist(pending);
+    const completed = watchlistArtifact({ symbolValidation: completedSymbolValidation() });
+    await store.replaceWatchlist(completed);
+    assert.deepEqual(
+      JSON.parse(readFileSync(join(store.run_path, 'watchlist.json'), 'utf8')),
+      completed,
+    );
+
+    await assert.rejects(
+      store.replaceWatchlist(completed),
+      (error) => error.code === 'RUN_RESUME_ARTIFACT_INVALID',
+    );
+  });
+
+  it('rejects Watchlist identity changes during Symbol validation replacement', async () => {
+    const output = temporaryDirectory();
+    const store = await createDurableRunStore({ output_directory: output, run_id: 'run-1' });
+    await store.writeInitialWatchlist(watchlistArtifact({
+      symbolValidation: {
+        schema_version: 1, performed: false, reason: 'pending', timeframe: '1D',
+      },
+    }));
+    await assert.rejects(store.replaceWatchlist({
+      ...watchlistArtifact({ symbolValidation: completedSymbolValidation() }),
+      symbols: ['TWSE:2317'],
+    }), (error) => error.code === 'RUN_RESUME_ARTIFACT_INVALID');
   });
 
   it('rejects a Run artifact whose requested output path differs from the store', async () => {

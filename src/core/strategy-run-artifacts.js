@@ -30,6 +30,10 @@ import {
   validateExperimentManifestV2,
   validateRunArtifactV2,
 } from './strategy-run-state.js';
+import {
+  WATCHLIST_SYMBOL_VALIDATION_ATTEMPT_TIMEOUT_MS,
+  WATCHLIST_SYMBOL_VALIDATION_MAX_ATTEMPTS,
+} from './watchlist.js';
 
 export const STRATEGY_RUN_STATE_JSON_MAX_BYTES = 8 * 1024 * 1024;
 
@@ -325,7 +329,31 @@ function createStore({ runPath, runId, deps, created }) {
     },
 
     async writeInitialWatchlist(watchlist) {
-      return writeExclusiveJson('watchlist.json', watchlist);
+      return writeExclusiveJson('watchlist.json', assertWatchlistArtifact(watchlist));
+    },
+
+    async replaceWatchlist(watchlist) {
+      const validated = assertWatchlistArtifact(watchlist);
+      const path = artifactPath('watchlist.json').path;
+      const current = assertWatchlistArtifact(await readBoundedJson({
+        path,
+        label: 'watchlist.json',
+        _deps: deps,
+      }));
+      const { symbol_validation: currentValidation, ...currentIdentity } = current;
+      const { symbol_validation: nextValidation, ...nextIdentity } = validated;
+      if (stableJsonStringify(currentIdentity) !== stableJsonStringify(nextIdentity)) {
+        throw artifactInvalid(
+          'Validated Watchlist replacement may only change symbol_validation.',
+        );
+      }
+      if (currentValidation?.performed === true) {
+        throw artifactInvalid('Completed Watchlist Symbol validation is immutable.');
+      }
+      if (nextValidation?.performed !== true) {
+        throw artifactInvalid('Watchlist replacement requires completed Symbol validation.');
+      }
+      return atomicReplaceJson({ path, value: validated, _deps: deps });
     },
 
     async replaceRun(run) {
@@ -467,6 +495,90 @@ export async function openDurableRunStore({ run_directory, _deps = {} } = {}) {
   return createStore({ runPath, runId, deps, created: false });
 }
 
+function assertWatchlistSymbolValidation(validation, symbols) {
+  if (validation == null) return;
+  if (!validation || typeof validation !== 'object' || Array.isArray(validation)) {
+    throw artifactInvalid('watchlist.json.symbol_validation must be an object.');
+  }
+  if (validation.schema_version !== 1) {
+    throw artifactInvalid('watchlist.json Symbol validation schema_version must be 1.');
+  }
+  if (typeof validation.timeframe !== 'string' || !validation.timeframe) {
+    throw artifactInvalid('watchlist.json Symbol validation timeframe is required.');
+  }
+  if (validation.performed === false) {
+    if (validation.reason !== 'pending') {
+      throw artifactInvalid('Pending Watchlist Symbol validation reason must be pending.');
+    }
+    return;
+  }
+  if (validation.performed !== true || typeof validation.success !== 'boolean') {
+    throw artifactInvalid('watchlist.json Symbol validation completion is invalid.');
+  }
+  if (
+    validation.source !== 'tradingview_desktop_cdp'
+    || validation.max_attempts !== WATCHLIST_SYMBOL_VALIDATION_MAX_ATTEMPTS
+    || validation.attempt_timeout_ms !== WATCHLIST_SYMBOL_VALIDATION_ATTEMPT_TIMEOUT_MS
+  ) {
+    throw artifactInvalid('watchlist.json Symbol validation policy is invalid.');
+  }
+  for (const field of ['requested', 'valid', 'failed', 'validated_at']) {
+    if (!Number.isInteger(validation[field]) || validation[field] < 0) {
+      throw artifactInvalid(`watchlist.json Symbol validation ${field} is invalid.`);
+    }
+  }
+  if (
+    validation.requested !== symbols.length
+    || validation.valid + validation.failed !== validation.requested
+    || validation.success !== (validation.failed === 0)
+    || typeof validation.validated_at_iso !== 'string'
+    || !Array.isArray(validation.errors)
+    || validation.errors.length !== validation.failed
+  ) {
+    throw artifactInvalid('watchlist.json Symbol validation summary is inconsistent.');
+  }
+  const seen = new Set();
+  for (const error of validation.errors) {
+    if (
+      !error || typeof error !== 'object' || Array.isArray(error)
+      || !Number.isInteger(error.index) || error.index < 0 || error.index >= symbols.length
+      || error.symbol !== symbols[error.index]
+      || error.symbol.length > 500
+      || seen.has(error.index)
+      || !['WATCHLIST_SYMBOL_NOT_FOUND', 'WATCHLIST_SYMBOL_VALIDATION_TIMEOUT'].includes(error.code)
+      || error.phase !== 'watchlist_symbol_validation'
+      || !Number.isInteger(error.attempt_count)
+      || error.attempt_count < 1
+      || error.attempt_count > WATCHLIST_SYMBOL_VALIDATION_MAX_ATTEMPTS
+      || typeof error.message !== 'string'
+      || error.message.length > 500
+    ) {
+      throw artifactInvalid('watchlist.json Symbol validation error is invalid.');
+    }
+    if (error.diagnostics != null) {
+      const diagnostics = error.diagnostics;
+      const boundedStrings = [
+        [diagnostics.api_symbol, 500],
+        [diagnostics.metadata_identity, 500],
+        [diagnostics.exchange, 200],
+        [diagnostics.description, 500],
+        [diagnostics.type, 200],
+      ];
+      if (
+        !diagnostics || typeof diagnostics !== 'object' || Array.isArray(diagnostics)
+        || boundedStrings.some(([value, maximum]) => (
+          value != null && (typeof value !== 'string' || value.length > maximum)
+        ))
+        || !Number.isInteger(diagnostics.bar_count) || diagnostics.bar_count < 0
+        || typeof diagnostics.invalid_ui !== 'boolean'
+      ) {
+        throw artifactInvalid('watchlist.json Symbol validation diagnostics are invalid.');
+      }
+    }
+    seen.add(error.index);
+  }
+}
+
 function assertWatchlistArtifact(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw artifactInvalid('watchlist.json must be an object.');
@@ -500,6 +612,7 @@ function assertWatchlistArtifact(value) {
   if (new Set(symbols).size !== symbols.length) {
     throw artifactInvalid('watchlist.json.symbols must not contain duplicates.');
   }
+  assertWatchlistSymbolValidation(value.symbol_validation, symbols);
   return value;
 }
 

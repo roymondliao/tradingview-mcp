@@ -5,10 +5,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   captureNamedWatchlistSnapshot,
+  classifyWatchlistSymbolObservation,
   normalizeAccountWatchlistDetail,
+  pendingWatchlistSymbolValidation,
   readAccountWatchlistDetail,
   resolveNamedWatchlist,
   summarizeNamedWatchlistSnapshot,
+  validateNamedWatchlistSymbols,
   writeNamedWatchlistSnapshot,
 } from '../src/core/watchlist.js';
 import { registerWatchlistTools } from '../src/tools/watchlist.js';
@@ -268,6 +271,181 @@ describe('Named Watchlist atomic JSON output', () => {
     );
     const replaced = await writeNamedWatchlistSnapshot({ result, output, force: true });
     assert.equal(replaced.output.atomic, true);
+  });
+});
+
+function validationObservation(symbol, overrides = {}) {
+  return {
+    api_symbol: symbol,
+    metadata_identity: symbol,
+    metadata: {
+      symbol: symbol.split(':')[1],
+      full_name: symbol,
+      pro_name: symbol,
+      exchange: symbol.split(':')[0],
+      description: null,
+      type: null,
+    },
+    bar_count: 0,
+    invalid_ui: false,
+    ...overrides,
+  };
+}
+
+describe('TradingView Watchlist Symbol validation', () => {
+  it('classifies canonical metadata as valid and treats bars only as diagnostics', () => {
+    assert.equal(classifyWatchlistSymbolObservation({
+      symbol: 'TWSE:2330',
+      observation: validationObservation('TWSE_DLY:2330'),
+    }), 'valid');
+    assert.equal(classifyWatchlistSymbolObservation({
+      symbol: 'TPEX:2640',
+      observation: validationObservation('TPEX:2640', {
+        metadata_identity: null,
+        metadata: {},
+        invalid_ui: true,
+      }),
+    }), 'not_found');
+    assert.equal(classifyWatchlistSymbolObservation({
+      symbol: 'TPEX:2640',
+      observation: validationObservation('TPEX:2640', {
+        metadata_identity: null,
+        metadata: {},
+        bar_count: 300,
+      }),
+    }), 'indeterminate');
+    assert.equal(classifyWatchlistSymbolObservation({
+      symbol: 'TPEX:6227',
+      observation: validationObservation('TPEX:9999'),
+    }), 'indeterminate');
+  });
+
+  it('records not-found and exhausted Symbols while continuing the ordered Snapshot', async () => {
+    const attempts = new Map();
+    let restored = false;
+    const result = await validateNamedWatchlistSymbols({
+      snapshot: { symbols: ['TPEX:2640', 'TPEX:9999', 'TPEX:6227'] },
+      context: { symbol: 'TWSE_DLY:2478', resolution: '1D' },
+      timeframe: '1D',
+      _deps: {
+        now: () => 1_800_000_000_000,
+        assertPaneContext: async () => {},
+        probeSymbol: async ({ symbol }) => {
+          attempts.set(symbol, (attempts.get(symbol) || 0) + 1);
+          if (symbol === 'TPEX:2640') {
+            return validationObservation(symbol, {
+              metadata_identity: null,
+              metadata: {},
+              invalid_ui: true,
+            });
+          }
+          if (symbol === 'TPEX:9999') {
+            return validationObservation(symbol, {
+              metadata_identity: null,
+              metadata: {},
+            });
+          }
+          return validationObservation(symbol);
+        },
+        restoreChart: async () => { restored = true; },
+      },
+    });
+    assert.equal(result.success, false);
+    assert.deepEqual({ requested: result.requested, valid: result.valid, failed: result.failed }, {
+      requested: 3, valid: 1, failed: 2,
+    });
+    assert.deepEqual([...attempts], [
+      ['TPEX:2640', 1],
+      ['TPEX:9999', 3],
+      ['TPEX:6227', 1],
+    ]);
+    assert.deepEqual(result.errors.map((error) => error.code), [
+      'WATCHLIST_SYMBOL_NOT_FOUND',
+      'WATCHLIST_SYMBOL_VALIDATION_TIMEOUT',
+    ]);
+    assert.equal(restored, true);
+  });
+
+  it('uses one fresh attempt window until canonical metadata succeeds', async () => {
+    let attempts = 0;
+    const result = await validateNamedWatchlistSymbols({
+      snapshot: { symbols: ['TWSE:2330'] },
+      context: { symbol: 'TWSE_DLY:2478', resolution: '1D' },
+      timeframe: '1D',
+      _deps: {
+        assertPaneContext: async () => {},
+        probeSymbol: async ({ symbol }) => {
+          attempts += 1;
+          if (attempts < 3) {
+            return validationObservation(symbol, {
+              metadata_identity: null,
+              metadata: {},
+            });
+          }
+          return validationObservation('TWSE_DLY:2330');
+        },
+        restoreChart: async () => {},
+      },
+    });
+    assert.equal(result.success, true);
+    assert.equal(result.valid, 1);
+    assert.equal(attempts, 3);
+  });
+
+  it('honors AbortSignal and still restores the original Chart', async () => {
+    const controller = new AbortController();
+    controller.abort(new Error('stop validation'));
+    let restored = 0;
+    await assert.rejects(validateNamedWatchlistSymbols({
+      snapshot: { symbols: ['TWSE:2330'] },
+      context: { symbol: 'TWSE_DLY:2478', resolution: '1D' },
+      timeframe: '1D',
+      signal: controller.signal,
+      _deps: {
+        assertPaneContext: async () => {},
+        probeSymbol: async () => { throw new Error('must not probe'); },
+        restoreChart: async () => { restored += 1; },
+      },
+    }), /stop validation/);
+    assert.equal(restored, 1);
+  });
+
+  it('propagates fatal CDP and restore failures instead of classifying them as Symbol errors', async () => {
+    let restored = 0;
+    await assert.rejects(validateNamedWatchlistSymbols({
+      snapshot: { symbols: ['TWSE:2330'] },
+      context: { symbol: 'TWSE_DLY:2478', resolution: '1D' },
+      timeframe: '1D',
+      _deps: {
+        assertPaneContext: async () => {},
+        probeSymbol: async () => { throw new Error('CDP disconnected'); },
+        restoreChart: async () => { restored += 1; },
+      },
+    }), /CDP disconnected/);
+    assert.equal(restored, 1);
+
+    await assert.rejects(validateNamedWatchlistSymbols({
+      snapshot: { symbols: ['TWSE:2330'] },
+      context: { symbol: 'TWSE_DLY:2478', resolution: '1D' },
+      timeframe: '1D',
+      _deps: {
+        assertPaneContext: async () => {},
+        probeSymbol: async ({ symbol }) => validationObservation(symbol),
+        restoreChart: async () => {
+          const error = new Error('restore failed');
+          error.code = 'CHART_RESTORE_FAILED';
+          throw error;
+        },
+      },
+    }), (error) => error.code === 'CHART_RESTORE_FAILED');
+  });
+
+  it('exposes immutable pending evidence for a newly initialized formal Run', () => {
+    const pending = pendingWatchlistSymbolValidation({ timeframe: '1D' });
+    assert.deepEqual(pending, {
+      schema_version: 1, performed: false, reason: 'pending', timeframe: '1D',
+    });
+    assert.equal(Object.isFrozen(pending), true);
   });
 });
 

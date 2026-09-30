@@ -110,7 +110,14 @@ describe('Strategy durable filesystem fault matrix', () => {
       });
       await assert.rejects(
         artifact === 'watchlist'
-          ? store.writeInitialWatchlist({ snapshot: {}, symbols: ['TWSE:2330'] })
+          ? store.writeInitialWatchlist({
+            snapshot: {
+              complete: true,
+              snapshot_id: hash('1'),
+              ordered_symbol_fingerprint: hash('2'),
+            },
+            symbols: ['TWSE:2330'],
+          })
           : store.replaceRun(runArtifact(store.run_path)),
         (error) => error.code === 'OUTPUT_WRITE_FAILED',
       );

@@ -52,6 +52,7 @@ import {
 import { withChartSession } from './chart-session.js';
 import { sha256Hex, stableJsonStringify } from './stable-json.js';
 import { reconnectTo } from '../connection.js';
+import { validateNamedWatchlistSymbols } from './watchlist.js';
 
 const PINE_SOURCE_MAX_BYTES = 8 * 1024 * 1024;
 
@@ -394,6 +395,15 @@ export async function loadStrategyResume({ run_directory, _deps = {} } = {}) {
     throw resumeError('Run has already succeeded.', {
       code: 'RUN_ALREADY_SUCCEEDED',
       phase: 'resume_validation',
+    });
+  }
+  if (
+    artifacts.watchlist.symbol_validation?.performed === true
+    && artifacts.watchlist.symbol_validation.success === false
+  ) {
+    throw resumeError('The frozen Watchlist failed TradingView Symbol validation.', {
+      code: 'WATCHLIST_SYMBOL_VALIDATION_FAILED',
+      phase: 'watchlist_symbol_validation',
     });
   }
   if (basename(artifacts.store.run_path) !== artifacts.run.run_id) {
@@ -1007,6 +1017,9 @@ export async function durableStrategyRunResponse({
       name: finalized.run.resolved.watchlist.name,
       snapshot_id: finalized.run.resolved.watchlist.snapshot_id,
       symbol_count: finalized.run.resolved.watchlist.symbol_count,
+      ...(finalized.watchlist.symbol_validation && {
+        symbol_validation: finalized.watchlist.symbol_validation,
+      }),
     }),
     summary: finalized.summary,
     experiments: finalized.experiments,
@@ -1051,6 +1064,33 @@ export async function resumeStrategyAutomation({
       const runWithSession = _deps.withChartSession || withChartSession;
       await runWithSession({ context, _deps: _deps.session }, async () => {
         const alreadyLockedSession = async (_options, operation) => operation();
+        let executionWatchlist = local.artifacts.watchlist;
+        if (local.artifacts.watchlist.symbol_validation?.performed === false) {
+          const validateWatchlist = _deps.validateNamedWatchlistSymbols
+            || validateNamedWatchlistSymbols;
+          const symbolValidation = await validateWatchlist({
+            snapshot: local.artifacts.watchlist,
+            context,
+            timeframe: run.requested.backtest.timeframe,
+            signal,
+            _deps: _deps.watchlist_validation,
+          });
+          executionWatchlist = Object.freeze({
+            ...local.artifacts.watchlist,
+            symbol_validation: symbolValidation,
+          });
+          await store.replaceWatchlist(executionWatchlist);
+          if (!symbolValidation.success) {
+            throw resumeError(
+              `Watchlist Symbol validation failed for ${symbolValidation.failed} of ${symbolValidation.requested} Symbols.`,
+              {
+                code: 'WATCHLIST_SYMBOL_VALIDATION_FAILED',
+                phase: 'watchlist_symbol_validation',
+              },
+            );
+          }
+        }
+        assertNotAborted(signal);
         let strategy;
         let prepared;
         let selections;
@@ -1125,7 +1165,7 @@ export async function resumeStrategyAutomation({
         await executeDurableStrategyPlan({
           store,
           run,
-          watchlist: local.artifacts.watchlist,
+          watchlist: executionWatchlist,
           prepared,
           identity: strategy,
           context,

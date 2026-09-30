@@ -84,7 +84,7 @@ Production code與tests中已不存在`exportStrategySymbolIntoRun`或`_run`priv
 
 ## KI-002: Watchlist structural validation 無法證明 TradingView Symbol 可解析
 
-Status: `open`
+Status: `resolved`
 
 Planned resolution: [`TASK-009`](./TASK-009-watchlist-symbol-validation.md)
 
@@ -177,15 +177,18 @@ document.querySelectorAll('[class*="bar"]')
 
 詳細state、retry、error、crash／Resume及compatibility contract見TASK-009。
 
-### Temporary workaround
+### Resolution
 
-在TASK-009完成前：
+TASK-009已於2026-09-30完成：
 
-1. 對失敗Symbol以TradingView Desktop UI、`symbolExt()`及Main Series bars人工確認。
-2. 從Account Named Watchlist移除不存在的Symbol。
-3. 重新capture stable Snapshot。
-4. 使用新Run ID執行dry-run及formal Run。
-5. 保留原failed Run作為evidence，不修改`watchlist.json`或manifest後強行Resume。
+- Formal Run會先建立canonical Run Directory，保存`run.json`與含pending validation的frozen `watchlist.json`，再逐一以TradingView Desktop CDP驗證Symbol。
+- Canonical metadata identity為primary valid signal；Main Series bars與invalid UI只作bounded diagnostics／not-found evidence。
+- 固定每attempt 1秒、每Symbol最多3 attempts；not-found／exhausted不fail fast，但整批有任何錯誤就會在Strategy sync前停止。
+- Validation結果只允許保持Snapshot ID、ordered fingerprint及Symbols不變的atomic `symbol_validation`replacement。
+- Pending validation可由same-run Resume整批重驗；known failed Snapshot在runtime identity resolution及Strategy mutation前拒絕。
+- Existing artifact-v2沒有`symbol_validation`時仍保持Resume相容。
+- Controlled live mixed probe確認`TPEX:2640`於attempt 1回報`WATCHLIST_SYMBOL_NOT_FOUND`、`TPEX:6227`為valid，並成功還原`TWSE_DLY:2478 / 1D`。
+- Node 22／24完整unit suites各652/652通過；exact-name`stock_all_list` 652/652 validation與single-baseline endurance仍由TASK-007追蹤。
 
 ### Resolution criteria
 

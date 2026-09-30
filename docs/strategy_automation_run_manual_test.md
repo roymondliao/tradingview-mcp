@@ -53,6 +53,7 @@ fnm exec --using=22 npm run tv -- strategy run \
 - `blocked`與`errors`皆為空。
 - Layout、Pane、Saved Strategy與Watchlist exact-name resolution正確。
 - Watchlist Snapshot為`complete: true`，count符合TradingView Account內容。
+- `symbol_validation`為`performed: false`、`reason: "formal_run_only"`；dry-run只完成structural Snapshot validation，不宣稱Symbols可被Desktop解析。
 - `strategy_sync.account_action`為`create`、`update`或`reuse`；`pane_action`為`add_latest`、`refresh`或`reuse`。
 - 所有Parameter Sets通過Candidate validation；若Pane已是latest，也應顯示完整Runtime validation與Inputs fingerprint。
 - Dry-run不得建立output directory、更新Pine、修改Inputs或切換Symbol。
@@ -65,6 +66,8 @@ fnm exec --using=22 npm run tv -- strategy run \
 ```
 
 Formal run會重新執行完整preflight，不把先前dry-run當作cache。成功response只提供bounded counts、fingerprints與artifact paths，不在stdout列出完整Watchlist或所有Symbol明細。
+
+Formal run建立initial durable artifacts後，會先透過目標Pane驗證整份frozen Watchlist。只有全部Symbols通過canonical metadata identity validation，才會進入Strategy sync、Parameter mutation與Experiment export。
 
 Exit codes：
 
@@ -94,6 +97,7 @@ Exit codes：
 確認：
 
 - `watchlist.json`保存完整ordered Symbols與原始Snapshot identity。
+- 新formal Run的`watchlist.json.symbol_validation`必須為`performed: true`、`success: true`，且requested／valid counts等於Snapshot Symbol count、failed為0。
 - 每個Experiment的manifest使用相同Watchlist Snapshot與固定Strategy revision。
 - 每個成功Symbol同時具有Report、Trading Data與Reconciliation artifacts。
 - `reconciliation.success`為`true`，且沿用總損益、勝率、總交易、獲利交易與虧損交易五項比對。
@@ -206,7 +210,30 @@ fnm exec --using=22 npm run tv -- strategy run \
 
 通過條件：`success: true`、`valid: true`、`blocked: []`、`errors: []`，Snapshot count與small Watchlist一致，且Run Directory尚未建立。
 
-## 9. Normal durable Run and succeeded-Run guard
+## 9. Watchlist Symbol validation gate
+
+使用包含有效與已知無效商品的專用small Watchlist執行新Run。TradingView Desktop通常不允許新增不存在商品，因此negative案例只能使用已存在於Account Watchlist的stale entry；不要為測試手動竄改frozen artifact。
+
+已驗證的controls：
+
+- Valid：`TPEX:6227`。
+- Not found：`TPEX:2640`。
+
+執行formal Run後確認：
+
+- Validator固定每attempt 1秒、每Symbol最多3 attempts，且沒有Config／CLI override。
+- `TPEX:2640`回報`WATCHLIST_SYMBOL_NOT_FOUND`、`attempt_count: 1`；diagnostics顯示metadata identity absent、Main Series bars 0及invalid UI true。
+- 同一份mixed Watchlist中的`TPEX:6227`仍完成驗證，證明per-Symbol failure不會中斷整批掃描。
+- Top-level error為`WATCHLIST_SYMBOL_VALIDATION_FAILED`、phase為`watchlist_symbol_validation`。
+- `watchlist.json.symbol_validation`以atomic replacement保存bounded failed summary；Snapshot ID、ordered fingerprint及ordered Symbols完全不變。
+- 不建立Experiment artifacts、不執行Strategy sync或Parameter mutation。
+- Chart Symbol與Timeframe還原為validation前的值。
+
+修正Account Named Watchlist後，使用新Run ID重新執行；不得修改failed Run的`watchlist.json`後Resume。新的successful Run必須顯示`symbol_validation.success: true`才能進入Experiments。
+
+若在validation完成前crash，`watchlist.json.symbol_validation.performed`會維持`false`；對同一Run Directory執行`strategy resume`時必須重新驗證整份frozen Snapshot。若validation已完成且failed，Resume應立即回傳`WATCHLIST_SYMBOL_VALIDATION_FAILED`，不得進入TradingView runtime mutation。
+
+## 10. Normal durable Run and succeeded-Run guard
 
 ```bash
 fnm exec --using=22 npm run tv -- strategy run --config "$SMALL_CONFIG"
@@ -229,7 +256,7 @@ fnm exec --using=22 npm run tv -- strategy resume \
 
 Expected error：`RUN_ALREADY_SUCCEEDED`。
 
-## 10. Retry success and retry exhaustion
+## 11. Retry success and retry exhaustion
 
 Production CLI沒有fault-injection flag。Attempt 2／3 success、retry exhaustion、fresh Resume budget與continue-next-Symbol已由第7節的explicit Core seams deterministic驗證。Controlled live可用外部manual timing補充，不得修改production retry constants：
 
@@ -247,7 +274,7 @@ fnm exec --using=22 npm run tv -- strategy resume \
 
 若目前Desktop版本無法可靠製造retryable obstruction，記錄為`manual timing unavailable`並保留deterministic retry tests作為證據；不可新增hidden environment flag來偽造production結果。
 
-## 11. Graceful interruption and same-run Resume
+## 12. Graceful interruption and same-run Resume
 
 使用至少2個Symbols的small config啟動Run。觀察第一個`manifest.json` entry成為`succeeded`後按一次`Ctrl-C`：
 
@@ -272,9 +299,9 @@ Resume必須沿用相同`run_id`，只執行non-succeeded Symbols。完成後比
 
 若要驗證`SIGTERM`，使用另一個新Run並對CLI PID送出一次`SIGTERM`；Expected exit code為143，其他行為與`SIGINT`相同。
 
-## 12. Hard crash recovery
+## 13. Hard crash recovery
 
-### 12.1 Process crash after at least one success
+### 13.1 Process crash after at least one success
 
 啟動新Run，第一個Symbol成為`succeeded`後，從另一個terminal對該CLI PID送出`SIGKILL`：
 
@@ -284,7 +311,7 @@ kill -9 <cli-pid>
 
 Expected：`run.json`可能維持`running`，最後一個atomic manifest state保留。重新啟動Desktop/CDP（如有需要）後，對相同Run Directory執行Resume；已成功Symbol不得重跑。
 
-### 12.2 Crash after Symbol rename and before manifest callback
+### 13.2 Crash after Symbol rename and before manifest callback
 
 這個window非常短，使用Node inspector的documented breakpoint，不修改production code：
 
@@ -301,15 +328,15 @@ fnm exec --using=22 node --inspect-brk src/cli/index.js \
 - 只清除該non-succeeded Symbol的uncommitted final／staging output並重新執行。
 - 其他succeeded Symbols的state與artifacts保持不變。
 
-## 13. TradingView Desktop restart and identity guards
+## 14. TradingView Desktop restart and identity guards
 
-### 13.1 Desktop restart and volatile rebind
+### 14.1 Desktop restart and volatile rebind
 
 在至少一個Symbol成功後強制結束TradingView Desktop，使Run因CDP error終止。使用相同Account、Layout、Pane、Saved Strategy及CDP模式重新啟動Desktop，再執行Resume。
 
 通過條件：volatile `target_id`、tab index與Strategy `entity_id`可重新綁定；Resume沿用相同Run ID並完成，先前成功Symbols不重跑。
 
-### 13.2 Stable identity drift rejection
+### 14.2 Stable identity drift rejection
 
 在另一個未完成Run上刻意改變一個stable identity，例如：
 
@@ -321,7 +348,7 @@ fnm exec --using=22 node --inspect-brk src/cli/index.js \
 
 執行Resume，Expected為`RUN_RESUME_IDENTITY_MISMATCH`或對應既有identity／source guard，且必須在Symbol mutation前拒絕並保持既有artifacts不變。恢復原identity後，再驗證Resume可繼續。
 
-## 14. Duplicate Run and Pane ownership
+## 15. Duplicate Run and Pane ownership
 
 保持第一個small Run正在執行時，在第二個terminal執行同一Run的Resume：
 
@@ -334,7 +361,7 @@ Expected：`RUN_ALREADY_ACTIVE`且不修改Run artifacts。
 
 再以不同Run ID但相同Layout／Pane啟動第二個formal Run；Expected同樣在mutation前以`RUN_ALREADY_ACTIVE`拒絕。不同Pane的Run不應被此Pane lease誤擋。
 
-## 15. `stock_all_list` 652-Symbol capacity gate
+## 16. `stock_all_list` 652-Symbol capacity gate
 
 Capacity config必須使用exact-name `stock_all_list`且只保留一個`baseline` Parameter Set。先執行：
 
@@ -350,6 +377,8 @@ Snapshot通過條件：
 - `declared_symbol_count`、`returned_symbol_count`及`unique_symbol_count`皆為652。
 - `invalid_symbol_count: 0`、`duplicate_symbol_count: 0`、`complete: true`。
 - 記錄Snapshot ID與ordered Symbol fingerprint。
+
+注意：以上只證明structural Snapshot完整。接著formal Run必須先得到`watchlist.json.symbol_validation`的requested 652／valid 652／failed 0，才可進入single-baseline Experiment；任一Symbol validation error都會阻止capacity export。
 
 執行single-baseline endurance Run：
 
@@ -372,7 +401,7 @@ Final acceptance：
 - Resume前已成功Symbols未被重新export。
 - Existing 448 × 3成功結果繼續作為multi-Parameter-Set live evidence；不執行652 × 3 live。
 
-## 16. Legacy exporter regression
+## 17. Legacy exporter regression
 
 確認下列既有操作未受artifact v2影響：
 
@@ -381,7 +410,7 @@ Final acceptance：
 - `strategy trading-export --watchlist active ...`保持artifact v1 Active Watchlist behavior。
 - Legacy exporter不產生artifact v2 Resume metadata，亦不接受`strategy resume`。
 
-## 17. Manual acceptance record and cleanup
+## 18. Manual acceptance record and cleanup
 
 完成手測後，記錄：
 
@@ -389,6 +418,7 @@ Final acceptance：
 - Config path、explicit Run ID與output directory的sanitized reference。
 - Layout／Pane／Strategy／Watchlist names。
 - Snapshot ID、Symbol count與ordered fingerprint。
+- Watchlist Symbol validation的requested／valid／failed counts，以及bounded error codes。
 - 每個scenario的terminal status、sanitized error code、attempt count及Resume selected count。
 - Interrupt／crash前後的succeeded count，以及先前成功artifacts是否未變。
 - Formal Run的Experiment數與每個Experiment requested／succeeded／failed Symbols。

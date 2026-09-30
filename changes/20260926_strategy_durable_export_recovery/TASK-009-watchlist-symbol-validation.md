@@ -1,7 +1,7 @@
 ---
 id: TASK-009
 title: TradingView Watchlist Symbol Resolvability Validation
-status: todo
+status: done
 phase: strategy-durable-export-recovery
 depends_on:
   - TASK-002
@@ -385,21 +385,30 @@ validateNamedWatchlistSymbols({
 
 ## Acceptance criteria
 
-- [ ] Structural Snapshot validation與CDP Symbol validation語意分離。
-- [ ] Metadata canonical identity是primary validity signal；bars／invalid UI依本Task規則作diagnostics或not-found佐證。
-- [ ] 每attempt固定1秒、每Symbol最多3 attempts且User不可設定。
-- [ ] Explicit not found立即回報；indeterminate才retry。
-- [ ] Exhausted／not-found Symbol不fail fast，完整Watchlist仍繼續驗證。
-- [ ] Initial Run／Watchlist artifacts在CDP validation mutation前durably落地。
-- [ ] 任一validation error會保存failed evidence並阻止validated SSOT與Strategy mutation。
-- [ ] 全部valid後`watchlist.json`以atomic replacement保存bounded validation evidence。
-- [ ] Dry-run保持read-only並標明CDP validation未執行。
-- [ ] Existing artifact-v2 Resume相容，不要求舊Run補寫validation evidence。
-- [ ] Crash期間的pending validation可same-run重驗；known failed validation不會進入Strategy execution。
-- [ ] TPEX:2640 negative及TPEX:6227 positive controlled live cases通過。
-- [ ] Node 22／24 targeted與full unit suites、lint及`git diff --check`通過。
-- [ ] TASK-007 `stock_all_list` 652-Symbol capacity gate只在652/652 validation通過後執行。
+- [x] Structural Snapshot validation與CDP Symbol validation語意分離。
+- [x] Metadata canonical identity是primary validity signal；bars／invalid UI依本Task規則作diagnostics或not-found佐證。
+- [x] 每attempt固定1秒、每Symbol最多3 attempts且User不可設定。
+- [x] Explicit not found立即回報；indeterminate才retry。
+- [x] Exhausted／not-found Symbol不fail fast，完整Watchlist仍繼續驗證。
+- [x] Initial Run／Watchlist artifacts在CDP validation mutation前durably落地。
+- [x] 任一validation error會保存failed evidence並阻止validated SSOT與Strategy mutation。
+- [x] 全部valid後`watchlist.json`以atomic replacement保存bounded validation evidence。
+- [x] Dry-run保持read-only並標明CDP validation未執行。
+- [x] Existing artifact-v2 Resume相容，不要求舊Run補寫validation evidence。
+- [x] Crash期間的pending validation可same-run重驗；known failed validation不會進入Strategy execution。
+- [x] TPEX:2640 negative及TPEX:6227 positive controlled live cases通過。
+- [x] Node 22／24 targeted與full unit suites、lint及`git diff --check`通過。
+- [x] TASK-007 `stock_all_list` 652-Symbol capacity gate只在652/652 validation通過後執行。
 
 ## Completion record
 
-Not started.
+Completed on 2026-09-30.
+
+- `watchlist` module新增固定1秒／最多3 attempts的CDP Symbol validator；canonical metadata identity為valid authority，Main Series bars及invalid UI只保留為bounded diagnostics／not-found evidence。
+- Formal Run在leases、Pane recheck與initial durable artifacts落地後執行完整frozen Watchlist validation；failed result atomic寫入`watchlist.json`並於Strategy sync前停止。
+- `watchlist.json.symbol_validation`為optional artifact-v2 extension。新Run先寫pending，再只允許保持Snapshot identity不變的completed atomic replacement；舊artifact-v2仍可Resume。
+- Pending validation的same-run Resume會重新驗證整份Snapshot；known failed validation在任何runtime identity resolution或Strategy mutation前拒絕。
+- Dry-run response明確回傳`performed: false`／`formal_run_only`，不切換Chart。
+- Targeted suites共61 tests passed；Node 22與Node 24完整unit suites各652/652 passed。Lint為0 errors（保留3筆既有warnings），`git diff --check`通過。
+- Controlled Desktop CDP mixed probe：`TPEX:2640`於attempt 1回報`WATCHLIST_SYMBOL_NOT_FOUND`，diagnostics為metadata absent、bars 0、invalid UI true；`TPEX:6227`判定valid。Probe後readback確認`dev`／Pane 0已還原`TWSE_DLY:2478 / 1D`。
+- Exact-name`stock_all_list` 652/652 validation及single-baseline endurance Run仍屬TASK-007 live capacity gate，未在本Task宣稱完成。

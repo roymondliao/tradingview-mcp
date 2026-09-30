@@ -165,6 +165,48 @@ describe('Strategy Resume local loader', () => {
     assert.equal(runtimeCalls, 0);
   });
 
+  it('rejects a known failed frozen Watchlist before runtime identity resolution', async () => {
+    const fixture = await createResumeFixture({ root: temporaryDirectory() });
+    await fixture.store.replaceWatchlist({
+      ...fixture.watchlist,
+      symbol_validation: {
+        schema_version: 1,
+        performed: true,
+        success: false,
+        source: 'tradingview_desktop_cdp',
+        timeframe: '1D',
+        requested: fixture.symbols.length,
+        valid: fixture.symbols.length - 1,
+        failed: 1,
+        max_attempts: 3,
+        attempt_timeout_ms: 1000,
+        validated_at: 1800000000000,
+        validated_at_iso: '2027-01-15T08:00:00.000Z',
+        errors: [{
+          index: 0,
+          symbol: fixture.symbols[0],
+          code: 'WATCHLIST_SYMBOL_NOT_FOUND',
+          phase: 'watchlist_symbol_validation',
+          attempt_count: 1,
+          message: `TradingView reports that ${fixture.symbols[0]} does not exist.`,
+        }],
+      },
+    });
+    let runtimeCalls = 0;
+    await assert.rejects(withStrategyResumeContext({
+      run_directory: fixture.store.run_path,
+      _deps: {
+        identity: {
+          resolveLayoutTarget: async () => { runtimeCalls += 1; },
+        },
+      },
+    }, async () => null), (error) => (
+      error.code === 'WATCHLIST_SYMBOL_VALIDATION_FAILED'
+      && error.phase === 'watchlist_symbol_validation'
+    ));
+    assert.equal(runtimeCalls, 0);
+  });
+
   it('rejects missing, non-canonical, and non-regular succeeded artifacts', async () => {
     async function succeededFixture() {
       const fixture = await createResumeFixture({

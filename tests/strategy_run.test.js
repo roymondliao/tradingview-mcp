@@ -6,6 +6,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -106,6 +107,9 @@ describe('Strategy Run dry-run orchestration', () => {
     assert.equal(result.resources.pane_strategy.instances[0].input_count, 1);
     assert.deepEqual(result.watchlist.symbol_sample.first, ['TWSE:2330', 'TWSE:2317', 'TWSE:2454']);
     assert.deepEqual(result.watchlist.symbol_sample.last, ['TWSE:2882', 'TWSE:2308', 'TWSE:2412']);
+    assert.deepEqual(result.symbol_validation, {
+      performed: false, reason: 'formal_run_only',
+    });
     assert.equal(JSON.stringify(result).includes('"symbols"'), false);
     assert.deepEqual(calls, ['attach-target']);
   });
@@ -269,6 +273,7 @@ function formalDeps(preflight, calls, {
   parameterError = null,
   syncError = null,
   onAttempt = null,
+  symbolValidation = null,
 } = {}) {
   let clock = 1800000000000;
   const now = () => clock++;
@@ -296,6 +301,29 @@ function formalDeps(preflight, calls, {
       return operation({ context: sessionContext });
     },
     dryRunStrategyAutomation: async () => preflight,
+    validateNamedWatchlistSymbols: async ({ snapshot, timeframe }) => {
+      calls.events.push('watchlist-validated');
+      const artifact = JSON.parse(readFileSync(
+        join(preflight._internal.loaded.requested.output.run_path, 'watchlist.json'),
+        'utf8',
+      ));
+      assert.equal(artifact.symbol_validation.performed, false);
+      return symbolValidation || {
+        schema_version: 1,
+        performed: true,
+        success: true,
+        source: 'tradingview_desktop_cdp',
+        timeframe,
+        requested: snapshot.symbols.length,
+        valid: snapshot.symbols.length,
+        failed: 0,
+        max_attempts: 3,
+        attempt_timeout_ms: 1000,
+        validated_at: now(),
+        validated_at_iso: '2027-01-15T08:00:00.000Z',
+        errors: [],
+      };
+    },
     executeStrategySync: async (args) => {
       calls.events.push('strategy-sync');
       assert.equal(existsSync(join(preflight._internal.loaded.requested.output.run_path, 'run.json')), true);
@@ -395,8 +423,8 @@ describe('Formal Strategy Run integration', () => {
     assert.equal(calls.sessions, 1);
     assert.equal(calls.innerSessions, 1);
     assert.deepEqual(calls.sync, [preflight.strategy_sync]);
-    assert.deepEqual(calls.events.slice(0, 4), [
-      'leases-acquired', 'pane-rechecked', 'store-created', 'strategy-sync',
+    assert.deepEqual(calls.events.slice(0, 5), [
+      'leases-acquired', 'pane-rechecked', 'store-created', 'watchlist-validated', 'strategy-sync',
     ]);
     assert.equal(calls.events.at(-1), 'leases-released');
     assert.equal(calls.attempts.length, 4);
@@ -420,6 +448,8 @@ describe('Formal Strategy Run integration', () => {
     assert.equal(runArtifact.schema_version, 2);
     assert.equal('completed_at' in runArtifact, false);
     assert.deepEqual(watchlistArtifact.symbols, ['TWSE:2330', 'TWSE:2317']);
+    assert.equal(watchlistArtifact.symbol_validation.success, true);
+    assert.equal(result.watchlist.symbol_validation.success, true);
   });
 
   it('marks retry exhaustion failed but continues remaining Symbols and Experiments', async () => {
@@ -437,6 +467,46 @@ describe('Formal Strategy Run integration', () => {
     assert.equal(calls.attempts.filter((item) => item === 'baseline:TWSE:2330').length, 3);
     assert.ok(calls.attempts.includes('fast:TWSE:2317'));
     assert.equal(existsSync(join(result.output.path, 'run.json')), true);
+  });
+
+  it('persists invalid Watchlist evidence and blocks Strategy mutation', async () => {
+    const directory = temporaryDirectory();
+    const preflight = formalPreflight(directory);
+    const calls = { sync: [], attempts: [], events: [] };
+    const result = await runStrategyAutomation({
+      config_path: '/tmp/run.json',
+      _deps: formalDeps(preflight, calls, {
+        symbolValidation: {
+          schema_version: 1,
+          performed: true,
+          success: false,
+          source: 'tradingview_desktop_cdp',
+          timeframe: '1D',
+          requested: 2,
+          valid: 1,
+          failed: 1,
+          max_attempts: 3,
+          attempt_timeout_ms: 1000,
+          validated_at: 1800000000000,
+          validated_at_iso: '2027-01-15T08:00:00.000Z',
+          errors: [{
+            index: 1,
+            symbol: 'TWSE:2317',
+            code: 'WATCHLIST_SYMBOL_NOT_FOUND',
+            phase: 'watchlist_symbol_validation',
+            attempt_count: 1,
+            message: 'TradingView reports that TWSE:2317 does not exist.',
+          }],
+        },
+      }),
+    });
+    assert.equal(result.success, false);
+    assert.equal(result.error.code, 'WATCHLIST_SYMBOL_VALIDATION_FAILED');
+    assert.equal(result.watchlist.symbol_validation.failed, 1);
+    assert.deepEqual(calls.sync, []);
+    assert.deepEqual(calls.attempts, []);
+    const watchlist = JSON.parse(readFileSync(join(result.output.path, 'watchlist.json'), 'utf8'));
+    assert.equal(watchlist.symbol_validation.errors[0].symbol, 'TWSE:2317');
   });
 
   it('rejects a Run ID collision before Strategy mutation', async () => {
@@ -495,6 +565,12 @@ describe('Formal Strategy Run integration', () => {
       _deps: formalDeps(preflight, initialCalls, { failedSymbol: 'baseline:TWSE:2330' }),
     });
     assert.equal(initial.status, 'failed');
+    const watchlistPath = join(initial.output.path, 'watchlist.json');
+    const pendingWatchlist = JSON.parse(readFileSync(watchlistPath, 'utf8'));
+    pendingWatchlist.symbol_validation = {
+      schema_version: 1, performed: false, reason: 'pending', timeframe: '1D',
+    };
+    writeFileSync(watchlistPath, `${JSON.stringify(pendingWatchlist, null, 2)}\n`);
     const local = await loadStrategyResume({ run_directory: initial.output.path });
     assert.deepEqual(local.plan.experiments[0].selected_indices, [0]);
 
@@ -509,6 +585,7 @@ describe('Formal Strategy Run integration', () => {
       _deps: {
         withStrategyResumeContext: async (_options, operation) => operation({ local, identity }),
         withChartSession: resumeDeps.withChartSession,
+        validateNamedWatchlistSymbols: resumeDeps.validateNamedWatchlistSymbols,
         execution: resumeDeps.execution,
         now: resumeDeps.now,
       },
@@ -517,6 +594,8 @@ describe('Formal Strategy Run integration', () => {
     assert.equal(resumed.resumed, true);
     assert.equal(resumed.run_id, initial.run_id);
     assert.deepEqual(resumeCalls.attempts, ['baseline:TWSE:2330']);
+    assert.ok(resumeCalls.events.includes('watchlist-validated'));
+    assert.equal(resumed.watchlist.symbol_validation.success, true);
   });
 
   it('completes setup idempotently when the first invocation failed during Strategy sync', async () => {

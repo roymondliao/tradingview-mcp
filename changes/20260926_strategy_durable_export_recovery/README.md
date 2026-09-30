@@ -222,7 +222,7 @@ Execution／restore 階段不建立重複 error code，沿用既有 `PANE_CONTEX
 
 ## Design status
 
-Artifact v2、retry classifier、identity rebind、signal handling、cross-process leases、stale attempt cleanup與不實作`strategy status`皆已定案。D-014已依652 × 3 filesystem baseline補齊量化thresholds並改為`accepted`；目前剩餘TASK-008 TTY progress、TASK-009 Watchlist Symbol validation、controlled live及`stock_all_list` 652-Symbol single-baseline gate。
+Artifact v2、retry classifier、identity rebind、signal handling、cross-process leases、stale attempt cleanup與不實作`strategy status`皆已定案。D-014已依652 × 3 filesystem baseline補齊量化thresholds並改為`accepted`；TASK-009 Watchlist Symbol validation已完成，目前剩餘TASK-008 TTY progress、其他controlled live scenarios及`stock_all_list` 652-Symbol single-baseline gate。
 
 ## Delivery sequence
 
@@ -251,7 +251,7 @@ Artifact v2 state + durable store
 - [x] 652 × 3 synthetic benchmark、fault injection與完整 deterministic regression通過。
 - [ ] `stock_all_list` Snapshot 完整性及 652-Symbol single-baseline live endurance acceptance 通過。
 - [ ] TTY progress顯示percentage／processed、original Experiment identity及succeeded／failed，且不污染stdout JSON。
-- [ ] Formal Run先保存frozen Snapshot，再只於全部Symbols通過TradingView CDP metadata validation後建立可執行的validated SSOT。
+- [x] Formal Run先保存frozen Snapshot，再只於全部Symbols通過TradingView CDP metadata validation後建立可執行的validated SSOT。
 
 ## Tasks
 
@@ -265,8 +265,8 @@ Artifact v2 state + durable store
 | [TASK-006](./TASK-006-run-resume-cli-integration.md) | Run／Resume Orchestration, CLI, and Signals | `done` | TASK-001～005 |
 | [TASK-007](./TASK-007-regression-benchmark-live-gate.md) | Regression, Benchmark, and Live Delivery Gate | `in_progress` | TASK-001～006 |
 | [TASK-008](./TASK-008-cli-progress-display.md) | Strategy Run and Resume CLI Progress Display | `todo` | TASK-006 |
-| [TASK-009](./TASK-009-watchlist-symbol-validation.md) | TradingView Watchlist Symbol Resolvability Validation | `todo` | TASK-002, TASK-006 |
+| [TASK-009](./TASK-009-watchlist-symbol-validation.md) | TradingView Watchlist Symbol Resolvability Validation | `done` | TASK-002, TASK-006 |
 
 ## Completion record
 
-TASK-001～006 implementation皆已完成。TASK-007的deterministic fault matrix、Node 22／24 full regression、652 × 3 × 3 filesystem benchmark、D-014 thresholds及manual guide已完成；Feature仍為`in_progress`，等待TASK-008 TTY-only Run／Resume progress、TASK-009 Watchlist Symbol validation、controlled TradingView scenarios及exact-name`stock_all_list` 652-Symbol single-baseline live acceptance。TASK-009由`TPEX:2640`實測issue新增，且會阻擋TASK-007 capacity live gate；詳細數據與未完成項目見TASK-007～009 completion records。
+TASK-001～006與TASK-009 implementation皆已完成。TASK-009已用`TPEX:2640` negative／`TPEX:6227` positive mixed CDP probe驗證，並將validated Watchlist gate接入Run／Resume。TASK-007的deterministic fault matrix、Node 22／24 full regression、652 × 3 × 3 filesystem benchmark、D-014 thresholds及manual guide已完成；Feature仍為`in_progress`，等待TASK-008 TTY-only Run／Resume progress、其他controlled TradingView scenarios及exact-name`stock_all_list` 652-Symbol single-baseline live acceptance。詳細數據與未完成項目見TASK-007～009 completion records。

@@ -10,7 +10,9 @@ import {
 } from './strategy-run-resolver.js';
 import {
   captureNamedWatchlistSnapshot,
+  pendingWatchlistSymbolValidation,
   summarizeNamedWatchlistSnapshot,
+  validateNamedWatchlistSymbols,
 } from './watchlist.js';
 import {
   compareInputSchemas,
@@ -92,6 +94,7 @@ export async function dryRunStrategyAutomation({ config_path, _include_internal 
       input_schema_changes: { available: false, reason: 'config_invalid' },
       parameter_sets: [],
       watchlist: null,
+      symbol_validation: { performed: false, reason: 'formal_run_only' },
       blocked: [blocked('all_resolution', 'Run Config root is invalid.')],
       warnings,
       errors,
@@ -294,6 +297,7 @@ export async function dryRunStrategyAutomation({ config_path, _include_internal 
     },
     strategy_sync: sync,
     watchlist,
+    symbol_validation: { performed: false, reason: 'formal_run_only' },
     candidate_input_schema: candidate?.input_schema || null,
     input_schema_changes: schemaChanges,
     parameter_sets: parameterPlan.parameter_sets,
@@ -392,6 +396,12 @@ export async function runStrategyAutomation({ config_path, signal, _deps = {} } 
     ...internal.target,
     resolution: internal.target.resolution ?? internal.target.timeframe ?? null,
   });
+  const runWatchlist = Object.freeze({
+    ...internal.watchlist,
+    symbol_validation: pendingWatchlistSymbolValidation({
+      timeframe: requested.backtest.timeframe,
+    }),
+  });
   assertNotAborted(signal);
   const acquireLeases = _deps.acquireLeases || acquireStrategyRunPaneLeases;
   const leases = await acquireLeases({
@@ -424,13 +434,38 @@ export async function runStrategyAutomation({ config_path, signal, _deps = {} } 
       _deps: _deps.artifacts,
     });
     run = initialRunArtifact({ internal, context: runContext, startedAt });
-    await store.writeInitialWatchlist(internal.watchlist);
+    await store.writeInitialWatchlist(runWatchlist);
     await store.replaceRun(run);
     initialized = true;
 
     const runWithSession = _deps.withChartSession || withChartSession;
     await runWithSession({ context: runContext, _deps: _deps.session }, async () => {
       const alreadyLockedSession = async (_options, operation) => operation();
+      assertNotAborted(signal);
+      const validateWatchlist = _deps.validateNamedWatchlistSymbols
+        || validateNamedWatchlistSymbols;
+      const symbolValidation = await validateWatchlist({
+        snapshot: runWatchlist,
+        context: runContext,
+        timeframe: requested.backtest.timeframe,
+        signal,
+        _deps: _deps.watchlist_validation,
+      });
+      const validatedWatchlist = Object.freeze({
+        ...runWatchlist,
+        symbol_validation: symbolValidation,
+      });
+      await store.replaceWatchlist(validatedWatchlist);
+      if (!symbolValidation.success) {
+        throw new CoreOperationError(
+          `Watchlist Symbol validation failed for ${symbolValidation.failed} of ${symbolValidation.requested} Symbols.`,
+          {
+            code: 'WATCHLIST_SYMBOL_VALIDATION_FAILED',
+            phase: 'watchlist_symbol_validation',
+            context: runContext,
+          },
+        );
+      }
       assertNotAborted(signal);
       const runSync = _deps.executeStrategySync || executeStrategySync;
       const sync = await runSync({
@@ -481,7 +516,7 @@ export async function runStrategyAutomation({ config_path, signal, _deps = {} } 
       await executeDurableStrategyPlan({
         store,
         run,
-        watchlist: internal.watchlist,
+        watchlist: validatedWatchlist,
         prepared,
         identity: strategyIdentity,
         context: runContext,
