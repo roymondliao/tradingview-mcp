@@ -27,7 +27,7 @@ scope: verification-and-delivery
 
 - Durable recovery fault-injection test fixtures／helpers。
 - Filesystem-only 652 × 3 benchmark test or script。
-- `docs/strategy_durable_export_recovery_manual_test.md`
+- `docs/strategy_automation_run_manual_test.md`
 - This Change的completion records andD-014 measured thresholds。
 
 ### Modify as required
@@ -111,7 +111,7 @@ Automated delivery phase完成，controlled live phase待執行：
 - 固定D-014 thresholds後重新執行正式gate，`thresholds_enforced: true`；median 72,327.298 ms、worst 74,482.608 ms，1956/1956 Symbol executions於每輪皆成功且所有thresholds通過。
 - 每個synthetic artifact使用Experiment／Symbol／artifact distinct markers並逐一audit，驗證attempt data沒有混用；所有temporary benchmark artifacts已自動清除。
 - D-014已改為`accepted`；完整baseline、thresholds與headroom rationale記錄於`DECISIONS.md`。
-- 新增`docs/strategy_durable_export_recovery_manual_test.md`，包含commands、bounded expectations、artifact checks、interrupt／crash points、same-run Resume、identity／lease scenarios、652 capacity gate及cleanup guidance。
+- Durable recovery手測已整合到canonical `docs/strategy_automation_run_manual_test.md`，包含commands、bounded expectations、artifact checks、interrupt／crash points、same-run Resume、identity／lease scenarios、652 capacity gate及cleanup guidance。
 - Existing multi-Parameter-Set evidence：2026-09-23 Run `obv-v3-20260923T092539Z-d87d94f0`，Snapshot `sha256:527cedc5ca74658fad8700b8bbd9e13e9f9920fb26595c72f6e1bfe5fd061b09`，3 Experiments × 448 Symbols，1344/1344 succeeded。這項只作為既有448 × 3 evidence，不取代artifact-v2 controlled live或652 single-baseline gate。
 
-尚未完成且不可先標記done：controlled live retry／exhaustion、SIGINT／hard crash、rename-before-callback、Desktop restart rebind、stable drift、duplicate ownership，以及exact-name`stock_all_list` 652-Symbol single-baseline Run。完成並回填sanitized evidence後，才可將TASK與Feature改為`done`。
+尚未完成且不可先標記done：controlled live retry／exhaustion、SIGINT／hard crash、rename-before-callback、Desktop restart rebind、stable drift、duplicate ownership，以及exact-name`stock_all_list` 652-Symbol single-baseline Run。Capacity Run必須先完成TASK-009並取得652/652 CDP Symbol validation evidence；完成並回填sanitized evidence後，才可將TASK與Feature改為`done`。

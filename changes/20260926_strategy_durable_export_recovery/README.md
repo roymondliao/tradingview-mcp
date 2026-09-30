@@ -10,6 +10,8 @@ scope:
   - retry-and-backoff
   - resume-and-crash-recovery
   - cross-process-pane-ownership
+  - cli-progress-presentation
+  - watchlist-symbol-validation
 ---
 
 # Strategy Durable Export Recovery
@@ -191,6 +193,8 @@ Execution／restore 階段不建立重複 error code，沿用既有 `PANE_CONTEX
 - Stale attempt staging detection 與 ownership-bounded cleanup。
 - Cross-process Run／Layout／Pane lease or lock。
 - Existing `strategy run` integration、exit codes、sanitization 與 bounded output。
+- TTY-only `strategy run`／`strategy resume` progress：percentage／processed、Experiment及succeeded／failed；stderr-only，不改變stdout JSON。
+- Formal Run將Watchlist交給Strategy execution前，以TradingView Desktop CDP逐筆驗證Symbol metadata resolvability；initial frozen evidence先durably落地，固定1秒attempt、最多3 attempts。
 - Deterministic fault injection、synthetic durability benchmark 與 controlled live acceptance。
 - `stock_all_list` 652-Symbol Snapshot capacity evidence及單一 baseline endurance run；既有 448 × 3 結果繼續作為 multi-Parameter-Set evidence。
 
@@ -218,7 +222,7 @@ Execution／restore 階段不建立重複 error code，沿用既有 `PANE_CONTEX
 
 ## Design status
 
-Artifact v2、retry classifier、identity rebind、signal handling、cross-process leases、stale attempt cleanup與不實作`strategy status`皆已定案。D-014已依652 × 3 filesystem baseline補齊量化thresholds並改為`accepted`；目前只剩controlled live與`stock_all_list` 652-Symbol single-baseline gate。
+Artifact v2、retry classifier、identity rebind、signal handling、cross-process leases、stale attempt cleanup與不實作`strategy status`皆已定案。D-014已依652 × 3 filesystem baseline補齊量化thresholds並改為`accepted`；目前剩餘TASK-008 TTY progress、TASK-009 Watchlist Symbol validation、controlled live及`stock_all_list` 652-Symbol single-baseline gate。
 
 ## Delivery sequence
 
@@ -229,6 +233,8 @@ Artifact v2 state + durable store
   → Resume loader/planner/identity rebind
   → Run + Resume orchestration/CLI/signals
   → regression/benchmark/controlled live gate
+  → TTY-only Run/Resume progress display
+  → Watchlist Symbol validation before SSOT/capacity gate
 ```
 
 ## Acceptance criteria
@@ -244,6 +250,8 @@ Artifact v2 state + durable store
 - [x] 相同 Run／Pane 的第二個 mutation process會在 mutation 前被 lock 拒絕。
 - [x] 652 × 3 synthetic benchmark、fault injection與完整 deterministic regression通過。
 - [ ] `stock_all_list` Snapshot 完整性及 652-Symbol single-baseline live endurance acceptance 通過。
+- [ ] TTY progress顯示percentage／processed、original Experiment identity及succeeded／failed，且不污染stdout JSON。
+- [ ] Formal Run先保存frozen Snapshot，再只於全部Symbols通過TradingView CDP metadata validation後建立可執行的validated SSOT。
 
 ## Tasks
 
@@ -256,7 +264,9 @@ Artifact v2 state + durable store
 | [TASK-005](./TASK-005-resume-planning-identity.md) | Resume Loader, Planning, and Identity Rebind | `done` | TASK-001, TASK-002, TASK-004 |
 | [TASK-006](./TASK-006-run-resume-cli-integration.md) | Run／Resume Orchestration, CLI, and Signals | `done` | TASK-001～005 |
 | [TASK-007](./TASK-007-regression-benchmark-live-gate.md) | Regression, Benchmark, and Live Delivery Gate | `in_progress` | TASK-001～006 |
+| [TASK-008](./TASK-008-cli-progress-display.md) | Strategy Run and Resume CLI Progress Display | `todo` | TASK-006 |
+| [TASK-009](./TASK-009-watchlist-symbol-validation.md) | TradingView Watchlist Symbol Resolvability Validation | `todo` | TASK-002, TASK-006 |
 
 ## Completion record
 
-TASK-001～006 implementation皆已完成。TASK-007的deterministic fault matrix、Node 22／24 full regression、652 × 3 × 3 filesystem benchmark、D-014 thresholds及manual guide已完成；Feature仍為`in_progress`，等待controlled TradingView scenarios及exact-name`stock_all_list` 652-Symbol single-baseline live acceptance。詳細數據與未完成項目見TASK-007 completion record。
+TASK-001～006 implementation皆已完成。TASK-007的deterministic fault matrix、Node 22／24 full regression、652 × 3 × 3 filesystem benchmark、D-014 thresholds及manual guide已完成；Feature仍為`in_progress`，等待TASK-008 TTY-only Run／Resume progress、TASK-009 Watchlist Symbol validation、controlled TradingView scenarios及exact-name`stock_all_list` 652-Symbol single-baseline live acceptance。TASK-009由`TPEX:2640`實測issue新增，且會阻擋TASK-007 capacity live gate；詳細數據與未完成項目見TASK-007～009 completion records。
