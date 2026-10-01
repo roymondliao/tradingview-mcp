@@ -187,6 +187,30 @@ describe('strict Symbol Session readback', () => {
     assert.equal(Object.isFrozen(result.context), true);
   });
 
+  it('omits original Chart state from a successful durable worker Symbol Session', async () => {
+    const state = { symbol: 'NASDAQ:MSFT', resolution: '60' };
+    const result = await prepareSymbolSession({
+      context: { target_id: 'target-dev', pane_index: 1 },
+      symbol: 'TWSE:2344',
+      timeframe: '1D',
+      timeout_ms: 1000,
+      assert_initial_chart_state: false,
+      capture_original_chart_state: false,
+      restore_on_failure: false,
+      _deps: {
+        assertPaneContext: async () => ({ ...state }),
+        setSymbol: async ({ symbol }) => { state.symbol = symbol.replace('TWSE:', 'TWSE_DLY:'); },
+        setTimeframe: async ({ timeframe }) => { state.resolution = timeframe; },
+        activatePaneContext: async () => ({ ...state }),
+        delay: async () => {},
+      },
+    });
+    assert.equal(result.resolved_symbol, 'TWSE_DLY:2344');
+    assert.equal(result.timeframe, '1D');
+    assert.equal('original_symbol' in result, false);
+    assert.equal('original_timeframe' in result, false);
+  });
+
   it('throws SYMBOL_SWITCH_FAILED instead of returning success on wrong readback', async () => {
     let now = 0;
     const mutations = [];
@@ -208,6 +232,37 @@ describe('strict Symbol Session readback', () => {
         && error.retryable === true,
     );
     assert.deepEqual(mutations, ['NASDAQ:NVDA', 'NASDAQ:MSFT']);
+  });
+
+  it('does not restore prior Chart state for a durable worker failure', async () => {
+    let now = 0;
+    const mutations = [];
+    const assertions = [];
+    await assert.rejects(
+      prepareSymbolSession({
+        context: { target_id: 'target-dev', pane_index: 1 },
+        symbol: 'NASDAQ:NVDA',
+        timeframe: '1D',
+        timeout_ms: 400,
+        assert_initial_chart_state: false,
+        restore_on_failure: false,
+        _deps: {
+          assertPaneContext: async (request) => {
+            assertions.push(request);
+            return { symbol: 'NASDAQ:MSFT', resolution: '60' };
+          },
+          setSymbol: async ({ symbol }) => { mutations.push(symbol); },
+          setTimeframe: async () => {},
+          activatePaneContext: async () => ({ symbol: 'NASDAQ:MSFT', resolution: '60' }),
+          delay: async (milliseconds) => { now += milliseconds; },
+          now: () => now,
+        },
+      }),
+      (error) => error.code === 'SYMBOL_SWITCH_FAILED',
+    );
+    assert.equal(assertions[0].symbol, null);
+    assert.equal(assertions[0].timeframe, null);
+    assert.deepEqual(mutations, ['NASDAQ:NVDA']);
   });
 
   it('throws TIMEFRAME_SWITCH_FAILED on persistent wrong Timeframe', async () => {
@@ -290,6 +345,20 @@ describe('process-local Chart mutation mutex', () => {
     releaseFirst();
     await Promise.all([first, second]);
     assert.deepEqual(events, ['first:start', 'first:end', 'second:start', 'second:end']);
+  });
+
+  it('does not capture an incidental Chart baseline for a durable worker', async () => {
+    const result = await withChartSession({
+      context: { target_id: 'target-dev', pane_index: 1 },
+      capture_chart_state: false,
+      _deps: {
+        mutex: new AsyncMutex(),
+        now: () => 1704067200000,
+        assertPaneContext: async () => ({ symbol: 'NASDAQ:MSFT', resolution: '60' }),
+      },
+    }, async (session) => session);
+    assert.equal('original_symbol' in result, false);
+    assert.equal('original_timeframe' in result, false);
   });
 });
 

@@ -16,7 +16,8 @@ import { CoreOperationError, sanitizeCoreContext } from './errors.js';
 import { unixMillisecondsToIso } from './time.js';
 
 const PARAMETER_SET_NAME = /^[A-Za-z0-9_-]{1,100}$/;
-const EXPERIMENT_SCHEMA_VERSION = 1;
+const LEGACY_EXPERIMENT_SCHEMA_VERSION = 1;
+const DURABLE_EXPERIMENT_ID_SCHEMA_VERSION = 2;
 
 function issue(code, message, context = {}) {
   return Object.freeze({
@@ -471,7 +472,7 @@ export function createParameterSetExecutionPlan({
       effective_inputs: effective,
       inputs_fingerprint: fingerprint,
       experiment_id: `sha256:${sha256Hex({
-        schema_version: EXPERIMENT_SCHEMA_VERSION,
+        schema_version: DURABLE_EXPERIMENT_ID_SCHEMA_VERSION,
         strategy: strategyIdentity,
         parameter_set_index: index,
         parameter_set_name: planned.name,
@@ -488,6 +489,27 @@ export function createParameterSetExecutionPlan({
     base_inputs: base,
     base_inputs_fingerprint: effectiveInputsFingerprint(base),
     parameter_sets: Object.freeze(plans),
+  });
+}
+
+/** Convert one executable plan to the bounded representation persisted in run.json. */
+export function persistableParameterSetPlan(plan) {
+  if (!plan?.experiment_id || !Number.isInteger(plan.index) || !plan.name) {
+    throw new ParameterSetExecutionError('A complete Parameter Set execution plan is required.', {
+      code: 'PARAMETER_SET_PLAN_INVALID', phase: 'parameter_set_validation',
+    });
+  }
+  return Object.freeze({
+    experiment_id: plan.experiment_id,
+    parameter_set: Object.freeze({
+      index: plan.index,
+      name: plan.name,
+      requested_inputs: plan.requested_inputs,
+      resolved_inputs: plan.resolved_inputs,
+      requested_inputs_fingerprint: plan.requested_inputs_fingerprint,
+    }),
+    inputs_fingerprint: plan.inputs_fingerprint,
+    effective_inputs: plan.effective_inputs,
   });
 }
 
@@ -565,7 +587,8 @@ function assertReportFingerprint(report, expected, { identity, context, phase })
 
 /** Apply one Effective Inputs plan, wait for its stable Report, then invoke the caller operation. */
 export async function withParameterSet({
-  plan, base, expected_current, identity, context, timeout_ms, _deps = {},
+  plan, base, expected_current, identity, context, timeout_ms,
+  before_mutation, _deps = {},
 } = {}, operation) {
   if (!plan?.experiment_id || !Array.isArray(plan.effective_inputs)) {
     throw new ParameterSetExecutionError('A complete Parameter Set execution plan is required.', {
@@ -590,6 +613,22 @@ export async function withParameterSet({
       identity: expectedIdentity, context: expectedContext,
       phase: 'parameter_set_start',
     });
+    if (before_mutation != null) {
+      if (typeof before_mutation !== 'function') {
+        throw new ParameterSetExecutionError('before_mutation must be a function when provided.', {
+          code: 'PARAMETER_SET_OPERATION_REQUIRED', phase: 'parameter_set_validation',
+          identity: expectedIdentity, context: expectedContext,
+        });
+      }
+      await before_mutation(Object.freeze({
+        plan,
+        base,
+        identity: expectedIdentity,
+        context: expectedContext,
+        started_at: startedAt,
+        started_at_iso: unixMillisecondsToIso(startedAt),
+      }));
+    }
     const activate = _deps.ensureStrategyActive || ensureStrategyActive;
     await activate({
       entity_id: expectedIdentity.entity_id,
@@ -627,7 +666,7 @@ export async function withParameterSet({
       phase: 'parameter_set_report_readback',
     });
     const experiment = Object.freeze({
-      schema_version: EXPERIMENT_SCHEMA_VERSION,
+      schema_version: LEGACY_EXPERIMENT_SCHEMA_VERSION,
       experiment_id: plan.experiment_id,
       parameter_set: Object.freeze({
         index: plan.index,
@@ -680,6 +719,330 @@ export async function withParameterSet({
       identity: expectedIdentity, context: expectedContext, parameter_set: plan.name,
     });
   }
+}
+
+function planningFailure(plan, { identity, context }) {
+  return new ParameterSetExecutionError(
+    plan.errors[0]?.message || 'Parameter Set planning failed.',
+    {
+      code: plan.errors[0]?.code || 'PARAMETER_SET_PLAN_INVALID',
+      phase: 'parameter_set_validation', identity, context,
+      execution_state: Object.freeze({ errors: plan.errors }),
+    },
+  );
+}
+
+/** Capture Base Inputs and build every persistable plan before any Input mutation. */
+export async function prepareParameterSetExecution({
+  base_catalog,
+  candidate_schema,
+  parameter_sets,
+  identity,
+  context,
+  _deps = {},
+} = {}) {
+  const expectedIdentity = fixedIdentity(identity);
+  const expectedContext = normalizeContext(context);
+  const captured = await readFixedStrategyInputs({
+    identity: expectedIdentity,
+    context: expectedContext,
+    expected_catalog: base_catalog,
+    phase: 'parameter_set_base_capture',
+    _deps,
+  });
+  const plan = createParameterSetExecutionPlan({
+    base_catalog: captured.inputs,
+    candidate_schema,
+    parameter_sets,
+    identity: expectedIdentity,
+  });
+  if (!plan.valid) throw planningFailure(plan, {
+    identity: expectedIdentity,
+    context: expectedContext,
+  });
+  return Object.freeze({
+    ...plan,
+    planned_experiments: Object.freeze(plan.parameter_sets.map(persistableParameterSetPlan)),
+    context: sanitizeCoreContext(expectedContext),
+  });
+}
+
+/** Read and validate that current Inputs belong to this persisted execution plan. */
+export async function validatePreparedCurrentInputs({
+  prepared,
+  identity,
+  context,
+  _deps = {},
+} = {}) {
+  if (!prepared?.valid || !Array.isArray(prepared.base_inputs)) {
+    throw new ParameterSetExecutionError('A valid prepared Parameter Set plan is required.', {
+      code: 'PARAMETER_SET_PLAN_INVALID', phase: 'parameter_set_validation', identity, context,
+    });
+  }
+  const current = await readFixedStrategyInputs({
+    identity: identity || prepared.identity,
+    context: context || prepared.context,
+    expected_catalog: prepared.base_inputs,
+    phase: 'parameter_set_resume_identity',
+    _deps,
+  });
+  assertPreparedInputFingerprint({
+    prepared,
+    inputs_fingerprint: current.inputs_fingerprint,
+  });
+  return current;
+}
+
+function sameFingerprint(left, right) {
+  return left?.available === true
+    && right?.available === true
+    && left.value === right.value
+    && left.count === right.count;
+}
+
+/** Reject external Input drift while accepting Base or any persisted Effective Inputs plan. */
+export function assertPreparedInputFingerprint({ prepared, inputs_fingerprint } = {}) {
+  if (!prepared?.base_inputs_fingerprint || !Array.isArray(prepared?.parameter_sets)) {
+    throw new ParameterSetExecutionError('A complete prepared Parameter Set plan is required.', {
+      code: 'PARAMETER_SET_PLAN_INVALID', phase: 'parameter_set_validation',
+    });
+  }
+  const accepted = [
+    prepared.base_inputs_fingerprint,
+    ...prepared.parameter_sets.map((plan) => plan.inputs_fingerprint),
+  ];
+  if (!accepted.some((fingerprint) => sameFingerprint(fingerprint, inputs_fingerprint))) {
+    throw new ParameterSetExecutionError(
+      'Current Inputs do not match persisted Base or planned Effective Inputs.',
+      {
+        code: 'RUN_RESUME_IDENTITY_MISMATCH',
+        phase: 'parameter_set_resume_identity',
+        identity: prepared.identity,
+        context: prepared.context,
+      },
+    );
+  }
+  return inputs_fingerprint;
+}
+
+/** Execute one previously prepared plan without rebuilding it from current logical values. */
+export function executePreparedParameterSet(options = {}, operation) {
+  const prepared = options.prepared;
+  const plan = options.plan;
+  return withParameterSet({
+    plan,
+    base: options.base || prepared?.base_inputs,
+    expected_current: options.expected_current,
+    identity: options.identity || prepared?.identity,
+    context: options.context || prepared?.context,
+    timeout_ms: options.timeout_ms,
+    before_mutation: options.before_mutation,
+    _deps: options._deps,
+  }, operation);
+}
+
+/** Restore persisted Base after first proving current Inputs belong to this prepared run. */
+export async function restorePreparedBaseInputs({
+  prepared,
+  identity,
+  context,
+  timeout_ms,
+  validate_current = true,
+  _deps = {},
+} = {}) {
+  if (!prepared?.valid || !Array.isArray(prepared.base_inputs)) {
+    throw new ParameterSetExecutionError('A valid prepared Parameter Set plan is required.', {
+      code: 'PARAMETER_SET_PLAN_INVALID', phase: 'parameter_set_validation',
+      identity, context,
+    });
+  }
+  const expectedIdentity = identity || prepared.identity;
+  const expectedContext = context || prepared.context;
+  if (validate_current) {
+    await validatePreparedCurrentInputs({
+      prepared,
+      identity: expectedIdentity,
+      context: expectedContext,
+      _deps,
+    });
+  }
+  return restoreBaseInputs({
+    base: prepared.base_inputs,
+    identity: expectedIdentity,
+    context: expectedContext,
+    timeout_ms,
+    _deps,
+  });
+}
+
+function selectedPlans(prepared, selectedIndices) {
+  const indices = selectedIndices == null
+    ? prepared.parameter_sets.map((plan) => plan.index)
+    : selectedIndices;
+  if (!Array.isArray(indices)) {
+    throw new ParameterSetExecutionError('selected_indices must be an array.', {
+      code: 'PARAMETER_SET_PLAN_INVALID', phase: 'parameter_set_validation',
+    });
+  }
+  const seen = new Set();
+  return Object.freeze(indices.map((index) => {
+    if (!Number.isInteger(index) || index < 0 || index >= prepared.parameter_sets.length) {
+      throw new ParameterSetExecutionError(`Selected Parameter Set index is invalid: ${String(index)}.`, {
+        code: 'PARAMETER_SET_PLAN_INVALID', phase: 'parameter_set_validation',
+      });
+    }
+    if (seen.has(index)) {
+      throw new ParameterSetExecutionError(`Selected Parameter Set index is duplicated: ${index}.`, {
+        code: 'PARAMETER_SET_PLAN_INVALID', phase: 'parameter_set_validation',
+      });
+    }
+    seen.add(index);
+    return prepared.parameter_sets[index];
+  }));
+}
+
+function preparedRestoreFailure(error, {
+  identity,
+  context,
+  completedExperiments,
+  primaryError,
+} = {}) {
+  return new ParameterSetExecutionError(
+    `Base Inputs restore failed: ${error?.message || String(error)}`,
+    {
+      code: 'PARAMETER_SET_RESTORE_FAILED',
+      phase: 'parameter_set_restore',
+      retryable: error?.retryable === true,
+      identity,
+      context,
+      cause: error,
+      execution_state: Object.freeze({
+        completed_experiments: completedExperiments,
+        original_error: boundedError(primaryError),
+      }),
+      restore: Object.freeze({ success: false, error: boundedError(error) }),
+    },
+  );
+}
+
+/** Execute an ordered subset of persisted plans, restoring Base before and after the subset. */
+export async function executeSelectedParameterSets({
+  prepared,
+  selected_indices,
+  identity,
+  context,
+  timeout_ms,
+  before_experiment,
+  _deps = {},
+} = {}, operation) {
+  if (!prepared?.valid || !Array.isArray(prepared.parameter_sets)) {
+    throw new ParameterSetExecutionError('A valid prepared Parameter Set plan is required.', {
+      code: 'PARAMETER_SET_PLAN_INVALID', phase: 'parameter_set_validation', identity, context,
+    });
+  }
+  if (typeof operation !== 'function') {
+    throw new ParameterSetExecutionError('Parameter Set operation callback is required.', {
+      code: 'PARAMETER_SET_OPERATION_REQUIRED', phase: 'parameter_set_validation', identity, context,
+    });
+  }
+  if (before_experiment != null && typeof before_experiment !== 'function') {
+    throw new ParameterSetExecutionError('before_experiment must be a function when provided.', {
+      code: 'PARAMETER_SET_OPERATION_REQUIRED', phase: 'parameter_set_validation', identity, context,
+    });
+  }
+  const expectedIdentity = identity || prepared.identity;
+  const expectedContext = context || prepared.context;
+  const plans = selectedPlans(prepared, selected_indices);
+  const results = [];
+  let primaryError = null;
+  let initialRestoreError = null;
+  let restore = null;
+  let inputOwnershipValidated = false;
+  try {
+    await validatePreparedCurrentInputs({
+      prepared,
+      identity: expectedIdentity,
+      context: expectedContext,
+      _deps,
+    });
+    inputOwnershipValidated = true;
+    try {
+      await restorePreparedBaseInputs({
+        prepared,
+        identity: expectedIdentity,
+        context: expectedContext,
+        timeout_ms,
+        validate_current: false,
+        _deps,
+      });
+    } catch (error) {
+      initialRestoreError = error;
+      throw error;
+    }
+    let expectedCurrent = prepared.base_inputs;
+    for (const plan of plans) {
+      results.push(await executePreparedParameterSet({
+        prepared,
+        plan,
+        expected_current: expectedCurrent,
+        identity: expectedIdentity,
+        context: expectedContext,
+        timeout_ms,
+        before_mutation: before_experiment == null
+          ? undefined
+          : (details) => before_experiment(plan, details),
+        _deps,
+      }, operation));
+      expectedCurrent = plan.effective_inputs;
+    }
+  } catch (error) {
+    primaryError = error;
+  } finally {
+    if (inputOwnershipValidated) {
+      try {
+        restore = await restorePreparedBaseInputs({
+          prepared,
+          identity: expectedIdentity,
+          context: expectedContext,
+          timeout_ms,
+          validate_current: false,
+          _deps,
+        });
+      } catch (error) {
+        throw preparedRestoreFailure(error, {
+          identity: expectedIdentity,
+          context: expectedContext,
+          completedExperiments: results.length,
+          primaryError: initialRestoreError ? null : primaryError,
+        });
+      }
+    }
+  }
+  if (initialRestoreError) {
+    throw preparedRestoreFailure(initialRestoreError, {
+      identity: expectedIdentity,
+      context: expectedContext,
+      completedExperiments: results.length,
+      primaryError: null,
+    });
+  }
+  if (primaryError) {
+    throw executionFailure(primaryError, {
+      identity: expectedIdentity,
+      context: expectedContext,
+      execution_state: Object.freeze({ completed_experiments: results.length }),
+      restore,
+    });
+  }
+  return Object.freeze({
+    success: true,
+    strategy: expectedIdentity,
+    context: sanitizeCoreContext(expectedContext),
+    base_inputs_fingerprint: prepared.base_inputs_fingerprint,
+    experiment_count: results.length,
+    experiments: Object.freeze(results),
+    restore,
+  });
 }
 
 /** Restore and verify the complete captured Base Inputs catalog. */
@@ -761,89 +1124,20 @@ export async function executeParameterSets({
   const expectedContext = normalizeContext(context);
   const runWithSession = _deps.withChartSession || withChartSession;
   return runWithSession({ context: expectedContext, _deps }, async () => {
-    const captured = await readFixedStrategyInputs({
-      identity: expectedIdentity, context: expectedContext,
-      expected_catalog: base_catalog,
-      phase: 'parameter_set_base_capture', _deps,
-    });
-    const base = catalogSnapshot(captured.inputs);
-    const plan = createParameterSetExecutionPlan({
-      base_catalog: base,
+    const prepared = await prepareParameterSetExecution({
+      base_catalog,
       candidate_schema,
       parameter_sets,
       identity: expectedIdentity,
+      context: expectedContext,
+      _deps,
     });
-    if (!plan.valid) {
-      throw new ParameterSetExecutionError(plan.errors[0]?.message || 'Parameter Set planning failed.', {
-        code: plan.errors[0]?.code || 'PARAMETER_SET_PLAN_INVALID',
-        phase: 'parameter_set_validation', identity: expectedIdentity,
-        context: expectedContext,
-        execution_state: Object.freeze({ errors: plan.errors }),
-      });
-    }
-    const results = [];
-    let expectedCurrent = base;
-    let primaryError = null;
-    let restore = null;
-    try {
-      for (const parameterSet of plan.parameter_sets) {
-        results.push(await withParameterSet({
-          plan: parameterSet,
-          base,
-          expected_current: expectedCurrent,
-          identity: expectedIdentity,
-          context: expectedContext,
-          timeout_ms,
-          _deps,
-        }, operation));
-        expectedCurrent = parameterSet.effective_inputs;
-      }
-    } catch (error) {
-      primaryError = error;
-    } finally {
-      try {
-        restore = await restoreBaseInputs({
-          base,
-          identity: expectedIdentity,
-          context: expectedContext,
-          timeout_ms,
-          _deps,
-        });
-      } catch (error) {
-        throw new ParameterSetExecutionError(
-          `Base Inputs restore failed: ${error?.message || String(error)}`,
-          {
-            code: 'PARAMETER_SET_RESTORE_FAILED',
-            phase: 'parameter_set_restore',
-            retryable: error?.retryable === true,
-            identity: expectedIdentity,
-            context: expectedContext,
-            cause: error,
-            execution_state: Object.freeze({
-              completed_experiments: results.length,
-              original_error: boundedError(primaryError),
-            }),
-            restore: Object.freeze({ success: false, error: boundedError(error) }),
-          },
-        );
-      }
-    }
-    if (primaryError) {
-      throw executionFailure(primaryError, {
-        identity: expectedIdentity,
-        context: expectedContext,
-        execution_state: Object.freeze({ completed_experiments: results.length }),
-        restore,
-      });
-    }
-    return Object.freeze({
-      success: true,
-      strategy: expectedIdentity,
-      context: sanitizeCoreContext(expectedContext),
-      base_inputs_fingerprint: plan.base_inputs_fingerprint,
-      experiment_count: results.length,
-      experiments: Object.freeze(results),
-      restore,
-    });
+    return executeSelectedParameterSets({
+      prepared,
+      identity: expectedIdentity,
+      context: expectedContext,
+      timeout_ms,
+      _deps,
+    }, operation);
   });
 }

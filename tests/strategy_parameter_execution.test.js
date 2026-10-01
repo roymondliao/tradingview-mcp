@@ -4,8 +4,10 @@ import {
   createParameterSetExecutionPlan,
   effectiveInputsFingerprint,
   executeParameterSets,
+  executeSelectedParameterSets,
   ParameterSetExecutionError,
   planParameterSets,
+  prepareParameterSetExecution,
 } from '../src/core/strategy-parameter-sets.js';
 import { CoreOperationError } from '../src/core/errors.js';
 
@@ -374,5 +376,136 @@ describe('Sequential Parameter Set execution and restore', () => {
         && error.execution_state.original_error.code === 'PARAMETER_SET_STRATEGY_CHANGED',
     );
     assert.equal(fixture.state.events.some((event) => typeof event === 'object' && event.set), false);
+  });
+});
+
+describe('Persisted Parameter Set execution seams', () => {
+  it('captures Base and every persistable Experiment plan before any Input mutation', async () => {
+    const fixture = executionFixture();
+    const prepared = await prepareParameterSetExecution({
+      candidate_schema: candidateSchema(),
+      parameter_sets: parameterSets(),
+      identity,
+      context,
+      _deps: fixture.deps,
+    });
+    assert.equal(prepared.valid, true);
+    assert.equal(prepared.planned_experiments.length, 3);
+    assert.deepEqual(
+      prepared.planned_experiments.map((item) => item.parameter_set.name),
+      ['baseline', 'fast', 'property-test'],
+    );
+    assert.equal(
+      fixture.state.events.some((event) => typeof event === 'object' && event.set),
+      false,
+    );
+  });
+
+  it('persists the selected Experiment hook before mutation and executes only that subset', async () => {
+    const fixture = executionFixture();
+    const prepared = await prepareParameterSetExecution({
+      candidate_schema: candidateSchema(),
+      parameter_sets: parameterSets(),
+      identity,
+      context,
+      _deps: fixture.deps,
+    });
+    const executed = [];
+    await executeSelectedParameterSets({
+      prepared,
+      selected_indices: [1],
+      context,
+      before_experiment: async (plan) => {
+        fixture.state.events.push(`persist:${plan.name}`);
+      },
+      _deps: fixture.deps,
+    }, async (experiment) => {
+      executed.push(experiment.parameter_set.name);
+      return { exported: true };
+    });
+    assert.deepEqual(executed, ['fast']);
+    const persistedAt = fixture.state.events.indexOf('persist:fast');
+    const mutatedAt = fixture.state.events.findIndex(
+      (event) => typeof event === 'object' && event.set?.in_7 === 5,
+    );
+    assert.ok(persistedAt >= 0 && persistedAt < mutatedAt);
+    assert.deepEqual(fixture.state.inputs.map((input) => input.value), [10, true, 20]);
+  });
+
+  it('accepts crash-left planned Inputs, restores Base, and derives a selected plan from Base', async () => {
+    const fixture = executionFixture();
+    const prepared = await prepareParameterSetExecution({
+      candidate_schema: candidateSchema(),
+      parameter_sets: parameterSets(),
+      identity,
+      context,
+      _deps: fixture.deps,
+    });
+    fixture.state.inputs[1].value = false;
+    const observed = [];
+    await executeSelectedParameterSets({
+      prepared,
+      selected_indices: [1],
+      context,
+      _deps: fixture.deps,
+    }, async (experiment) => {
+      observed.push(experiment.effective_inputs.map((input) => input.value));
+      return { exported: true };
+    });
+    assert.deepEqual(observed, [[5, true, 20]]);
+    assert.deepEqual(
+      fixture.state.events
+        .filter((event) => typeof event === 'object' && event.set)
+        .map((event) => event.set),
+      [{ in_3: true }, { in_7: 5 }, { in_7: 10 }],
+    );
+  });
+
+  it('rejects arbitrary current Inputs without mutating or restoring them', async () => {
+    const fixture = executionFixture();
+    const prepared = await prepareParameterSetExecution({
+      candidate_schema: candidateSchema(),
+      parameter_sets: parameterSets(),
+      identity,
+      context,
+      _deps: fixture.deps,
+    });
+    fixture.state.inputs[0].value = 9;
+    await assert.rejects(
+      executeSelectedParameterSets({
+        prepared,
+        selected_indices: [1],
+        context,
+        _deps: fixture.deps,
+      }, async () => ({ exported: true })),
+      (error) => error.code === 'RUN_RESUME_IDENTITY_MISMATCH',
+    );
+    assert.equal(fixture.state.inputs[0].value, 9);
+    assert.equal(
+      fixture.state.events.some((event) => typeof event === 'object' && event.set),
+      false,
+    );
+  });
+
+  it('reports a pre-execution Base restore failure as terminal restore failure', async () => {
+    const fixture = executionFixture({ ignoreSet: () => true });
+    const prepared = await prepareParameterSetExecution({
+      candidate_schema: candidateSchema(),
+      parameter_sets: parameterSets(),
+      identity,
+      context,
+      _deps: fixture.deps,
+    });
+    fixture.state.inputs[1].value = false;
+    await assert.rejects(
+      executeSelectedParameterSets({
+        prepared,
+        selected_indices: [1],
+        context,
+        _deps: fixture.deps,
+      }, async () => ({ exported: true })),
+      (error) => error.code === 'PARAMETER_SET_RESTORE_FAILED'
+        && error.restore.success === false,
+    );
   });
 });

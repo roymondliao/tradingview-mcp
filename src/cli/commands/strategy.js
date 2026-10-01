@@ -3,8 +3,10 @@ import * as core from '../../core/strategy.js';
 import * as trading from '../../core/strategy-trading.js';
 import { resolveTradingDataFormat } from '../../core/strategy-trading-format.js';
 import { dryRunStrategyAutomation, runStrategyAutomation } from '../../core/strategy-run.js';
+import { resumeStrategyAutomation } from '../../core/strategy-resume.js';
 import { prepareContext } from '../../core/pane.js';
 import { CoreOperationError } from '../../core/errors.js';
+import { createStrategyProgressRenderer } from '../progress.js';
 import {
   PANE_CONTEXT_OPTIONS,
   paneContextArgs,
@@ -72,6 +74,58 @@ function requireTradingDataPagination(offset, limit, snapshotId) {
   return { offset: parsedOffset, limit: parsedLimit };
 }
 
+const SIGNAL_EXIT_CODES = Object.freeze({ SIGINT: 130, SIGTERM: 143 });
+export const STRATEGY_SIGNAL_COALESCE_WINDOW_MS = 250;
+
+/** Install graceful handlers only for one formal Run/Resume invocation. */
+export async function withStrategyAutomationSignals(operation, {
+  process_facade = process,
+  AbortControllerClass = AbortController,
+  progress_renderer,
+  _signal_now = Date.now,
+} = {}) {
+  if (typeof operation !== 'function') throw new TypeError('Signal operation callback is required.');
+  const controller = new AbortControllerClass();
+  const renderer = progress_renderer || createStrategyProgressRenderer({
+    stream: process_facade.stderr || process.stderr,
+  });
+  let interruptBursts = 0;
+  let lastSignalAt = null;
+  const handlers = {};
+  for (const [signalName, exitCode] of Object.entries(SIGNAL_EXIT_CODES)) {
+    handlers[signalName] = () => {
+      const receivedAt = Number(_signal_now());
+      const forwardedDuplicate = lastSignalAt != null
+        && Number.isFinite(receivedAt)
+        && receivedAt >= lastSignalAt
+        && receivedAt - lastSignalAt <= STRATEGY_SIGNAL_COALESCE_WINDOW_MS;
+      lastSignalAt = receivedAt;
+      if (forwardedDuplicate) return;
+      interruptBursts += 1;
+      if (interruptBursts === 1) {
+        const reason = new CoreOperationError(`Received ${signalName}.`, {
+          code: 'RUN_INTERRUPTED', phase: 'signal',
+        });
+        reason.signal = signalName;
+        reason.exit_code = exitCode;
+        controller.abort(reason);
+        return;
+      }
+      renderer.finish();
+      process_facade.exit(exitCode);
+    };
+    process_facade.on(signalName, handlers[signalName]);
+  }
+  try {
+    return await operation(controller.signal, renderer.update, renderer.status);
+  } finally {
+    renderer.finish();
+    for (const [signalName, handler] of Object.entries(handlers)) {
+      process_facade.off(signalName, handler);
+    }
+  }
+}
+
 register('strategy', {
   description: 'Strategy Tester tools for explicit Strategy Instances',
   subcommands: new Map([
@@ -90,7 +144,37 @@ register('strategy', {
         if (opts['dry-run']) {
           return dryRunStrategyAutomation({ config_path: opts.config });
         }
-        return runStrategyAutomation({ config_path: opts.config });
+        return withStrategyAutomationSignals((signal, onProgress, onStatus) => runStrategyAutomation({
+          config_path: opts.config,
+          signal,
+          on_progress: onProgress,
+          on_status: onStatus,
+        }));
+      },
+    }],
+    ['resume', {
+      description: 'Resume one existing durable Strategy Run in the same directory',
+      options: {
+        'run-directory': { type: 'string', description: 'Required existing durable Run Directory' },
+      },
+      handler: async (opts) => {
+        if (!opts['run-directory']) {
+          throw new CoreOperationError('--run-directory is required for strategy resume.', {
+            code: 'RUN_RESUME_NOT_FOUND', phase: 'request_validation', retryable: false,
+          });
+        }
+        const unknown = Object.keys(opts).filter((key) => key !== 'run-directory');
+        if (unknown.length) {
+          throw new CoreOperationError(`Unsupported strategy resume option: --${unknown[0]}.`, {
+            code: 'RUN_RESUME_ARTIFACT_INVALID', phase: 'request_validation', retryable: false,
+          });
+        }
+        return withStrategyAutomationSignals((signal, onProgress, onStatus) => resumeStrategyAutomation({
+          run_directory: opts['run-directory'],
+          signal,
+          on_progress: onProgress,
+          on_status: onStatus,
+        }));
       },
     }],
     ['active', {

@@ -7,11 +7,16 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { resultExitCode } from '../src/cli/router.js';
+import {
+  STRATEGY_SIGNAL_COALESCE_WINDOW_MS,
+  withStrategyAutomationSignals,
+} from '../src/cli/commands/strategy.js';
+import './cli_progress.test.js';
 
 function require_fs() { return { writeFileSync, unlinkSync }; }
 
@@ -37,11 +42,112 @@ function run(args, opts = {}) {
   }
 }
 
+function processFacade() {
+  const listeners = new Map();
+  const exits = [];
+  return {
+    exits,
+    on(signal, handler) { listeners.set(signal, handler); },
+    off(signal, handler) {
+      if (listeners.get(signal) === handler) listeners.delete(signal);
+    },
+    exit(code) { exits.push(code); },
+    emit(signal) { listeners.get(signal)?.(); },
+    listenerCount() { return listeners.size; },
+  };
+}
+
+function progressRenderer() {
+  const events = [];
+  const statuses = [];
+  let finished = false;
+  return {
+    events,
+    statuses,
+    get finished() { return finished; },
+    update(event) { events.push(event); },
+    status(event) { statuses.push(event); },
+    finish() { finished = true; },
+  };
+}
+
+describe('Strategy automation CLI signals', () => {
+  it('aborts gracefully on the first signal and removes listeners', async () => {
+    const facade = processFacade();
+    const progress = progressRenderer();
+    const result = await withStrategyAutomationSignals(async (signal, onProgress, onStatus) => {
+      onStatus({ stage: 'preflight' });
+      onProgress({ processed: 0 });
+      facade.emit('SIGINT');
+      assert.equal(signal.aborted, true);
+      assert.equal(signal.reason.exit_code, 130);
+      return { success: false, exit_code: signal.reason.exit_code };
+    }, { process_facade: facade, progress_renderer: progress });
+    assert.equal(result.exit_code, 130);
+    assert.deepEqual(facade.exits, []);
+    assert.equal(facade.listenerCount(), 0);
+    assert.deepEqual(progress.events, [{ processed: 0 }]);
+    assert.deepEqual(progress.statuses, [{ stage: 'preflight' }]);
+    assert.equal(progress.finished, true);
+  });
+
+  it('always finishes progress after normal completion or a thrown error', async () => {
+    const completed = progressRenderer();
+    await withStrategyAutomationSignals(async (_signal, onProgress, onStatus) => {
+      onStatus({ stage: 'executing_experiments' });
+      onProgress({ processed: 1 });
+      return { success: true };
+    }, { process_facade: processFacade(), progress_renderer: completed });
+    assert.equal(completed.finished, true);
+    assert.deepEqual(completed.statuses, [{ stage: 'executing_experiments' }]);
+
+    const failed = progressRenderer();
+    await assert.rejects(withStrategyAutomationSignals(async () => {
+      throw new Error('operation failed');
+    }, { process_facade: processFacade(), progress_renderer: failed }), /operation failed/);
+    assert.equal(failed.finished, true);
+  });
+
+  it('coalesces an immediate duplicate SIGINT from process wrappers', async () => {
+    const facade = processFacade();
+    let aborts = 0;
+    const result = await withStrategyAutomationSignals(async (signal) => {
+      signal.addEventListener('abort', () => { aborts += 1; });
+      facade.emit('SIGINT');
+      facade.emit('SIGINT');
+      assert.equal(signal.aborted, true);
+      return { success: false, exit_code: signal.reason.exit_code };
+    }, { process_facade: facade, _signal_now: () => 1000 });
+    assert.equal(result.exit_code, 130);
+    assert.equal(aborts, 1);
+    assert.deepEqual(facade.exits, []);
+    assert.equal(facade.listenerCount(), 0);
+  });
+
+  it('coalesces a mixed forwarding burst but hard-exits on a later interrupt', async () => {
+    const facade = processFacade();
+    let now = 1000;
+    await withStrategyAutomationSignals(async (signal) => {
+      facade.emit('SIGTERM');
+      facade.emit('SIGINT');
+      assert.equal(signal.reason.exit_code, 143);
+      assert.deepEqual(facade.exits, []);
+      now += STRATEGY_SIGNAL_COALESCE_WINDOW_MS + 1;
+      facade.emit('SIGINT');
+      return { success: false, exit_code: 143 };
+    }, { process_facade: facade, _signal_now: () => now });
+    assert.deepEqual(facade.exits, [130]);
+    assert.equal(facade.listenerCount(), 0);
+  });
+});
+
 describe('CLI — help and routing', () => {
   it('maps partial and CDP result summaries to stable process exit codes', () => {
     assert.equal(resultExitCode({ success: true }), 0);
     assert.equal(resultExitCode({ success: false, failure_kind: 'partial' }), 1);
     assert.equal(resultExitCode({ success: false, failure_kind: 'cdp_connection' }), 2);
+    assert.equal(resultExitCode({ success: false, exit_code: 130 }), 130);
+    assert.equal(resultExitCode({ success: false, exit_code: 143 }), 143);
   });
 
   it('--help shows command list', () => {
@@ -121,6 +227,7 @@ describe('CLI — help and routing', () => {
     assert.ok(stdout.includes('trades'));
     assert.ok(stdout.includes('equity'));
     assert.ok(stdout.includes('run'));
+    assert.ok(stdout.includes('resume'));
     assert.doesNotMatch(stdout, /trading-(?:report|data|export)(?:Get|Export)/);
   });
 
@@ -140,6 +247,23 @@ describe('CLI — help and routing', () => {
     assert.equal(formalError.dry_run, false);
     assert.equal(formalError.phase, 'preflight');
     assert.equal(formalError.errors[0].code, 'RUN_CONFIG_READ_FAILED');
+  });
+
+  it('strategy resume requires only an existing Run Directory', () => {
+    const help = run(['strategy', 'resume', '--help']);
+    assert.equal(help.exitCode, 0);
+    assert.ok(help.stdout.includes('--run-directory'));
+    assert.doesNotMatch(help.stdout, /--config|--retry/);
+
+    const missing = run(['strategy', 'resume']);
+    assert.equal(missing.exitCode, 1);
+    assert.equal(JSON.parse(missing.stderr).code, 'RUN_RESUME_NOT_FOUND');
+
+    const unsupported = run([
+      'strategy', 'resume', '--run-directory', './missing-run', '--config', './run.json',
+    ]);
+    assert.equal(unsupported.exitCode, 1);
+    assert.equal(JSON.parse(unsupported.stderr).phase, 'request_validation');
   });
 
   it('strategy trading-data help exposes Offset/Limit/Snapshot pagination', () => {

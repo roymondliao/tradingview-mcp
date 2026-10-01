@@ -65,8 +65,8 @@ function runtime({ symbols, fail = new Map(), mutateSource, fingerprintFor } = {
         symbol: context.symbol, timeframe: context.resolution,
       };
     },
-    exportStrategySymbol: async (options) => {
-      const { symbol, _run: { transaction } } = options;
+    executeStrategySymbolExport: async (options) => {
+      const { symbol, artifact_writer: writer } = options;
       calls.exports.push(symbol);
       const session = Object.freeze({
         context: options.context,
@@ -81,20 +81,19 @@ function runtime({ symbols, fail = new Map(), mutateSource, fingerprintFor } = {
         timeframe_changed: false,
       });
       await options._deps.onSymbolSession(session);
-      const prefix = options._run.namespace ? `${options._run.namespace}/` : '';
-      const directory = `${prefix}symbols/${safeSymbolPathSegment(symbol)}`;
       if (fail.has(symbol)) {
-        await transaction.writeJson(`${directory}/partial.json`, { symbol });
+        await writer.writeReport({ success: false, symbol });
         throw fail.get(symbol);
       }
-      await transaction.writeJson(`${directory}/report.json`, { success: true, symbol });
-      await transaction.writeJson(`${directory}/trades.json`, { success: true, trades: [] });
-      await transaction.writeJson(`${directory}/reconciliation.json`, { success: true });
-      const [report, trades, reconciliation] = await Promise.all([
-        transaction.artifactInfo(`${directory}/report.json`),
-        transaction.artifactInfo(`${directory}/trades.json`),
-        transaction.artifactInfo(`${directory}/reconciliation.json`),
-      ]);
+      await writer.writeReport({ success: true, symbol });
+      const tradesStream = await writer.openTrades();
+      await new Promise((resolve, reject) => {
+        tradesStream.once('error', reject);
+        tradesStream.once('close', resolve);
+        tradesStream.end('{"trades":[]}\n');
+      });
+      await writer.writeReconciliation({ success: true });
+      const { report, trades, reconciliation } = await writer.artifactInfo();
       if (calls.exports.length === 1 && mutateSource) mutateSource(source);
       return {
         success: true,

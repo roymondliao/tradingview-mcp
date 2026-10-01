@@ -1,4 +1,4 @@
-/** Strategy automation preflight orchestration. TASK-004 is intentionally read-only. */
+/** Strategy automation read-only preflight and durable formal Run orchestration. */
 import { loadStrategyRunConfig } from './strategy-run-config.js';
 import { check as checkPine } from './pine.js';
 import {
@@ -10,18 +10,35 @@ import {
 } from './strategy-run-resolver.js';
 import {
   captureNamedWatchlistSnapshot,
+  pendingWatchlistSymbolValidation,
   summarizeNamedWatchlistSnapshot,
+  validateNamedWatchlistSymbols,
 } from './watchlist.js';
-import { compareInputSchemas, planParameterSets } from './strategy-parameter-sets.js';
+import {
+  compareInputSchemas,
+  planParameterSets,
+  prepareParameterSetExecution,
+} from './strategy-parameter-sets.js';
 import { planStrategySync } from './strategy-sync.js';
 import { executeStrategySync } from './strategy-sync.js';
-import { executeParameterSets } from './strategy-parameter-sets.js';
-import { exportStrategySnapshotIntoRun } from './strategy-trading.js';
-import { createArtifactSetTransaction } from './artifacts.js';
 import { withChartSession } from './chart-session.js';
-import { CoreOperationError, sanitizeCoreContext } from './errors.js';
+import { CoreOperationError } from './errors.js';
 import { unixMillisecondsToIso } from './time.js';
 import { reconnectTo } from '../connection.js';
+import { assertPaneContext } from './pane.js';
+import { createDurableRunStore } from './strategy-run-artifacts.js';
+import { acquireStrategyRunPaneLeases } from './strategy-run-lease.js';
+import {
+  STRATEGY_RUN_ARTIFACT_VERSION,
+  transitionRunState,
+} from './strategy-run-state.js';
+import {
+  durableStrategyRunResponse,
+  executeDurableStrategyPlan,
+  finalizeDurableStrategyRun,
+} from './strategy-resume.js';
+import { durableStrategyTargetContext } from './strategy-durable-experiment.js';
+import { emitStrategyAutomationStatus } from './strategy-progress.js';
 
 function diagnostic(error, fallbackCode, phase) {
   return Object.freeze({
@@ -79,6 +96,7 @@ export async function dryRunStrategyAutomation({ config_path, _include_internal 
       input_schema_changes: { available: false, reason: 'config_invalid' },
       parameter_sets: [],
       watchlist: null,
+      symbol_validation: { performed: false, reason: 'formal_run_only' },
       blocked: [blocked('all_resolution', 'Run Config root is invalid.')],
       warnings,
       errors,
@@ -281,6 +299,7 @@ export async function dryRunStrategyAutomation({ config_path, _include_internal 
     },
     strategy_sync: sync,
     watchlist,
+    symbol_validation: { performed: false, reason: 'formal_run_only' },
     candidate_input_schema: candidate?.input_schema || null,
     input_schema_changes: schemaChanges,
     parameter_sets: parameterPlan.parameter_sets,
@@ -310,34 +329,62 @@ function publicPreflight(preflight) {
   return response;
 }
 
-function experimentArtifactRoot(name) {
-  return `experiments/${name}`;
+function initialRunArtifact({ internal, context, startedAt }) {
+  const requested = internal.loaded.requested;
+  const watchlist = internal.watchlist;
+  return {
+    schema_version: STRATEGY_RUN_ARTIFACT_VERSION,
+    run_id: requested.run.run_id,
+    status: 'running',
+    requested,
+    config: {
+      path: internal.loaded.config_path,
+      sha256: internal.loaded.config_sha256,
+    },
+    source_sha256: requested.strategy.source_sha256,
+    candidate_schema_fingerprint: internal.candidate.input_schema.input_schema_fingerprint,
+    resolved: {
+      target: durableStrategyTargetContext(context),
+      watchlist: {
+        name: watchlist.watchlist.name,
+        snapshot_id: watchlist.snapshot.snapshot_id,
+        ordered_symbol_fingerprint: watchlist.snapshot.ordered_symbol_fingerprint,
+        symbol_count: watchlist.symbols.length,
+      },
+    },
+    started_at: startedAt,
+    started_at_iso: unixMillisecondsToIso(startedAt),
+    updated_at: startedAt,
+    updated_at_iso: unixMillisecondsToIso(startedAt),
+    summary: {},
+    experiments: [],
+    error: null,
+  };
 }
 
-function boundedExperimentResult(result) {
-  return Object.freeze({
-    name: result.experiment.parameter_set.name,
-    experiment_id: result.experiment.experiment_id,
-    inputs_fingerprint: result.experiment.inputs_fingerprint,
-    status: result.operation.status,
-    success: result.operation.success,
-    summary: result.operation.summary,
-    manifest: result.operation.artifacts.manifest.relative_path,
-    started_at: result.experiment.started_at,
-    started_at_iso: result.experiment.started_at_iso,
-    completed_at: result.experiment.completed_at,
-    completed_at_iso: result.experiment.completed_at_iso,
-  });
+function interruptedError(signal) {
+  const reason = signal?.reason;
+  const error = new CoreOperationError(
+    `Strategy Run was interrupted${reason ? `: ${reason.message || String(reason)}` : '.'}`,
+    { code: 'RUN_INTERRUPTED', phase: 'signal', cause: reason instanceof Error ? reason : undefined },
+  );
+  if (Number.isInteger(reason?.exit_code)) error.exit_code = reason.exit_code;
+  return error;
 }
 
-function runFailureKind(experiments) {
-  return experiments.some((item) => item.operation?.failure_kind === 'cdp_connection')
-    ? 'cdp_connection'
-    : null;
+function assertNotAborted(signal) {
+  if (signal?.aborted) throw interruptedError(signal);
 }
 
-/** Execute one complete non-durable Strategy automation Run and atomically publish its artifacts. */
-export async function runStrategyAutomation({ config_path, _deps = {} } = {}) {
+/** Execute one complete durable Strategy automation Run in its canonical directory. */
+export async function runStrategyAutomation({
+  config_path,
+  signal,
+  on_progress,
+  on_status,
+  _deps = {},
+} = {}) {
+  await emitStrategyAutomationStatus(on_status, 'preflight');
   const runPreflight = _deps.dryRunStrategyAutomation || dryRunStrategyAutomation;
   const preflight = await runPreflight({
     config_path,
@@ -352,172 +399,197 @@ export async function runStrategyAutomation({ config_path, _deps = {} } = {}) {
     });
   }
 
+  await emitStrategyAutomationStatus(on_status, 'acquiring_ownership');
   const internal = preflight._internal;
   const requested = internal.loaded.requested;
-  const runContext = Object.freeze({
-    ...internal.target,
-    resolution: internal.target.resolution ?? internal.target.timeframe ?? null,
+  const runContext = durableStrategyTargetContext(internal.target);
+  const runWatchlist = Object.freeze({
+    ...internal.watchlist,
+    symbol_validation: pendingWatchlistSymbolValidation({
+      timeframe: requested.backtest.timeframe,
+    }),
   });
-  const createTransaction = _deps.createArtifactSetTransaction || createArtifactSetTransaction;
-  const transaction = await createTransaction({
-    output_directory: requested.output.directory_path,
+  assertNotAborted(signal);
+  const acquireLeases = _deps.acquireLeases || acquireStrategyRunPaneLeases;
+  const leases = await acquireLeases({
+    run_directory: requested.output.run_path,
+    pane: runContext,
     run_id: requested.run.run_id,
-    force: false,
-    _deps: _deps.artifactDeps,
+    _deps: _deps.leases,
   });
   const now = _deps.now || Date.now;
   const startedAt = now();
-  let sync = null;
+  let store = null;
+  let initialized = false;
+  let run = null;
+  let primaryError = null;
+  let strategyIdentity = null;
   try {
+    assertNotAborted(signal);
+    await emitStrategyAutomationStatus(on_status, 'initializing_run');
+    const recheckPane = _deps.assertPaneContext || assertPaneContext;
+    await recheckPane({
+      context: runContext,
+      symbol: null,
+      timeframe: null,
+      phase: 'strategy_run_precreate',
+      _deps: _deps.pane,
+    });
+    const createStore = _deps.createDurableRunStore || createDurableRunStore;
+    store = await createStore({
+      output_directory: requested.output.directory_path,
+      run_id: requested.run.run_id,
+      _deps: _deps.artifacts,
+    });
+    run = initialRunArtifact({ internal, context: runContext, startedAt });
+    await store.writeInitialWatchlist(runWatchlist);
+    await store.replaceRun(run);
+    initialized = true;
+
     const runWithSession = _deps.withChartSession || withChartSession;
-    return await runWithSession({ context: runContext, _deps: _deps.session }, async () => {
-    const alreadyLockedSession = async (_options, operation) => operation();
-    const runSync = _deps.executeStrategySync || executeStrategySync;
-    sync = await runSync({
-      saved_name: requested.strategy.saved_name,
-      source: internal.loaded.pine_source,
-      source_sha256: requested.strategy.source_sha256,
-      candidate_schema: internal.candidate.input_schema,
-      current_schema: internal.current_schema,
+    await runWithSession({
       context: runContext,
-      expected_plan: preflight.strategy_sync,
-      timeout_ms: _deps.timeout_ms,
-      _deps: { ..._deps.sync, withChartSession: alreadyLockedSession },
-    });
-    const strategyIdentity = Object.freeze({
-      script_id: sync.account.script_id,
-      version: sync.account.version,
-      source_sha256: sync.source_sha256,
-      entity_id: sync.pane.entity_id,
-    });
-    const resolved = Object.freeze({
-      context: sanitizeCoreContext(runContext),
-      strategy: strategyIdentity,
-      account: sync.account,
-      pane: sync.pane,
-      watchlist: internal.watchlist.watchlist,
-      watchlist_snapshot_id: internal.watchlist.snapshot.snapshot_id,
-    });
-    const runningRun = {
-      schema_version: 1,
-      run_id: transaction.run_id,
-      status: 'running',
-      requested,
-      config: {
-        path: internal.loaded.config_path,
-        sha256: internal.loaded.config_sha256,
-      },
-      source_sha256: requested.strategy.source_sha256,
-      candidate_schema_fingerprint: internal.candidate.input_schema.input_schema_fingerprint,
-      resolved,
-      started_at: startedAt,
-      started_at_iso: unixMillisecondsToIso(startedAt),
-      retry_supported: false,
-      resume_supported: false,
-      experiments: [],
-    };
-    await transaction.writeJson('watchlist.json', internal.watchlist);
-    await transaction.replaceJson('run.json', runningRun);
-
-    const exportSnapshot = _deps.exportStrategySnapshotIntoRun || exportStrategySnapshotIntoRun;
-    const runParameterSets = _deps.executeParameterSets || executeParameterSets;
-    const executed = await runParameterSets({
-      candidate_schema: internal.candidate.input_schema,
-      parameter_sets: requested.experiments.parameter_sets,
-      identity: strategyIdentity,
-      context: runContext,
-      timeout_ms: _deps.timeout_ms,
-      _deps: { ..._deps.parameter_sets, withChartSession: alreadyLockedSession },
-    }, async (experiment) => exportSnapshot({
-      entity_id: strategyIdentity.entity_id,
-      snapshot: internal.watchlist,
-      timeframe: requested.backtest.timeframe,
-      context: runContext,
-      format: requested.output.format,
-      fail_fast: false,
-      timeout_ms: _deps.timeout_ms,
-      transaction,
-      namespace: experimentArtifactRoot(experiment.parameter_set.name),
-      expected_inputs_fingerprint: experiment.inputs_fingerprint,
-      mode: 'named_watchlist_experiment',
-      _deps: _deps.export,
-    }));
-
-    for (const result of executed.experiments) {
-      const root = experimentArtifactRoot(result.experiment.parameter_set.name);
-      await transaction.writeJson(`${root}/experiment.json`, {
-        ...result.experiment,
-        export: {
-          status: result.operation.status,
-          success: result.operation.success,
-          summary: result.operation.summary,
-          manifest: result.operation.artifacts.manifest.relative_path,
-          chart_restore: result.operation.chart_restore,
+      capture_chart_state: false,
+      _deps: _deps.session,
+    }, async () => {
+      const alreadyLockedSession = async (_options, operation) => operation();
+      assertNotAborted(signal);
+      await emitStrategyAutomationStatus(on_status, 'validating_watchlist');
+      const validateWatchlist = _deps.validateNamedWatchlistSymbols
+        || validateNamedWatchlistSymbols;
+      const symbolValidation = await validateWatchlist({
+        snapshot: runWatchlist,
+        context: runContext,
+        timeframe: requested.backtest.timeframe,
+        restore_chart: false,
+        signal,
+        _deps: _deps.watchlist_validation,
+      });
+      const validatedWatchlist = Object.freeze({
+        ...runWatchlist,
+        symbol_validation: symbolValidation,
+      });
+      await store.replaceWatchlist(validatedWatchlist);
+      if (!symbolValidation.success) {
+        throw new CoreOperationError(
+          `Watchlist Symbol validation failed for ${symbolValidation.failed} of ${symbolValidation.requested} Symbols.`,
+          {
+            code: 'WATCHLIST_SYMBOL_VALIDATION_FAILED',
+            phase: 'watchlist_symbol_validation',
+            context: runContext,
+          },
+        );
+      }
+      assertNotAborted(signal);
+      await emitStrategyAutomationStatus(on_status, 'synchronizing_strategy');
+      const runSync = _deps.executeStrategySync || executeStrategySync;
+      const sync = await runSync({
+        saved_name: requested.strategy.saved_name,
+        source: internal.loaded.pine_source,
+        source_sha256: requested.strategy.source_sha256,
+        candidate_schema: internal.candidate.input_schema,
+        current_schema: internal.current_schema,
+        context: runContext,
+        expected_plan: preflight.strategy_sync,
+        timeout_ms: _deps.timeout_ms,
+        _deps: { ..._deps.sync, withChartSession: alreadyLockedSession },
+      });
+      strategyIdentity = Object.freeze({
+        script_id: sync.account.script_id,
+        version: String(sync.account.version),
+        source_sha256: sync.source_sha256,
+        entity_id: sync.pane.entity_id,
+      });
+      run = transitionRunState(run, {
+        status: 'running',
+        updated_at: Math.max(run.updated_at, now()),
+        patch: {
+          resolved: { ...run.resolved, strategy: strategyIdentity },
         },
       });
-    }
+      await store.replaceRun(run);
 
-    const boundedExperiments = executed.experiments.map(boundedExperimentResult);
-    const success = boundedExperiments.every((item) => item.success);
-    const status = success ? 'succeeded' : 'partial';
-    const completedAt = now();
-    const finalRun = {
-      ...runningRun,
-      status,
-      completed_at: completedAt,
-      completed_at_iso: unixMillisecondsToIso(completedAt),
-      base_inputs_fingerprint: executed.base_inputs_fingerprint,
-      input_restore: executed.restore,
-      summary: {
-        experiments_requested: boundedExperiments.length,
-        experiments_succeeded: boundedExperiments.filter((item) => item.success).length,
-        experiments_partial: boundedExperiments.filter((item) => !item.success).length,
-        symbols_requested: boundedExperiments.reduce((sum, item) => sum + item.summary.requested, 0),
-        symbols_succeeded: boundedExperiments.reduce((sum, item) => sum + item.summary.succeeded, 0),
-        symbols_failed: boundedExperiments.reduce((sum, item) => sum + item.summary.failed, 0),
-      },
-      experiments: boundedExperiments,
-    };
-    await transaction.replaceJson('run.json', finalRun);
-    const [runInfo, watchlistInfo] = await Promise.all([
-      transaction.artifactInfo('run.json'),
-      transaction.artifactInfo('watchlist.json'),
-    ]);
-    const publication = await transaction.publish();
-    const failureKind = runFailureKind(executed.experiments);
-    return Object.freeze({
-      success,
-      ...(failureKind && { failure_kind: failureKind }),
-      run_id: transaction.run_id,
-      status,
-      output: publication,
-      strategy: strategyIdentity,
-      context: sanitizeCoreContext(runContext),
-      watchlist: {
-        name: internal.watchlist.watchlist.name,
-        snapshot_id: internal.watchlist.snapshot.snapshot_id,
-        symbol_count: internal.watchlist.snapshot.returned_symbol_count,
-      },
-      summary: finalRun.summary,
-      experiments: boundedExperiments,
-      artifacts: { run: runInfo, watchlist: watchlistInfo },
-      retry_supported: false,
-      resume_supported: false,
+      await emitStrategyAutomationStatus(on_status, 'preparing_experiments');
+      const prepare = _deps.prepareParameterSetExecution || prepareParameterSetExecution;
+      const prepared = await prepare({
+        candidate_schema: internal.candidate.input_schema,
+        parameter_sets: requested.experiments.parameter_sets,
+        identity: strategyIdentity,
+        context: runContext,
+        _deps: _deps.parameter_sets,
+      });
+      run = transitionRunState(run, {
+        status: 'running',
+        updated_at: Math.max(run.updated_at, now()),
+        patch: {
+          base_inputs: prepared.base_inputs,
+          base_inputs_fingerprint: prepared.base_inputs_fingerprint,
+          planned_experiments: prepared.planned_experiments,
+        },
+      });
+      await store.replaceRun(run);
+      assertNotAborted(signal);
+      await emitStrategyAutomationStatus(on_status, 'executing_experiments');
+      await executeDurableStrategyPlan({
+        store,
+        run,
+        watchlist: validatedWatchlist,
+        prepared,
+        identity: strategyIdentity,
+        context: runContext,
+        on_progress,
+        signal,
+        timeout_ms: _deps.timeout_ms,
+        _deps: { now, ..._deps.execution, parameter_sets: {
+          ..._deps.execution?.parameter_sets,
+          withChartSession: alreadyLockedSession,
+        } },
+      });
     });
+    assertNotAborted(signal);
+  } catch (error) {
+    primaryError = error instanceof CoreOperationError ? error : new CoreOperationError(
+      `Strategy Run failed: ${error?.message || String(error)}`,
+      {
+        code: error?.code || 'STRATEGY_RUN_FAILED',
+        phase: error?.phase || 'strategy_run_execution',
+        retryable: error?.retryable === true,
+        context: runContext,
+        cause: error,
+      },
+    );
+  }
+  let response = null;
+  let completionError = null;
+  try {
+    if (!initialized) {
+      if (primaryError) throw primaryError;
+      throw new CoreOperationError('Strategy Run did not initialize durable output.', {
+        code: 'STRATEGY_RUN_FAILED', phase: 'strategy_run_initialization',
+      });
+    }
+    await emitStrategyAutomationStatus(on_status, 'finalizing_run');
+    const finalized = await finalizeDurableStrategyRun({
+      store,
+      error: primaryError,
+      _deps: { now, ..._deps.finalize },
+    });
+    response = await durableStrategyRunResponse({
+      finalized,
+      store,
+      context: runContext,
+      strategy: strategyIdentity,
+      resumed: false,
+      signal,
     });
   } catch (error) {
-    try {
-      await transaction.abort();
-    } catch {
-      // Preserve the primary orchestration error.
-    }
-    if (error instanceof CoreOperationError) throw error;
-    throw new CoreOperationError(`Strategy Run failed: ${error?.message || String(error)}`, {
-      code: error?.code || 'STRATEGY_RUN_FAILED',
-      phase: error?.phase || (sync ? 'strategy_run_execution' : 'strategy_sync'),
-      retryable: error?.retryable === true,
-      context: runContext,
-      cause: error,
-    });
+    completionError = error;
   }
+  try {
+    await leases.release();
+  } catch (error) {
+    if (!completionError) completionError = error;
+  }
+  if (completionError) throw completionError;
+  return response;
 }
