@@ -75,24 +75,34 @@ function requireTradingDataPagination(offset, limit, snapshotId) {
 }
 
 const SIGNAL_EXIT_CODES = Object.freeze({ SIGINT: 130, SIGTERM: 143 });
+export const STRATEGY_SIGNAL_COALESCE_WINDOW_MS = 250;
 
 /** Install graceful handlers only for one formal Run/Resume invocation. */
 export async function withStrategyAutomationSignals(operation, {
   process_facade = process,
   AbortControllerClass = AbortController,
   progress_renderer,
+  _signal_now = Date.now,
 } = {}) {
   if (typeof operation !== 'function') throw new TypeError('Signal operation callback is required.');
   const controller = new AbortControllerClass();
   const renderer = progress_renderer || createStrategyProgressRenderer({
     stream: process_facade.stderr || process.stderr,
   });
-  let received = 0;
+  let interruptBursts = 0;
+  let lastSignalAt = null;
   const handlers = {};
   for (const [signalName, exitCode] of Object.entries(SIGNAL_EXIT_CODES)) {
     handlers[signalName] = () => {
-      received += 1;
-      if (received === 1) {
+      const receivedAt = Number(_signal_now());
+      const forwardedDuplicate = lastSignalAt != null
+        && Number.isFinite(receivedAt)
+        && receivedAt >= lastSignalAt
+        && receivedAt - lastSignalAt <= STRATEGY_SIGNAL_COALESCE_WINDOW_MS;
+      lastSignalAt = receivedAt;
+      if (forwardedDuplicate) return;
+      interruptBursts += 1;
+      if (interruptBursts === 1) {
         const reason = new CoreOperationError(`Received ${signalName}.`, {
           code: 'RUN_INTERRUPTED', phase: 'signal',
         });

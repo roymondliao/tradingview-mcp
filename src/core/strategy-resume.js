@@ -1008,19 +1008,38 @@ export async function durableStrategyRunResponse({
   resumed = false,
   signal,
 } = {}) {
-  const [runArtifact, watchlistArtifact] = await Promise.all([
-    store.artifactInfo('run.json'),
-    store.artifactInfo('watchlist.json'),
-  ]);
   const interrupted = finalized.run.error?.code === 'RUN_INTERRUPTED';
   const signalExitCode = Number.isInteger(signal?.reason?.exit_code)
     ? signal.reason.exit_code
     : null;
+  if (interrupted) {
+    const summary = finalized.summary || {};
+    return Object.freeze({
+      success: false,
+      ...(signalExitCode != null && { exit_code: signalExitCode }),
+      run_id: finalized.run.run_id,
+      status: finalized.run.status,
+      durable: true,
+      resumed,
+      output: Object.freeze({ path: store.run_path }),
+      summary: Object.freeze({
+        symbols_requested: summary.symbols_requested ?? 0,
+        symbols_pending: summary.symbols_pending ?? 0,
+        symbols_succeeded: summary.symbols_succeeded ?? 0,
+        symbols_failed: summary.symbols_failed ?? 0,
+      }),
+      error: finalized.run.error,
+      resume_supported: true,
+    });
+  }
+  const [runArtifact, watchlistArtifact] = await Promise.all([
+    store.artifactInfo('run.json'),
+    store.artifactInfo('watchlist.json'),
+  ]);
   const cdpFailure = String(finalized.run.error?.code || '').startsWith('CDP_');
   return Object.freeze({
     success: finalized.run.status === 'succeeded',
     ...(cdpFailure && { failure_kind: 'cdp_connection' }),
-    ...(interrupted && signalExitCode != null && { exit_code: signalExitCode }),
     run_id: finalized.run.run_id,
     status: finalized.run.status,
     durable: true,

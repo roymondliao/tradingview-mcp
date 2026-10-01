@@ -381,7 +381,7 @@ validateNamedWatchlistSymbols({
 - Mixed small Watchlist完成全部entries並只回報invalid Symbol。
 - 原Chart Symbol／Timeframe在success、validation failure、signal與exception後都恢復。
 - 修正Named Watchlist並建立新Run後，validated Snapshot才能成為SSOT。
-- `stock_all_list`通過652/652 Symbol validation後，才執行TASK-007 single-baseline capacity Run。
+- `stock_all_list`實際648/648 Symbol validation通過後，已完成TASK-007 single-baseline capacity Run。
 
 ## Acceptance criteria
 
@@ -398,7 +398,7 @@ validateNamedWatchlistSymbols({
 - [x] Crash期間的pending validation可same-run重驗；known failed validation不會進入Strategy execution。
 - [x] TPEX:2640 negative及TPEX:6227 positive controlled live cases通過。
 - [x] Node 22／24 targeted與full unit suites、lint及`git diff --check`通過。
-- [x] TASK-007 `stock_all_list` 652-Symbol capacity gate只在652/652 validation通過後執行。
+- [x] TASK-007 `stock_all_list` 648-Symbol capacity gate只在648/648 validation通過後執行。
 
 ## Completion record
 
@@ -411,4 +411,4 @@ Completed on 2026-09-30.
 - Dry-run response明確回傳`performed: false`／`formal_run_only`，不切換Chart。
 - Targeted suites共61 tests passed；Node 22與Node 24完整unit suites各652/652 passed。Lint為0 errors（保留3筆既有warnings），`git diff --check`通過。
 - Controlled Desktop CDP mixed probe：`TPEX:2640`於attempt 1回報`WATCHLIST_SYMBOL_NOT_FOUND`，diagnostics為metadata absent、bars 0、invalid UI true；`TPEX:6227`判定valid。Probe後readback確認`dev`／Pane 0已還原`TWSE_DLY:2478 / 1D`。
-- Exact-name`stock_all_list` 652/652 validation及single-baseline endurance Run仍屬TASK-007 live capacity gate，未在本Task宣稱完成。
+- Exact-name`stock_all_list`已於TASK-007完成actual 648/648 validation及single-baseline endurance Run。

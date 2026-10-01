@@ -18,10 +18,10 @@ Status: `approved`
 | D-008 | Resume identity validation and rebind | `accepted` | Stable Layout／Pane／Strategy／Inputs／Watchlist identity必須相同；target/tab/entity等runtime IDs可受控rebind。 |
 | D-009 | Same-run Resume lifecycle | `accepted` | Resume 原地沿用同一 Run ID，只執行非 `succeeded` Symbols，不建立 continuation run。 |
 | D-010 | `strategy resume` CLI and errors | `accepted` | Resume 是獨立 Core module／CLI，Run 不自動 Resume。 |
-| D-011 | SIGINT／SIGTERM and abrupt crash semantics | `accepted` | First signal graceful abort/restore；second signal immediate exit；hard crash由下次Resume恢復。 |
+| D-011 | SIGINT／SIGTERM and abrupt crash semantics | `accepted` | First logical signal burst graceful abort/restore；npm forwarding duplicates coalesce；second independent burst immediate exit；hard crash由下次Resume恢復。 |
 | D-012 | Cross-process Run／Pane lease | `accepted` | OS temp lock directories、stable hashed keys、PID liveness與token-checked reclaim/release。 |
 | D-013 | Stale attempt staging cleanup | `accepted` | 持有Run lease後，只清除非succeeded Symbol可證明ownership的staging／uncommitted final directory。 |
-| D-014 | Benchmark and live acceptance thresholds | `accepted` | 652 × 3 filesystem baseline已量測；採具硬體餘裕的固定gate與652-symbol single-baseline live acceptance。 |
+| D-014 | Benchmark and live acceptance thresholds | `accepted` | 652 × 3 filesystem baseline已量測；固定gate與`stock_all_list`實際648-symbol single-baseline live acceptance皆已通過。 |
 | D-015 | Optional `strategy status` command | `accepted` | 本Change不實作；未來如有操作需求再以相同local reader另開Change。 |
 | D-016 | Durable worker Pane Chart state | `accepted` | Formal Run／Resume不保存或restore invocation前Symbol／timeframe；每個work item自行set與readback。 |
 
@@ -498,9 +498,11 @@ Required tests:
 Decision:
 
 - CLI建立AbortController；Core接收signal，不自行註冊global process handlers。
+- CLI以固定250ms window將terminal／npm／shell造成的proxied duplicate signals合併為一個logical interrupt burst；不提供User override。
 - First SIGINT／SIGTERM不開始新attempt，立即cancel backoff，等待current bounded phase後restore Base Inputs，將Run標為`failed`與`RUN_INTERRUPTED`，release leases；durable worker Pane不restore Chart Symbol／timeframe。
 - Graceful exit codes為SIGINT `130`、SIGTERM `143`。
-- Second signal立即exit，不再保證cleanup。
+- Coalescing window後的second independent signal立即exit，不再保證cleanup。
+- Graceful `RUN_INTERRUPTED` response使用Run／Resume共用compact projection；完整durable detail不重複輸出，保留於Run Directory。
 - SIGKILL／crash／power loss不保證state update；下次Resume使用最後atomic state與stale lease rules。
 
 Rationale:
@@ -523,7 +525,8 @@ Failure behavior:
 Required tests:
 
 - Signal during backoff、Symbol phase、manifest commit與Base Inputs restore。
-- Second signal simulated abrupt exit recovery。
+- Immediate same／mixed forwarding duplicates及window後second independent signal。
+- Second independent signal simulated abrupt exit recovery。
 
 ### D-012 Cross-process Run／Pane lease
 
@@ -597,7 +600,7 @@ Test shape已定案：
 
 - Synthetic 652 Symbols × 3 Parameter Sets。
 - Controlled live retry／crash／Resume scenarios。
-- Exact-name`stock_all_list` expected 652的single-baseline endurance Run。
+- Exact-name`stock_all_list` actual 648的single-baseline endurance Run。
 - Existing 448 × 3 result保留為multi-Parameter-Set live evidence。
 
 2026-09-29 filesystem baseline：
@@ -632,7 +635,7 @@ Time與memory gates保留約1.7～29倍headroom，避免把一般CI／developer 
 fnm exec --using=22 npm run benchmark:strategy-durable
 ```
 
-Capacity live gate仍須依manual test完成exact-name `stock_all_list` 652-Symbol single-baseline Run；量化threshold的acceptance不代表live gate已通過。
+2026-10-01 capacity live gate：Run `obv-v3-20261001T045854Z-3d8bb50a`使用exact-name`stock_all_list` actual 648-Symbol Snapshot；648/648 CDP validation與single-baseline execution成功，1,944個Symbol artifacts audit無錯誤。Total Run約58m38.710s，Experiment約47m46.855s。Synthetic threshold與live endurance兩部分皆已通過。
 
 ### D-015 Optional `strategy status` command
 

@@ -1,7 +1,7 @@
 ---
 id: FEATURE-20260926-STRATEGY-DURABLE-EXPORT-RECOVERY
 title: Strategy Durable Export Recovery
-status: in_progress
+status: done
 created: 2026-09-26
 depends_on:
   - FEATURE-20260915-STRATEGY-AUTOMATION-RUN
@@ -16,7 +16,7 @@ scope:
 
 # Strategy Durable Export Recovery
 
-Status: `in_progress`
+Status: `done`
 
 ## Objective
 
@@ -196,7 +196,7 @@ Execution／restore 階段不建立重複 error code，沿用既有 `PANE_CONTEX
 - TTY-only `strategy run`／`strategy resume` information：非Symbol階段顯示bounded process stage，Symbol execution顯示percentage／processed、Experiment及succeeded／failed；stderr-only，不改變stdout JSON。
 - Formal Run將Watchlist交給Strategy execution前，以TradingView Desktop CDP逐筆驗證Symbol metadata resolvability；initial frozen evidence先durably落地，固定1秒attempt、最多3 attempts。
 - Deterministic fault injection、synthetic durability benchmark 與 controlled live acceptance。
-- `stock_all_list` 652-Symbol Snapshot capacity evidence及單一 baseline endurance run；既有 448 × 3 結果繼續作為 multi-Parameter-Set evidence。
+- `stock_all_list` 648-Symbol Snapshot capacity evidence及單一 baseline endurance run；既有 448 × 3 結果繼續作為 multi-Parameter-Set evidence。
 
 ## Out of scope
 
@@ -217,12 +217,12 @@ Execution／restore 階段不建立重複 error code，沿用既有 `PANE_CONTEX
 
 - 日常 controlled live tests 使用 `dev`／`dev-testing-list`／`TWSE:2330`。
 - Synthetic durability benchmark 使用 652 Symbols × 至少 3 Parameter Sets，不依賴 TradingView Desktop。
-- Named Watchlist capacity fixture 使用 exact-name `stock_all_list`，目前 expected count 為 652。
-- Durable Recovery 完成後只需以單一 baseline Parameter Set 執行 652-Symbol live endurance run；不重複執行 652 × 3。
+- Named Watchlist capacity fixture 使用 exact-name `stock_all_list`，accepted count 為 648。
+- Durable Recovery以單一 baseline Parameter Set完成648-Symbol live endurance run；不重複執行652 × 3 live。
 
 ## Design status
 
-Artifact v2、retry classifier、identity rebind、durable worker Pane、signal handling、cross-process leases、stale attempt cleanup與不實作`strategy status`皆已定案。D-014已依652 × 3 filesystem baseline補齊量化thresholds並改為`accepted`；TASK-008～011已完成，之後再完成其餘controlled live scenarios及`stock_all_list` 652-Symbol single-baseline gate。
+Artifact v2、retry classifier、identity rebind、durable worker Pane、signal handling、cross-process leases、stale attempt cleanup與不實作`strategy status`皆已定案並完成。D-014的652 × 3 filesystem baseline、controlled live scenarios及`stock_all_list` 648-Symbol single-baseline gate皆已通過。
 
 ## Delivery sequence
 
@@ -249,7 +249,7 @@ Artifact v2 state + durable store
 - [x] Graceful interruption完成 bounded restore；abrupt crash 可由下一次 Resume 分類與恢復。
 - [x] 相同 Run／Pane 的第二個 mutation process會在 mutation 前被 lock 拒絕。
 - [x] 652 × 3 synthetic benchmark、fault injection與完整 deterministic regression通過。
-- [ ] `stock_all_list` Snapshot 完整性及 652-Symbol single-baseline live endurance acceptance 通過。
+- [x] `stock_all_list` Snapshot 完整性及648-Symbol single-baseline live endurance acceptance通過。
 - [x] TTY information顯示current process stage；Symbol execution顯示percentage／processed、original Experiment identity及succeeded／failed，且不污染stdout JSON。
 - [x] Formal Run先保存frozen Snapshot，再只於全部Symbols通過TradingView CDP metadata validation後建立可執行的validated SSOT。
 
@@ -263,12 +263,13 @@ Artifact v2 state + durable store
 | [TASK-004](./TASK-004-durable-experiment-execution.md) | Durable Experiment and Parameter Set Execution | `done` | TASK-001, TASK-003 |
 | [TASK-005](./TASK-005-resume-planning-identity.md) | Resume Loader, Planning, and Identity Rebind | `done` | TASK-001, TASK-002, TASK-004 |
 | [TASK-006](./TASK-006-run-resume-cli-integration.md) | Run／Resume Orchestration, CLI, and Signals | `done` | TASK-001～005 |
-| [TASK-007](./TASK-007-regression-benchmark-live-gate.md) | Regression, Benchmark, and Live Delivery Gate | `in_progress` | TASK-001～006 |
+| [TASK-007](./TASK-007-regression-benchmark-live-gate.md) | Regression, Benchmark, and Live Delivery Gate | `done` | TASK-001～006 |
 | [TASK-008](./TASK-008-cli-progress-display.md) | Strategy Run and Resume CLI Progress Display | `done` | TASK-006 |
 | [TASK-009](./TASK-009-watchlist-symbol-validation.md) | TradingView Watchlist Symbol Resolvability Validation | `done` | TASK-002, TASK-006 |
 | [TASK-010](./TASK-010-resume-stable-identity-boundary.md) | Resume Stable Identity and Runtime Binding Boundary | `done` | TASK-005, TASK-006 |
 | [TASK-011](./TASK-011-remove-incidental-chart-state.md) | Remove Incidental Chart Symbol and Resolution State | `done` | TASK-006, TASK-009, TASK-010 |
+| [TASK-012](./TASK-012-npm-signal-forwarding-graceful-shutdown.md) | NPM Signal Forwarding Graceful Shutdown | `done` | TASK-006, TASK-011 |
 
 ## Completion record
 
-TASK-001～006及TASK-008～011 implementation皆已完成。TASK-011已移除durable Run／Resume的incidental Chart Symbol／resolution artifact fields、response exposure與restore behavior，同時保持legacy restore與舊artifact-v2相容。TASK-007的deterministic fault matrix、Node 22／24 full regression、652 × 3 × 3 filesystem benchmark、D-014 thresholds及manual guide已完成；Feature仍為`in_progress`，等待其他controlled TradingView scenarios及exact-name`stock_all_list` 652-Symbol single-baseline live acceptance。詳細數據與未完成項目見TASK-007～011 completion records。
+TASK-001～012皆已完成。TASK-007已通過deterministic fault matrix、Node 22／24 full regression、652 × 3 × 3 filesystem benchmark、controlled retry／interrupt／crash／Desktop restart scenarios，以及exact-name`stock_all_list` 648-Symbol single-baseline live acceptance。TASK-012亦以正式npm Run／Resume command完成signal-burst coalescing與compact interruption response evidence。Feature status為`done`；詳細數據見各Task completion records與D-014。

@@ -17,6 +17,7 @@ import {
 } from '../src/core/strategy-parameter-sets.js';
 import { createDurableRunStore } from '../src/core/strategy-run-artifacts.js';
 import {
+  durableStrategyRunResponse,
   loadStrategyResume,
   resumeStrategyAutomation,
 } from '../src/core/strategy-resume.js';
@@ -834,7 +835,70 @@ describe('Formal Strategy Run integration', () => {
     assert.equal(result.status, 'failed');
     assert.equal(result.error.code, 'RUN_INTERRUPTED');
     assert.equal(result.exit_code, 130);
+    assert.deepEqual(Object.keys(result), [
+      'success',
+      'exit_code',
+      'run_id',
+      'status',
+      'durable',
+      'resumed',
+      'output',
+      'summary',
+      'error',
+      'resume_supported',
+    ]);
+    assert.deepEqual(Object.keys(result.summary), [
+      'symbols_requested',
+      'symbols_pending',
+      'symbols_succeeded',
+      'symbols_failed',
+    ]);
     assert.equal(calls.events.at(-1), 'leases-released');
+  });
+
+  it('uses the same compact interrupted response for Resume without artifact-info reads', async () => {
+    const controller = new AbortController();
+    const reason = new CoreOperationError('SIGINT', { code: 'RUN_INTERRUPTED', phase: 'signal' });
+    reason.exit_code = 130;
+    controller.abort(reason);
+    const response = await durableStrategyRunResponse({
+      finalized: {
+        run: {
+          run_id: 'run-1',
+          status: 'failed',
+          error: { code: 'RUN_INTERRUPTED', phase: 'signal', message: 'Received SIGINT.' },
+        },
+        summary: {
+          symbols_requested: 10,
+          symbols_pending: 6,
+          symbols_succeeded: 3,
+          symbols_failed: 1,
+        },
+      },
+      store: {
+        run_path: '/tmp/output/run-1',
+        async artifactInfo() { throw new Error('compact response must not read artifact info'); },
+      },
+      resumed: true,
+      signal: controller.signal,
+    });
+    assert.deepEqual(response, {
+      success: false,
+      exit_code: 130,
+      run_id: 'run-1',
+      status: 'failed',
+      durable: true,
+      resumed: true,
+      output: { path: '/tmp/output/run-1' },
+      summary: {
+        symbols_requested: 10,
+        symbols_pending: 6,
+        symbols_succeeded: 3,
+        symbols_failed: 1,
+      },
+      error: { code: 'RUN_INTERRUPTED', phase: 'signal', message: 'Received SIGINT.' },
+      resume_supported: true,
+    });
   });
 
   it('returns failed preflight diagnostics without mutation or artifacts', async () => {

@@ -12,7 +12,10 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { resultExitCode } from '../src/cli/router.js';
-import { withStrategyAutomationSignals } from '../src/cli/commands/strategy.js';
+import {
+  STRATEGY_SIGNAL_COALESCE_WINDOW_MS,
+  withStrategyAutomationSignals,
+} from '../src/cli/commands/strategy.js';
 import './cli_progress.test.js';
 
 function require_fs() { return { writeFileSync, unlinkSync }; }
@@ -105,13 +108,34 @@ describe('Strategy automation CLI signals', () => {
     assert.equal(failed.finished, true);
   });
 
-  it('uses immediate hard-exit semantics for a repeated signal', async () => {
+  it('coalesces an immediate duplicate SIGINT from process wrappers', async () => {
     const facade = processFacade();
-    await withStrategyAutomationSignals(async () => {
+    let aborts = 0;
+    const result = await withStrategyAutomationSignals(async (signal) => {
+      signal.addEventListener('abort', () => { aborts += 1; });
+      facade.emit('SIGINT');
+      facade.emit('SIGINT');
+      assert.equal(signal.aborted, true);
+      return { success: false, exit_code: signal.reason.exit_code };
+    }, { process_facade: facade, _signal_now: () => 1000 });
+    assert.equal(result.exit_code, 130);
+    assert.equal(aborts, 1);
+    assert.deepEqual(facade.exits, []);
+    assert.equal(facade.listenerCount(), 0);
+  });
+
+  it('coalesces a mixed forwarding burst but hard-exits on a later interrupt', async () => {
+    const facade = processFacade();
+    let now = 1000;
+    await withStrategyAutomationSignals(async (signal) => {
       facade.emit('SIGTERM');
       facade.emit('SIGINT');
+      assert.equal(signal.reason.exit_code, 143);
+      assert.deepEqual(facade.exits, []);
+      now += STRATEGY_SIGNAL_COALESCE_WINDOW_MS + 1;
+      facade.emit('SIGINT');
       return { success: false, exit_code: 143 };
-    }, { process_facade: facade });
+    }, { process_facade: facade, _signal_now: () => now });
     assert.deepEqual(facade.exits, [130]);
     assert.equal(facade.listenerCount(), 0);
   });

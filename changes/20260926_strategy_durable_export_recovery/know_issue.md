@@ -188,7 +188,7 @@ TASK-009已於2026-09-30完成：
 - Pending validation可由same-run Resume整批重驗；known failed Snapshot在runtime identity resolution及Strategy mutation前拒絕。
 - Existing artifact-v2沒有`symbol_validation`時仍保持Resume相容。
 - Controlled live mixed probe確認`TPEX:2640`於attempt 1回報`WATCHLIST_SYMBOL_NOT_FOUND`、`TPEX:6227`為valid，並成功還原`TWSE_DLY:2478 / 1D`。
-- Node 22／24完整unit suites各652/652通過；exact-name`stock_all_list` 652/652 validation與single-baseline endurance仍由TASK-007追蹤。
+- Node 22／24當時完整unit suites各652/652通過；exact-name`stock_all_list`後續以實際648/648 validation與single-baseline endurance完成TASK-007。
 
 ### Resolution criteria
 
@@ -198,4 +198,4 @@ TASK-009已於2026-09-30完成：
 - Invalid Watchlist不進入Strategy sync／Experiments，且Chart完成restore。
 - Successful formal Run的`watchlist.json`保存與Snapshot ID／ordered fingerprint綁定的validation evidence。
 - Existing artifact-v2 Resume保持相容；pending validation crash可same-run重驗，known invalid frozen Snapshot不可進入Strategy execution。
-- `stock_all_list`完成652/652 validation後，才執行TASK-007 single-baseline capacity gate。
+- `stock_all_list`已完成實際648/648 validation及TASK-007 single-baseline capacity gate。

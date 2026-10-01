@@ -28,7 +28,7 @@ Report A
 - 獨立的 `strategy resume --run-directory` Core／CLI。
 - Stable identity validation、Desktop restart target rebind、Run／Pane cross-process locks。
 - SIGINT／SIGTERM graceful stop、Base Inputs restore與next-process recovery。
-- Deterministic fault injection、652 × 3 synthetic benchmark 與 652-Symbol live endurance gate。
+- Deterministic fault injection、652 × 3 synthetic benchmark 與 `stock_all_list` actual 648-Symbol live endurance gate。
 
 ### Compatibility boundary
 
@@ -175,7 +175,7 @@ read-only preflight
       "name": "stock_all_list",
       "snapshot_id": "sha256:...",
       "ordered_symbol_fingerprint": "sha256:...",
-      "symbol_count": 652
+      "symbol_count": 648
     }
   },
   "base_inputs": [],
@@ -243,7 +243,7 @@ Status不寫在`experiment.json`；Experiment status由同directory的`manifest.
   "watchlist": {
     "snapshot_id": "sha256:...",
     "ordered_symbol_fingerprint": "sha256:...",
-    "symbol_count": 652
+    "symbol_count": 648
   },
   "requested_symbols": ["TWSE:1210"],
   "timeframe": "1D",
@@ -253,7 +253,7 @@ Status不寫在`experiment.json`；Experiment status由同directory的`manifest.
   "updated_at": 0,
   "updated_at_iso": "...",
   "summary": {
-    "requested": 652,
+    "requested": 648,
     "pending": 651,
     "running": 0,
     "retry_wait": 0,
@@ -833,7 +833,7 @@ Inject failure/crash at：
 - Synthetic fixture：652 Symbols × 3 Parameter Sets，包含每Symbol manifest transitions、attempt staging、atomic rename、final audit與Resume planning。
 - Task先記錄baseline，再依CI／developer hardware evidence在`DECISIONS.md`填入D-014 thresholds；不得先捏造任意數字。
 - Controlled live：小型list驗證retry與Resume。
-- Final live：exact-name `stock_all_list` expected 652，單一baseline endurance Run。
+- Final live：exact-name `stock_all_list` actual 648，單一baseline endurance Run，648/648 succeeded。
 - Existing 448 × 3 manual result作為multi-Parameter-Set live evidence，不重跑652 × 3 live。
 
 ## Delivery sequence

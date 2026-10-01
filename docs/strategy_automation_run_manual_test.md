@@ -2,7 +2,7 @@
 
 本文件驗證`strategy run --config`從read-only preflight到Strategy sync、Parameter Sets、完整named Watchlist export、durable artifacts、fixed retry及same-run `strategy resume`的正式流程。
 
-Strategy Automation Run的TASK-008 automated gate已完成deterministic regression、完整448-Symbol Watchlist read-only preflight，以及`TWSE:2330`×兩組Parameter Sets的bounded formal代表案例。Durable Export Recovery的automated fault matrix與652 × 3 filesystem benchmark也已完成；下列手測用來驗證真實TradingView Desktop retry／Resume與`stock_all_list` 652-Symbol capacity gate。
+Strategy Automation Run的TASK-008 automated gate已完成deterministic regression、完整448-Symbol Watchlist read-only preflight，以及`TWSE:2330`×兩組Parameter Sets的bounded formal代表案例。Durable Export Recovery的automated fault matrix、652 × 3 filesystem benchmark、controlled recovery與`stock_all_list` 648-Symbol live capacity gate皆已完成；下列內容保留為canonical驗證流程與evidence record。
 
 ## Safety and prerequisites
 
@@ -12,7 +12,7 @@ Strategy Automation Run的TASK-008 automated gate已完成deterministic regressi
 - 測試Saved Strategy使用exact name`obv-v3`，local source為`data/obv-v3.pine`。
 - 測試Watchlist使用exact name`dev-testing-list`。
 - Durable controlled scenarios應另外使用至少2個Symbols的專用small Watchlist，避免每個crash scenario重跑448筆。
-- Capacity gate才使用exact name`stock_all_list`，expected count為652，並且只執行一個`baseline` Parameter Set。
+- Capacity gate使用exact name`stock_all_list`，accepted count為648，並且只執行一個`baseline` Parameter Set。
 - 正式run會依序處理Watchlist內每一個Symbol乘上每一個Parameter Set。執行前應先確認測試Watchlist大小；若只驗證流程，使用少量Symbols的專用Watchlist，避免意外啟動大型工作。
 - 正式run可能建立或更新private Account Saved Strategy version，並安全refresh指定Pane Instance；不會Publish Pine Script。
 - Formal Run artifact v2具備固定Symbol retry與same-run `strategy resume`。Legacy `strategy trading-export`仍維持artifact v1且不支援Resume。
@@ -314,15 +314,19 @@ fnm exec --using=22 npm run tv -- strategy resume \
 
 ## 12. Graceful interruption and same-run Resume
 
-使用至少2個Symbols的small config啟動Run。觀察第一個`manifest.json` entry成為`succeeded`後按一次`Ctrl-C`：
+使用至少2個Symbols的small config，透過正式npm command啟動Run。觀察第一個`manifest.json` entry成為`succeeded`後按一次`Ctrl-C`：
 
 ```bash
 fnm exec --using=22 npm run tv -- strategy run --config "$SMALL_CONFIG"
 ```
 
+只按一次並等待目前bounded phase與finalization完成，不要在看到terminal暫時沒有更新時立即再按。Terminal／npm／shell於250ms內轉送的duplicate SIGINT／SIGTERM會被合併為同一次logical interrupt；window後另一個獨立Ctrl-C仍會立即hard-exit。
+
 通過條件：
 
 - CLI以130結束，response與`run.json.error.code`皆為`RUN_INTERRUPTED`。
+- Node child必須顯示finalization process information及bounded final JSON；只有shell exit130但沒有final JSON不算graceful evidence。`fnm exec`可能先讓outer shell重畫prompt，看到final JSON前不得啟動Resume或其他同Pane mutation。
+- `RUN_INTERRUPTED`使用compact response：只包含`success`、`exit_code`、`run_id`、`status`、`durable`、`resumed`、`output.path`、必要Symbol summary、`error`與`resume_supported`；完整Strategy／Context／Watchlist／Experiment／artifact details從Run Directory讀取。
 - `run.json.status`為`failed`，已成功Symbol的manifest state及artifacts仍存在。
 - Base Inputs restore完成，Run／Pane lease已釋放；Chart state不要求還原。
 
@@ -336,6 +340,8 @@ fnm exec --using=22 npm run tv -- strategy resume \
 Resume必須沿用相同`run_id`，只執行non-succeeded Symbols。完成後比對先前成功entry及artifacts完全未變，Run達到`succeeded`。
 
 若要驗證`SIGTERM`，使用另一個新Run並對CLI PID送出一次`SIGTERM`；Expected exit code為143，其他行為與`SIGINT`相同。
+
+2026-10-01 controlled evidence：正式npm command的Run `obv-v3-20261001T024107Z-1b9dbf99`於12 succeeded後SIGINT，成功persist`failed`／`RUN_INTERRUPTED`並exit130；same-run Resume於累計33 succeeded時再次SIGINT，回傳`resumed: true`的compact response與相同Run ID。Run／Resume共用signal與response機制已確認。
 
 ## 13. Hard crash recovery
 
@@ -399,7 +405,7 @@ Expected：`RUN_ALREADY_ACTIVE`且不修改Run artifacts。
 
 再以不同Run ID但相同Layout／Pane啟動第二個formal Run；Expected同樣在mutation前以`RUN_ALREADY_ACTIVE`拒絕。不同Pane的Run不應被此Pane lease誤擋。
 
-## 16. `stock_all_list` 652-Symbol capacity gate
+## 16. `stock_all_list` 648-Symbol capacity gate
 
 Capacity config必須使用exact-name `stock_all_list`且只保留一個`baseline` Parameter Set。先執行：
 
@@ -412,11 +418,11 @@ fnm exec --using=22 npm run tv -- strategy run \
 Snapshot通過條件：
 
 - `watchlist.watchlist.name`為`stock_all_list`。
-- `declared_symbol_count`、`returned_symbol_count`及`unique_symbol_count`皆為652。
+- `declared_symbol_count`、`returned_symbol_count`及`unique_symbol_count`皆為648。
 - `invalid_symbol_count: 0`、`duplicate_symbol_count: 0`、`complete: true`。
 - 記錄Snapshot ID與ordered Symbol fingerprint。
 
-注意：以上只證明structural Snapshot完整。接著formal Run必須先得到`watchlist.json.symbol_validation`的requested 652／valid 652／failed 0，才可進入single-baseline Experiment；任一Symbol validation error都會阻止capacity export。
+注意：以上只證明structural Snapshot完整。接著formal Run必須先得到`watchlist.json.symbol_validation`的requested 648／valid 648／failed 0，才可進入single-baseline Experiment；任一Symbol validation error都會阻止capacity export。
 
 執行single-baseline endurance Run：
 
@@ -434,8 +440,8 @@ fnm exec --using=22 npm run tv -- strategy resume \
 Final acceptance：
 
 - 相同Run ID的`run.json.status`為`succeeded`。
-- Baseline manifest summary為requested 652／succeeded 652／failed 0／pending 0。
-- 652個entries全為`succeeded`，所有artifact verification通過。
+- Baseline manifest summary為requested 648／succeeded 648／failed 0／pending 0。
+- 648個entries全為`succeeded`，所有artifact verification通過。
 - Resume前已成功Symbols未被重新export。
 - Existing 448 × 3成功結果繼續作為multi-Parameter-Set live evidence；不執行652 × 3 live。
 
@@ -462,10 +468,10 @@ Final acceptance：
 - Formal Run的Experiment數與每個Experiment requested／succeeded／failed Symbols。
 - 所有成功Symbol是否具有Report、Trading Data及`reconciliation.success: true`。
 - Final Desktop readback：Account version、Pane entity identity是否rebound、Inputs fingerprint及matching Instance count；最後Symbol／Timeframe僅作觀察，不是acceptance identity。
-- Capacity Run的652/652 summary及artifact audit結果。
+- Capacity Run的648/648 summary及artifact audit結果。
 
 只保存bounded evidence，不提交完整Symbols、Trades、User-specific absolute paths或Account secrets。若發生partial／failure，保存對應manifest error code與phase；不得手動修改manifest或拼接artifact來製造成功結果。
 
 保留必要證據後，逐一刪除明確記錄的測試Run Directory。執行cleanup前先輸出並人工核對exact path；不要對output root使用recursive wildcard、未解析variable或寬泛路徑。
 
-全部controlled live與652 capacity acceptance完成並回填後，才可將`changes/20260926_strategy_durable_export_recovery/TASK-007-regression-benchmark-live-gate.md`及Feature status改為`done`。
+2026-10-01 capacity evidence：Run `obv-v3-20261001T045854Z-3d8bb50a`、Snapshot `sha256:593585ff743cd66726facfbffde19772d06641cf50bcebdff3eeb4240e385942`、ordered fingerprint `sha256:1698d59ec9c515a51d2333315522d0b5b1b038571b3096383f8a1bcb47e47052`；648/648 validation及single-baseline execution成功，1,944 artifacts與648 reconciliation success audit皆為0 errors。TASK-007與Feature已標記`done`。
