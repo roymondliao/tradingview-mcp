@@ -24,7 +24,7 @@ function manifestArtifact({ status = 'running', symbols = [] } = {}) {
     skipped: symbols.filter((entry) => entry.status === 'skipped').length,
   };
   return {
-    schema_version: STRATEGY_RUN_ARTIFACT_VERSION,
+    artifact_schema_version: STRATEGY_RUN_ARTIFACT_VERSION,
     run_id: 'run-1',
     experiment_id: hash('a'),
     parameter_set_name: 'baseline',

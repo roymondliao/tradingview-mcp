@@ -36,7 +36,7 @@ function hash(character) {
 
 function manifestArtifact() {
   return {
-    schema_version: STRATEGY_RUN_ARTIFACT_VERSION,
+    artifact_schema_version: STRATEGY_RUN_ARTIFACT_VERSION,
     run_id: 'run-1',
     experiment_id: hash('a'),
     parameter_set_name: 'baseline',

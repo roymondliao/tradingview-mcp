@@ -45,6 +45,7 @@ function runArtifact(runPath) {
     run_id: 'run-1',
     status: 'running',
     requested: {
+      schema_version: 1,
       run: { run_id: 'run-1' },
       experiments: { parameter_sets: [{ name: 'baseline', inputs: {} }] },
       backtest: { timeframe: '1D' },

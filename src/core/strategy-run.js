@@ -29,7 +29,7 @@ import { assertPaneContext } from './pane.js';
 import { createDurableRunStore } from './strategy-run-artifacts.js';
 import { acquireStrategyRunPaneLeases } from './strategy-run-lease.js';
 import {
-  STRATEGY_RUN_ARTIFACT_VERSION,
+  strategyRunArtifactVersionFields,
   transitionRunState,
 } from './strategy-run-state.js';
 import {
@@ -331,12 +331,17 @@ function publicPreflight(preflight) {
 
 function initialRunArtifact({ internal, context, startedAt }) {
   const requested = internal.loaded.requested;
+  const { schema_version: configSchemaVersion, ...requestedFields } = requested;
+  const persistedRequested = {
+    config_schema_version: configSchemaVersion,
+    ...requestedFields,
+  };
   const watchlist = internal.watchlist;
   return {
-    schema_version: STRATEGY_RUN_ARTIFACT_VERSION,
+    ...strategyRunArtifactVersionFields('v3'),
     run_id: requested.run.run_id,
     status: 'running',
-    requested,
+    requested: persistedRequested,
     config: {
       path: internal.loaded.config_path,
       sha256: internal.loaded.config_sha256,

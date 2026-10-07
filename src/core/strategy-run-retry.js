@@ -3,7 +3,7 @@ import { CoreOperationError } from './errors.js';
 import {
   sanitizeStrategyRunError,
   transitionSymbolState,
-  validateExperimentManifestV2,
+  validateExperimentManifest,
 } from './strategy-run-state.js';
 
 export const STRATEGY_SYMBOL_MAX_ATTEMPTS = 3;
@@ -115,7 +115,7 @@ export async function executeStrategySymbolWithRetry({
   executeAttempt,
   _deps = {},
 } = {}) {
-  let current = validateExperimentManifestV2(manifest);
+  let current = validateExperimentManifest(manifest);
   if (!Number.isInteger(index) || index < 0 || index >= current.requested_symbols.length) {
     throw new CoreOperationError('Strategy Symbol retry index is outside requested_symbols.', {
       code: 'RUN_RESUME_ARTIFACT_INVALID', phase: 'symbol_attempt_validation',

@@ -1,4 +1,4 @@
-/** Durable filesystem store for formal Strategy Run artifact schema v2. */
+/** Durable filesystem store for versioned formal Strategy Run artifacts. */
 import { createWriteStream as nodeCreateWriteStream } from 'node:fs';
 import { randomUUID as nodeRandomUUID } from 'node:crypto';
 import {
@@ -26,9 +26,11 @@ import {
   safeSymbolPathSegment,
 } from './artifacts.js';
 import {
-  validateExperimentArtifactV2,
-  validateExperimentManifestV2,
-  validateRunArtifactV2,
+  STRATEGY_RUN_ARTIFACT_FAMILIES,
+  strategyRunArtifactFamily,
+  validateExperimentArtifact,
+  validateExperimentManifest,
+  validateRunArtifact,
 } from './strategy-run-state.js';
 import {
   WATCHLIST_SYMBOL_VALIDATION_ATTEMPT_TIMEOUT_MS,
@@ -304,6 +306,20 @@ function symbolPaths({ experiment_name, symbol, format }) {
 
 function createStore({ runPath, runId, deps, created }) {
   const artifactPath = (relativePath) => safePathInside(runPath, relativePath);
+  let artifactFamily = null;
+
+  function bindArtifactFamily(family) {
+    if (!STRATEGY_RUN_ARTIFACT_FAMILIES.includes(family)) {
+      throw artifactInvalid(`Unsupported Run Directory artifact family: ${String(family)}.`);
+    }
+    if (artifactFamily != null && artifactFamily !== family) {
+      throw artifactInvalid(
+        `Artifact family ${family} does not match Run Directory family ${artifactFamily}.`,
+      );
+    }
+    artifactFamily = family;
+    return family;
+  }
 
   async function ensureArtifactParent(relativePath) {
     const safeRelative = assertSafeRelativeArtifactPath(relativePath);
@@ -323,6 +339,8 @@ function createStore({ runPath, runId, deps, created }) {
     run_id: runId,
     run_path: runPath,
     created,
+
+    bindArtifactFamily,
 
     artifactPath(relativePath) {
       return artifactPath(relativePath).path;
@@ -357,7 +375,7 @@ function createStore({ runPath, runId, deps, created }) {
     },
 
     async replaceRun(run) {
-      const validated = validateRunArtifactV2(run);
+      const validated = validateRunArtifact(run);
       if (validated.run_id !== runId) throw artifactInvalid('run.json Run ID does not match the store.');
       if (
         validated.requested?.output?.run_path != null
@@ -365,14 +383,16 @@ function createStore({ runPath, runId, deps, created }) {
       ) {
         throw artifactInvalid('run.json requested output path does not match the store.');
       }
+      bindArtifactFamily(strategyRunArtifactFamily(validated, 'run.json'));
       return atomicReplaceJson({ path: artifactPath('run.json').path, value: validated, _deps: deps });
     },
 
     async createExperiment(experiment) {
-      const validated = validateExperimentArtifactV2(experiment);
+      const validated = validateExperimentArtifact(experiment);
       if (validated.run_id !== runId) {
         throw artifactInvalid('experiment.json Run ID does not match the store.');
       }
+      bindArtifactFamily(strategyRunArtifactFamily(validated, 'experiment.json'));
       return writeExclusiveJson(
         `${experimentRoot(validated.parameter_set.name)}/experiment.json`,
         validated,
@@ -380,10 +400,11 @@ function createStore({ runPath, runId, deps, created }) {
     },
 
     async replaceManifest(manifest) {
-      const validated = validateExperimentManifestV2(manifest);
+      const validated = validateExperimentManifest(manifest);
       if (validated.run_id !== runId) {
         throw artifactInvalid('manifest.json Run ID does not match the store.');
       }
+      bindArtifactFamily(strategyRunArtifactFamily(validated, 'manifest.json'));
       const relativePath = `${experimentRoot(validated.parameter_set_name)}/manifest.json`;
       await ensureArtifactParent(relativePath);
       return atomicReplaceJson({
@@ -636,7 +657,9 @@ export async function readDurableRunArtifacts({ run_directory, _deps = {} } = {}
     }
     throw error;
   }
-  const run = validateRunArtifactV2(rawRun);
+  const run = validateRunArtifact(rawRun);
+  const family = strategyRunArtifactFamily(run, 'run.json');
+  store.bindArtifactFamily(family);
   if (run.run_id !== store.run_id) {
     throw artifactInvalid('run.json Run ID does not match the Run Directory name.');
   }
@@ -692,8 +715,12 @@ export async function readDurableRunArtifacts({ run_directory, _deps = {} } = {}
       required: false,
       _deps: deps,
     });
-    const validExperiment = experiment ? validateExperimentArtifactV2(experiment) : null;
-    const validManifest = manifest ? validateExperimentManifestV2(manifest) : null;
+    const validExperiment = experiment
+      ? validateExperimentArtifact(experiment, { expected_family: family })
+      : null;
+    const validManifest = manifest
+      ? validateExperimentManifest(manifest, { expected_family: family })
+      : null;
     if (validExperiment) {
       if (
         validExperiment.run_id !== run.run_id
@@ -970,7 +997,7 @@ export async function verifySucceededSymbolArtifacts({
   entry,
   _deps = {},
 } = {}) {
-  const validManifest = validateExperimentManifestV2(manifest);
+  const validManifest = validateExperimentManifest(manifest);
   if (!entry || entry.status !== 'succeeded') {
     throw artifactInvalid('Only a succeeded Symbol entry can be verified.');
   }

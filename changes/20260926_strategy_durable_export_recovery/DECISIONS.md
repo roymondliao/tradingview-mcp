@@ -2,6 +2,10 @@
 
 Status: `approved`
 
+> Historical contract note：D-002記錄本Change交付時的artifact v2決策。後續
+> [`20261006_strategy_run_schema_naming`](../20261006_strategy_run_schema_naming/DECISIONS.md)
+> 將new-write contract升為v3，並保留format-preserving v2 Resume。
+
 本文件追蹤會改變 public contract、artifact recoverability 或 safety boundary 的設計決策。`accepted` 是後續 implementation contract；`evidence_pending` 表示設計已固定，但量化門檻需由實測補齊。
 
 ## Decision register

@@ -43,6 +43,7 @@ function runArtifact(symbols = ['TWSE:2330', 'TWSE:2317']) {
     run_id: 'run-1',
     status: 'running',
     requested: {
+      schema_version: 1,
       run: { run_id: 'run-1' },
       output: { run_path: '/tmp/output/run-1' },
     },

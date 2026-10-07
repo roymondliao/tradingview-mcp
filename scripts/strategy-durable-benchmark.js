@@ -139,11 +139,11 @@ function planningArtifacts({ root, runPath, symbols, parameterSets, runId }) {
   });
   const startedAt = 1000;
   const run = Object.freeze({
-    schema_version: 2,
+    artifact_schema_version: 3,
     run_id: runId,
     status: 'running',
     requested: {
-      schema_version: 1,
+      config_schema_version: 1,
       run: { run_id: runId, description: '652 x 3 filesystem benchmark', generated: false },
       strategy: {
         file: 'benchmark.pine',

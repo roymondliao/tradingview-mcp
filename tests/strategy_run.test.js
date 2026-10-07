@@ -32,6 +32,17 @@ function temporaryDirectory() {
   return directory;
 }
 
+function rewriteFormalArtifactAsV2(path, { run = false } = {}) {
+  const artifact = JSON.parse(readFileSync(path, 'utf8'));
+  delete artifact.artifact_schema_version;
+  artifact.schema_version = 2;
+  if (run) {
+    delete artifact.requested.config_schema_version;
+    artifact.requested.schema_version = 1;
+  }
+  writeFileSync(path, `${JSON.stringify(artifact, null, 2)}\n`);
+}
+
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
     rmSync(directory, { recursive: true, force: true });
@@ -458,13 +469,24 @@ describe('Formal Strategy Run integration', () => {
         join(root, 'experiments', name, 'experiment.json'),
         'utf8',
       ));
+      const manifestArtifact = JSON.parse(readFileSync(
+        join(root, 'experiments', name, 'manifest.json'),
+        'utf8',
+      ));
+      assert.equal(experimentArtifact.artifact_schema_version, 3);
+      assert.equal('schema_version' in experimentArtifact, false);
+      assert.equal(manifestArtifact.artifact_schema_version, 3);
+      assert.equal('schema_version' in manifestArtifact, false);
       assert.equal('symbol' in experimentArtifact.target, false);
       assert.equal('resolution' in experimentArtifact.target, false);
     }
     const runArtifact = JSON.parse(readFileSync(join(root, 'run.json'), 'utf8'));
     const watchlistArtifact = JSON.parse(readFileSync(join(root, 'watchlist.json'), 'utf8'));
     assert.equal(runArtifact.status, 'succeeded');
-    assert.equal(runArtifact.schema_version, 2);
+    assert.equal(runArtifact.artifact_schema_version, 3);
+    assert.equal(runArtifact.requested.config_schema_version, 1);
+    assert.equal('schema_version' in runArtifact, false);
+    assert.equal('schema_version' in runArtifact.requested, false);
     assert.equal('completed_at' in runArtifact, false);
     assert.equal('symbol' in runArtifact.resolved.target, false);
     assert.equal('resolution' in runArtifact.resolved.target, false);
@@ -618,7 +640,7 @@ describe('Formal Strategy Run integration', () => {
     });
   });
 
-  it('resumes the same Run and executes only the previously failed Symbol', async () => {
+  it('resumes a legacy v2 Run in place and executes only the previously failed Symbol', async () => {
     const directory = temporaryDirectory();
     const preflight = formalPreflight(directory, {
       parameterSets: [{ name: 'baseline', inputs: {} }],
@@ -629,6 +651,15 @@ describe('Formal Strategy Run integration', () => {
       _deps: formalDeps(preflight, initialCalls, { failedSymbol: 'baseline:TWSE:2330' }),
     });
     assert.equal(initial.status, 'failed');
+    rewriteFormalArtifactAsV2(join(initial.output.path, 'run.json'), { run: true });
+    rewriteFormalArtifactAsV2(join(
+      initial.output.path,
+      'experiments/baseline/experiment.json',
+    ));
+    rewriteFormalArtifactAsV2(join(
+      initial.output.path,
+      'experiments/baseline/manifest.json',
+    ));
     const watchlistPath = join(initial.output.path, 'watchlist.json');
     const pendingWatchlist = JSON.parse(readFileSync(watchlistPath, 'utf8'));
     pendingWatchlist.symbol_validation = {
@@ -681,6 +712,17 @@ describe('Formal Strategy Run integration', () => {
       'executing_experiments',
       'finalizing_run',
     ]);
+    const persistedRun = JSON.parse(readFileSync(join(initial.output.path, 'run.json'), 'utf8'));
+    const persistedManifest = JSON.parse(readFileSync(join(
+      initial.output.path,
+      'experiments/baseline/manifest.json',
+    ), 'utf8'));
+    assert.equal(persistedRun.schema_version, 2);
+    assert.equal(persistedRun.requested.schema_version, 1);
+    assert.equal('artifact_schema_version' in persistedRun, false);
+    assert.equal('config_schema_version' in persistedRun.requested, false);
+    assert.equal(persistedManifest.schema_version, 2);
+    assert.equal('artifact_schema_version' in persistedManifest, false);
   });
 
   it('keeps original Experiment identity when Resume selects only Experiment 2 of 3', async () => {

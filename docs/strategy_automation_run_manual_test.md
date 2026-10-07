@@ -15,7 +15,7 @@ Strategy Automation Run的TASK-008 automated gate已完成deterministic regressi
 - Capacity gate使用exact name`stock_all_list`，accepted count為648，並且只執行一個`baseline` Parameter Set。
 - 正式run會依序處理Watchlist內每一個Symbol乘上每一個Parameter Set。執行前應先確認測試Watchlist大小；若只驗證流程，使用少量Symbols的專用Watchlist，避免意外啟動大型工作。
 - 正式run可能建立或更新private Account Saved Strategy version，並安全refresh指定Pane Instance；不會Publish Pine Script。
-- Formal Run artifact v2具備固定Symbol retry與same-run `strategy resume`。Legacy `strategy trading-export`仍維持artifact v1且不支援Resume。
+- New Formal Run artifact v3具備明確schema命名、固定Symbol retry與same-run `strategy resume`；既有artifact v2仍可format-preserving Resume。Legacy `strategy trading-export`維持artifact v1且不支援Resume。
 - 每個scenario使用新的explicit `run.run_id`；同一scenario的Resume必須沿用原Run Directory與Run ID，不得建立continuation Run。
 - 中斷及Desktop restart測試只能在專用Pane進行，不要與其他工作共用。
 - 不提交User-specific absolute paths、Account資料或完整output artifacts；只保存sanitized IDs、counts、timings及error codes。
@@ -96,6 +96,8 @@ Exit codes：
 
 確認：
 
+- 新`run.json`、`experiment.json`與Experiment `manifest.json` root使用`artifact_schema_version: 3`，不再輸出ambiguous root `schema_version`。
+- 新`run.json.requested`使用`config_schema_version: 1`；User-facing Run Config仍使用`schema_version: 1`。
 - `watchlist.json`保存完整ordered Symbols與原始Snapshot identity。
 - 新formal Run的`watchlist.json.symbol_validation`必須為`performed: true`、`success: true`，且requested／valid counts等於Snapshot Symbol count、failed為0。
 - 每個Experiment的manifest使用相同Watchlist Snapshot與固定Strategy revision。
@@ -447,12 +449,12 @@ Final acceptance：
 
 ## 17. Legacy exporter regression
 
-確認下列既有操作未受artifact v2影響：
+確認下列既有操作未受Formal Run artifact v3影響：
 
 - Formal `strategy run --dry-run`保持read-only。
 - `strategy trading-export --symbol ...`保持artifact v1 single-Symbol behavior。
 - `strategy trading-export --watchlist active ...`保持artifact v1 Active Watchlist behavior。
-- Legacy exporter不產生artifact v2 Resume metadata，亦不接受`strategy resume`。
+- Legacy exporter不產生Formal Run v2／v3 Resume metadata，亦不接受`strategy resume`。
 
 ## 18. Manual acceptance record and cleanup
 

@@ -2,15 +2,23 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   STRATEGY_RUN_ARTIFACT_VERSION,
+  STRATEGY_RUN_LEGACY_ARTIFACT_VERSION,
   buildResumePlan,
   deriveManifestSummary,
   deriveRunSummary,
+  strategyRunArtifactFamily,
   transitionExperimentState,
   transitionRunState,
   transitionSymbolState,
+  validateExperimentArtifact,
   validateExperimentArtifactV2,
+  validateExperimentArtifactV3,
+  validateExperimentManifest,
   validateExperimentManifestV2,
+  validateExperimentManifestV3,
+  validateRunArtifact,
   validateRunArtifactV2,
+  validateRunArtifactV3,
 } from '../src/core/strategy-run-state.js';
 
 function hash(character) {
@@ -35,12 +43,27 @@ function plan(index, name, character) {
   };
 }
 
-function runArtifact({ status = 'running', plans = [plan(0, 'baseline', 'a')] } = {}) {
+function versionFields(family) {
+  return family === 'v2'
+    ? { schema_version: STRATEGY_RUN_LEGACY_ARTIFACT_VERSION }
+    : { artifact_schema_version: STRATEGY_RUN_ARTIFACT_VERSION };
+}
+
+function configVersionFields(family) {
+  return family === 'v2' ? { schema_version: 1 } : { config_schema_version: 1 };
+}
+
+function runArtifact({
+  status = 'running',
+  plans = [plan(0, 'baseline', 'a')],
+  family = 'v3',
+} = {}) {
   return {
-    schema_version: STRATEGY_RUN_ARTIFACT_VERSION,
+    ...versionFields(family),
     run_id: 'run-1',
     status,
     requested: {
+      ...configVersionFields(family),
       run: { run_id: 'run-1' },
       output: { run_path: '/tmp/output/run-1' },
     },
@@ -72,9 +95,9 @@ function runArtifact({ status = 'running', plans = [plan(0, 'baseline', 'a')] } 
   };
 }
 
-function experimentArtifact(currentPlan = plan(0, 'baseline', 'a')) {
+function experimentArtifact(currentPlan = plan(0, 'baseline', 'a'), family = 'v3') {
   return {
-    schema_version: STRATEGY_RUN_ARTIFACT_VERSION,
+    ...versionFields(family),
     run_id: 'run-1',
     experiment_id: currentPlan.experiment_id,
     parameter_set: currentPlan.parameter_set,
@@ -88,9 +111,9 @@ function experimentArtifact(currentPlan = plan(0, 'baseline', 'a')) {
   };
 }
 
-function manifestArtifact(currentPlan = plan(0, 'baseline', 'a')) {
+function manifestArtifact(currentPlan = plan(0, 'baseline', 'a'), family = 'v3') {
   return {
-    schema_version: STRATEGY_RUN_ARTIFACT_VERSION,
+    ...versionFields(family),
     run_id: 'run-1',
     experiment_id: currentPlan.experiment_id,
     parameter_set_name: currentPlan.parameter_set.name,
@@ -133,31 +156,58 @@ function watchlistArtifact() {
   };
 }
 
-describe('Strategy Run artifact v2 validation', () => {
-  it('accepts the v2 Run, Experiment, and Manifest shapes', () => {
-    assert.equal(validateRunArtifactV2(runArtifact()).schema_version, 2);
-    assert.equal(validateExperimentArtifactV2(experimentArtifact()).schema_version, 2);
-    assert.equal(validateExperimentManifestV2(manifestArtifact()).schema_version, 2);
+describe('Strategy Run artifact version validation', () => {
+  it('accepts explicit v3 and legacy v2 Run, Experiment, and Manifest shapes', () => {
+    const v3Run = validateRunArtifactV3(runArtifact());
+    assert.equal(v3Run.artifact_schema_version, 3);
+    assert.equal(v3Run.requested.config_schema_version, 1);
+    assert.equal(validateExperimentArtifactV3(experimentArtifact()).artifact_schema_version, 3);
+    assert.equal(validateExperimentManifestV3(manifestArtifact()).artifact_schema_version, 3);
+
+    const v2Run = validateRunArtifactV2(runArtifact({ family: 'v2' }));
+    assert.equal(v2Run.schema_version, 2);
+    assert.equal(v2Run.requested.schema_version, 1);
+    assert.equal(validateExperimentArtifactV2(experimentArtifact(plan(0, 'baseline', 'a'), 'v2')).schema_version, 2);
+    assert.equal(validateExperimentManifestV2(manifestArtifact(plan(0, 'baseline', 'a'), 'v2')).schema_version, 2);
   });
 
-  it('rejects v1 and future artifacts as unsupported without rewriting them', () => {
-    for (const schemaVersion of [1, 3]) {
-      const value = { ...runArtifact(), schema_version: schemaVersion };
+  it('rejects v1, future, dual-field, and cross-family artifacts', () => {
+    const unsupported = [
+      { ...runArtifact({ family: 'v2' }), schema_version: 1 },
+      { ...runArtifact(), artifact_schema_version: 4 },
+    ];
+    for (const value of unsupported) {
       assert.throws(
-        () => validateRunArtifactV2(value),
+        () => validateRunArtifact(value),
         (error) => error.code === 'RUN_RESUME_VERSION_UNSUPPORTED',
       );
     }
+    assert.throws(
+      () => validateRunArtifact({ ...runArtifact(), schema_version: 2 }),
+      (error) => error.code === 'RUN_RESUME_ARTIFACT_INVALID',
+    );
+    assert.throws(
+      () => validateRunArtifactV2(runArtifact()),
+      (error) => error.code === 'RUN_RESUME_ARTIFACT_INVALID',
+    );
+    assert.equal(strategyRunArtifactFamily(runArtifact()), 'v3');
   });
 
   it('rejects unknown identity fields and inconsistent timestamps', () => {
     assert.throws(
-      () => validateRunArtifactV2({ ...runArtifact(), unexpected: true }),
+      () => validateRunArtifact({ ...runArtifact(), unexpected: true }),
       (error) => error.code === 'RUN_RESUME_ARTIFACT_INVALID',
     );
     assert.throws(
-      () => validateRunArtifactV2({ ...runArtifact(), updated_at_iso: 'invalid' }),
+      () => validateRunArtifact({ ...runArtifact(), updated_at_iso: 'invalid' }),
       (error) => error.code === 'RUN_RESUME_ARTIFACT_INVALID',
+    );
+    assert.throws(
+      () => validateRunArtifact({
+        ...runArtifact(),
+        requested: { ...runArtifact().requested, schema_version: 1 },
+      }),
+      /both schema_version and config_schema_version/,
     );
   });
 });
@@ -251,7 +301,7 @@ describe('Strategy Symbol state transitions', () => {
   it('rejects summary drift, duplicate indices, and unsafe artifact paths', () => {
     const summaryDrift = manifestArtifact();
     summaryDrift.summary.pending = 1;
-    assert.throws(() => validateExperimentManifestV2(summaryDrift), /summary\.pending/);
+    assert.throws(() => validateExperimentManifest(summaryDrift), /summary\.pending/);
 
     let manifest = transitionSymbolState(manifestArtifact(), {
       index: 0,
@@ -263,7 +313,7 @@ describe('Strategy Symbol state transitions', () => {
       symbols: [...manifest.symbols, manifest.symbols[0]],
       summary: { ...manifest.summary, pending: 0, running: 2 },
     };
-    assert.throws(() => validateExperimentManifestV2(manifest), /duplicate Symbol index/);
+    assert.throws(() => validateExperimentManifest(manifest), /duplicate Symbol index/);
 
     let unsafe = transitionSymbolState(manifestArtifact(), {
       index: 0,
