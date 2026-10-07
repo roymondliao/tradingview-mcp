@@ -18,6 +18,10 @@ scope:
 
 Status: `done`
 
+> Follow-up：本文件記錄當時交付的artifact v2 contract。自
+> [`20261006_strategy_run_schema_naming`](../20261006_strategy_run_schema_naming/README.md)
+> 起，新Formal Run改寫artifact v3明確欄位；既有v2 Run仍可原地Resume並維持v2格式。
+
 ## Objective
 
 讓現有 `strategy run --config` 在大型 Named Watchlist 與多組 Parameter Sets 的長時間執行中，將每個 Experiment／Symbol 的執行狀態與成功 artifacts 即時保存到正式 Run Directory。當單一 Symbol 發生暫時性錯誤時，系統會以固定、有限的 retry policy 重試；當 CLI process、TradingView Desktop 或機器中斷後，User 可透過獨立的 `strategy resume` command，沿用原本的 `run_id`，只執行尚未成功的 Symbols。

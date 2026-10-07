@@ -26,6 +26,7 @@ import {
 } from '../src/core/strategy-run-artifacts.js';
 import {
   STRATEGY_RUN_ARTIFACT_VERSION,
+  STRATEGY_RUN_LEGACY_ARTIFACT_VERSION,
   transitionSymbolState,
 } from '../src/core/strategy-run-state.js';
 
@@ -66,14 +67,20 @@ function plannedExperiment() {
 }
 
 function runArtifact({
-  schemaVersion = STRATEGY_RUN_ARTIFACT_VERSION,
+  family = 'v3',
   runPath = '/tmp/output/run-1',
 } = {}) {
   return {
-    schema_version: schemaVersion,
+    ...(family === 'v2'
+      ? { schema_version: STRATEGY_RUN_LEGACY_ARTIFACT_VERSION }
+      : { artifact_schema_version: STRATEGY_RUN_ARTIFACT_VERSION }),
     run_id: 'run-1',
     status: 'running',
-    requested: { run: { run_id: 'run-1' }, output: { run_path: runPath } },
+    requested: {
+      ...(family === 'v2' ? { schema_version: 1 } : { config_schema_version: 1 }),
+      run: { run_id: 'run-1' },
+      output: { run_path: runPath },
+    },
     config: { path: '/tmp/config.json', sha256: 'config-hash' },
     source_sha256: 'source-hash',
     candidate_schema_fingerprint: 'candidate-schema',
@@ -131,10 +138,12 @@ function completedSymbolValidation() {
   };
 }
 
-function experimentArtifact() {
+function experimentArtifact(family = 'v3') {
   const planned = plannedExperiment();
   return {
-    schema_version: STRATEGY_RUN_ARTIFACT_VERSION,
+    ...(family === 'v2'
+      ? { schema_version: STRATEGY_RUN_LEGACY_ARTIFACT_VERSION }
+      : { artifact_schema_version: STRATEGY_RUN_ARTIFACT_VERSION }),
     run_id: 'run-1',
     experiment_id: planned.experiment_id,
     parameter_set: planned.parameter_set,
@@ -148,10 +157,12 @@ function experimentArtifact() {
   };
 }
 
-function manifestArtifact() {
+function manifestArtifact(family = 'v3') {
   const planned = plannedExperiment();
   return {
-    schema_version: STRATEGY_RUN_ARTIFACT_VERSION,
+    ...(family === 'v2'
+      ? { schema_version: STRATEGY_RUN_LEGACY_ARTIFACT_VERSION }
+      : { artifact_schema_version: STRATEGY_RUN_ARTIFACT_VERSION }),
     run_id: 'run-1',
     experiment_id: planned.experiment_id,
     parameter_set_name: 'baseline',
@@ -266,7 +277,7 @@ describe('Durable JSON primitives', () => {
 });
 
 describe('Durable Run store', () => {
-  it('exclusive-creates a canonical Run and reads its v2 artifacts', async () => {
+  it('exclusive-creates a canonical Run and reads its v3 artifacts', async () => {
     const output = temporaryDirectory();
     const store = await createDurableRunStore({ output_directory: output, run_id: 'run-1' });
     await store.replaceRun(runArtifact({ runPath: store.run_path }));
@@ -275,7 +286,8 @@ describe('Durable Run store', () => {
     await store.replaceManifest(manifestArtifact());
 
     const loaded = await readDurableRunArtifacts({ run_directory: join(output, 'run-1') });
-    assert.equal(loaded.run.schema_version, 2);
+    assert.equal(loaded.run.artifact_schema_version, 3);
+    assert.equal(loaded.run.requested.config_schema_version, 1);
     assert.deepEqual(loaded.watchlist.symbols, ['TWSE:2330']);
     assert.equal(loaded.experiments.length, 1);
     assert.equal(loaded.manifests.length, 1);
@@ -284,6 +296,45 @@ describe('Durable Run store', () => {
     await assert.rejects(
       createDurableRunStore({ output_directory: output, run_id: 'run-1' }),
       (error) => error.code === 'RUN_OUTPUT_EXISTS',
+    );
+  });
+
+  it('loads a complete legacy v2 tree without rewriting its version fields', async () => {
+    const output = temporaryDirectory();
+    const store = await createDurableRunStore({ output_directory: output, run_id: 'run-1' });
+    await store.replaceRun(runArtifact({ family: 'v2', runPath: store.run_path }));
+    await store.writeInitialWatchlist(watchlistArtifact());
+    await store.createExperiment(experimentArtifact('v2'));
+    await store.replaceManifest(manifestArtifact('v2'));
+
+    const loaded = await readDurableRunArtifacts({ run_directory: store.run_path });
+    assert.equal(loaded.run.schema_version, 2);
+    assert.equal(loaded.run.requested.schema_version, 1);
+    assert.equal(loaded.experiments[0].schema_version, 2);
+    assert.equal(loaded.manifests[0].schema_version, 2);
+  });
+
+  it('rejects mixed formal artifact families in one Run Directory', async () => {
+    const output = temporaryDirectory();
+    const store = await createDurableRunStore({ output_directory: output, run_id: 'run-1' });
+    await store.replaceRun(runArtifact({ runPath: store.run_path }));
+    await store.writeInitialWatchlist(watchlistArtifact());
+    await assert.rejects(
+      store.createExperiment(experimentArtifact('v2')),
+      (error) => error.code === 'RUN_RESUME_ARTIFACT_INVALID',
+    );
+    assert.equal(
+      existsSync(store.artifactPath('experiments/baseline/experiment.json')),
+      false,
+    );
+    mkdirSync(store.artifactPath('experiments/baseline'), { recursive: true });
+    writeFileSync(
+      store.artifactPath('experiments/baseline/experiment.json'),
+      `${JSON.stringify(experimentArtifact('v2'))}\n`,
+    );
+    await assert.rejects(
+      readDurableRunArtifacts({ run_directory: store.run_path }),
+      (error) => error.code === 'RUN_RESUME_ARTIFACT_INVALID',
     );
   });
 
@@ -351,7 +402,10 @@ describe('Durable Run store', () => {
 
     const legacy = join(output, 'legacy-run');
     mkdirSync(legacy);
-    writeFileSync(join(legacy, 'run.json'), JSON.stringify(runArtifact({ schemaVersion: 1 })));
+    writeFileSync(join(legacy, 'run.json'), JSON.stringify({
+      ...runArtifact({ family: 'v2' }),
+      schema_version: 1,
+    }));
     writeFileSync(join(legacy, 'watchlist.json'), JSON.stringify(watchlistArtifact()));
     await assert.rejects(
       readDurableRunArtifacts({ run_directory: legacy }),

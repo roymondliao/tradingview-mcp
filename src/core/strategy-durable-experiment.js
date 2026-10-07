@@ -1,14 +1,15 @@
-/** Durable Experiment orchestration backed exclusively by artifact-v2 manifests. */
+/** Durable Experiment orchestration backed by versioned formal Run artifacts. */
 import { CoreOperationError, sanitizeCoreContext } from './errors.js';
 import { stableJsonStringify } from './stable-json.js';
 import { unixMillisecondsToIso } from './time.js';
 import {
-  STRATEGY_RUN_ARTIFACT_VERSION,
   deriveManifestSummary,
+  strategyRunArtifactFamily,
+  strategyRunArtifactVersionFields,
   transitionExperimentState,
-  validateExperimentArtifactV2,
-  validateExperimentManifestV2,
-  validateRunArtifactV2,
+  validateExperimentArtifact,
+  validateExperimentManifest,
+  validateRunArtifact,
 } from './strategy-run-state.js';
 import { executeStrategySymbolWithRetry } from './strategy-run-retry.js';
 
@@ -93,7 +94,7 @@ function targetIdentity(run, target) {
   return durableStrategyTargetContext(resolved);
 }
 
-/** Build immutable experiment.json v2 from a persisted Run plan. */
+/** Build immutable experiment.json using the persisted Run artifact family. */
 export function createDurableExperimentArtifact({
   run,
   experiment_plan,
@@ -101,10 +102,11 @@ export function createDurableExperimentArtifact({
   target,
   started_at = Date.now(),
 } = {}) {
-  const validRun = validateRunArtifactV2(run);
+  const validRun = validateRunArtifact(run);
+  const family = strategyRunArtifactFamily(validRun, 'run.json');
   const plan = plannedExperiment(validRun, experiment_plan);
-  return validateExperimentArtifactV2({
-    schema_version: STRATEGY_RUN_ARTIFACT_VERSION,
+  return validateExperimentArtifact({
+    ...strategyRunArtifactVersionFields(family),
     run_id: validRun.run_id,
     experiment_id: plan.experiment_id,
     parameter_set: parameterSetFromPlan(plan),
@@ -115,7 +117,7 @@ export function createDurableExperimentArtifact({
     effective_inputs: plan.effective_inputs,
     started_at,
     started_at_iso: unixMillisecondsToIso(started_at),
-  });
+  }, { expected_family: family });
 }
 
 function requestedSymbols(value) {
@@ -134,8 +136,9 @@ export function createDurableExperimentManifest({
   format,
   started_at,
 } = {}) {
-  const validRun = validateRunArtifactV2(run);
-  const validExperiment = validateExperimentArtifactV2(experiment);
+  const validRun = validateRunArtifact(run);
+  const family = strategyRunArtifactFamily(validRun, 'run.json');
+  const validExperiment = validateExperimentArtifact(experiment, { expected_family: family });
   const symbols = requestedSymbols(requested_symbols);
   if (validExperiment.run_id !== validRun.run_id) {
     throw artifactInvalid('Experiment Run ID does not match run.json.');
@@ -145,7 +148,7 @@ export function createDurableExperimentManifest({
   }
   const timestamp = started_at ?? validExperiment.started_at;
   const manifest = {
-    schema_version: STRATEGY_RUN_ARTIFACT_VERSION,
+    ...strategyRunArtifactVersionFields(family),
     run_id: validRun.run_id,
     experiment_id: validExperiment.experiment_id,
     parameter_set_name: validExperiment.parameter_set.name,
@@ -175,12 +178,11 @@ export function createDurableExperimentManifest({
     },
     symbols: [],
   };
-  return validateExperimentManifestV2(manifest);
+  return validateExperimentManifest(manifest, { expected_family: family });
 }
 
 function assertExperimentIdentity(actual, expected) {
   const fields = [
-    'schema_version',
     'run_id',
     'experiment_id',
     'parameter_set',
@@ -209,7 +211,6 @@ function assertExperimentIdentity(actual, expected) {
 
 function assertManifestIdentity(actual, expected) {
   const fields = [
-    'schema_version',
     'run_id',
     'experiment_id',
     'parameter_set_name',
@@ -277,7 +278,8 @@ export async function prepareDurableStrategyExperiment({
 } = {}) {
   assertStore(store, ['createExperiment', 'replaceManifest']);
   const now = _deps.now || Date.now;
-  const validRun = validateRunArtifactV2(run);
+  const validRun = validateRunArtifact(run);
+  const family = strategyRunArtifactFamily(validRun, 'run.json');
   const plannedArtifact = createDurableExperimentArtifact({
     run: validRun,
     experiment_plan,
@@ -290,7 +292,7 @@ export async function prepareDurableStrategyExperiment({
     await store.createExperiment(plannedArtifact);
     experiment = plannedArtifact;
   } else {
-    experiment = validateExperimentArtifactV2(existingExperiment);
+    experiment = validateExperimentArtifact(existingExperiment, { expected_family: family });
     assertExperimentIdentity(experiment, plannedArtifact);
   }
 
@@ -306,7 +308,7 @@ export async function prepareDurableStrategyExperiment({
     manifest = initialManifest;
     await store.replaceManifest(manifest);
   } else {
-    manifest = validateExperimentManifestV2(existingManifest);
+    manifest = validateExperimentManifest(existingManifest, { expected_family: family });
     assertManifestIdentity(manifest, initialManifest);
   }
   return Object.freeze({
@@ -367,9 +369,10 @@ export async function executeDurableStrategyExperiment({
     format,
     _deps,
   });
-  const validRun = validateRunArtifactV2(prepared.run);
-  const experiment = validateExperimentArtifactV2(prepared.experiment);
-  let manifest = validateExperimentManifestV2(prepared.manifest);
+  const validRun = validateRunArtifact(prepared.run);
+  const family = strategyRunArtifactFamily(validRun, 'run.json');
+  const experiment = validateExperimentArtifact(prepared.experiment, { expected_family: family });
+  let manifest = validateExperimentManifest(prepared.manifest, { expected_family: family });
   const persistedPlan = plannedExperiment(validRun, prepared.experiment_plan);
   assertExperimentIdentity(experiment, createDurableExperimentArtifact({
     run: validRun,

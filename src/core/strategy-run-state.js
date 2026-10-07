@@ -1,10 +1,12 @@
-/** Pure Strategy Run artifact v2 validation, transitions, summaries, and resume planning. */
+/** Pure Strategy Run artifact validation, transitions, summaries, and resume planning. */
 import { isAbsolute } from 'node:path';
 import { CoreOperationError } from './errors.js';
 import { stableJsonStringify } from './stable-json.js';
 import { unixMillisecondsToIso } from './time.js';
 
-export const STRATEGY_RUN_ARTIFACT_VERSION = 2;
+export const STRATEGY_RUN_ARTIFACT_VERSION = 3;
+export const STRATEGY_RUN_LEGACY_ARTIFACT_VERSION = 2;
+export const STRATEGY_RUN_ARTIFACT_FAMILIES = Object.freeze(['v2', 'v3']);
 export const STRATEGY_RUN_STATUSES = Object.freeze(['running', 'succeeded', 'failed']);
 export const STRATEGY_SYMBOL_STATUSES = Object.freeze([
   'running',
@@ -15,7 +17,6 @@ export const STRATEGY_SYMBOL_STATUSES = Object.freeze([
 ]);
 
 const RUN_FIELDS = Object.freeze([
-  'schema_version',
   'run_id',
   'status',
   'requested',
@@ -35,7 +36,6 @@ const RUN_FIELDS = Object.freeze([
   'error',
 ]);
 const EXPERIMENT_FIELDS = Object.freeze([
-  'schema_version',
   'run_id',
   'experiment_id',
   'parameter_set',
@@ -48,7 +48,6 @@ const EXPERIMENT_FIELDS = Object.freeze([
   'started_at_iso',
 ]);
 const MANIFEST_FIELDS = Object.freeze([
-  'schema_version',
   'run_id',
   'experiment_id',
   'parameter_set_name',
@@ -107,6 +106,14 @@ const PLANNED_EXPERIMENT_FIELDS = Object.freeze([
   'inputs_fingerprint',
   'effective_inputs',
 ]);
+const REQUESTED_FIELDS = Object.freeze([
+  'run',
+  'strategy',
+  'target',
+  'backtest',
+  'experiments',
+  'output',
+]);
 const RUN_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
 const PARAMETER_SET_NAME_PATTERN = /^[A-Za-z0-9_-]{1,100}$/;
 const SHA256_ID_PATTERN = /^sha256:[a-f0-9]{64}$/i;
@@ -154,13 +161,85 @@ function assertTimestamp(value, iso, label) {
   }
 }
 
-function assertVersion(value, label) {
-  if (value !== STRATEGY_RUN_ARTIFACT_VERSION) {
+function hasOwn(value, field) {
+  return Object.prototype.hasOwnProperty.call(value, field);
+}
+
+function assertExpectedFamily(family, label = 'Artifact family') {
+  if (family != null && !STRATEGY_RUN_ARTIFACT_FAMILIES.includes(family)) {
+    throw new TypeError(`${label} must be v2 or v3.`);
+  }
+}
+
+export function strategyRunArtifactFamily(value, label = 'artifact') {
+  assertObject(value, label);
+  const hasLegacy = hasOwn(value, 'schema_version');
+  const hasExplicit = hasOwn(value, 'artifact_schema_version');
+  if (hasLegacy && hasExplicit) {
     throw artifactError(
-      `${label} schema version ${String(value)} is not resumable; expected ${STRATEGY_RUN_ARTIFACT_VERSION}.`,
+      `${label} must not contain both schema_version and artifact_schema_version.`,
+    );
+  }
+  if (!hasLegacy && !hasExplicit) {
+    throw artifactError(
+      `${label} must contain exactly one artifact schema version field.`,
+    );
+  }
+  if (hasLegacy) {
+    if (value.schema_version !== STRATEGY_RUN_LEGACY_ARTIFACT_VERSION) {
+      throw artifactError(
+        `${label} schema_version ${String(value.schema_version)} is not resumable; expected ${STRATEGY_RUN_LEGACY_ARTIFACT_VERSION}.`,
+        { code: 'RUN_RESUME_VERSION_UNSUPPORTED' },
+      );
+    }
+    return 'v2';
+  }
+  if (value.artifact_schema_version !== STRATEGY_RUN_ARTIFACT_VERSION) {
+    throw artifactError(
+      `${label} artifact_schema_version ${String(value.artifact_schema_version)} is not resumable; expected ${STRATEGY_RUN_ARTIFACT_VERSION}.`,
       { code: 'RUN_RESUME_VERSION_UNSUPPORTED' },
     );
   }
+  return 'v3';
+}
+
+export function strategyRunArtifactVersionFields(family = 'v3') {
+  assertExpectedFamily(family);
+  return family === 'v2'
+    ? Object.freeze({ schema_version: STRATEGY_RUN_LEGACY_ARTIFACT_VERSION })
+    : Object.freeze({ artifact_schema_version: STRATEGY_RUN_ARTIFACT_VERSION });
+}
+
+function artifactFields(fields, family) {
+  return family === 'v2'
+    ? ['schema_version', ...fields]
+    : ['artifact_schema_version', ...fields];
+}
+
+function assertArtifactFamily(value, label, expectedFamily) {
+  assertExpectedFamily(expectedFamily, `${label} expected family`);
+  const family = strategyRunArtifactFamily(value, label);
+  if (expectedFamily != null && family !== expectedFamily) {
+    throw artifactError(`${label} artifact family ${family} does not match expected ${expectedFamily}.`);
+  }
+  return family;
+}
+
+function assertRequestedConfigVersion(requested, family) {
+  assertObject(requested, 'run.json.requested');
+  const hasLegacy = hasOwn(requested, 'schema_version');
+  const hasExplicit = hasOwn(requested, 'config_schema_version');
+  if (hasLegacy && hasExplicit) {
+    throw artifactError(
+      'run.json.requested must not contain both schema_version and config_schema_version.',
+    );
+  }
+  const field = family === 'v2' ? 'schema_version' : 'config_schema_version';
+  const unexpected = family === 'v2' ? 'config_schema_version' : 'schema_version';
+  if (hasOwn(requested, unexpected) || requested[field] !== 1) {
+    throw artifactError(`run.json.requested.${field} must be 1 for artifact ${family}.`);
+  }
+  assertAllowedFields(requested, [field, ...REQUESTED_FIELDS], 'run.json.requested');
 }
 
 function assertRunId(runId, label = 'run_id') {
@@ -278,12 +357,12 @@ function plannedExperimentIdentity(plan, index) {
   };
 }
 
-export function validateRunArtifactV2(value) {
-  assertAllowedFields(value, RUN_FIELDS, 'run.json');
-  assertVersion(value.schema_version, 'run.json');
+export function validateRunArtifact(value, { expected_family } = {}) {
+  const family = assertArtifactFamily(value, 'run.json', expected_family);
+  assertAllowedFields(value, artifactFields(RUN_FIELDS, family), 'run.json');
   assertRunId(value.run_id);
   assertStatus(value.status, STRATEGY_RUN_STATUSES, 'run.json');
-  assertObject(value.requested, 'run.json.requested');
+  assertRequestedConfigVersion(value.requested, family);
   assertObject(value.config, 'run.json.config');
   assertNonEmptyString(value.config.path, 'run.json.config.path', 4000);
   assertNonEmptyString(value.config.sha256, 'run.json.config.sha256', 200);
@@ -374,9 +453,17 @@ export function validateRunArtifactV2(value) {
   return freezeRecord(value);
 }
 
-export function validateExperimentArtifactV2(value) {
-  assertAllowedFields(value, EXPERIMENT_FIELDS, 'experiment.json');
-  assertVersion(value.schema_version, 'experiment.json');
+export function validateRunArtifactV2(value) {
+  return validateRunArtifact(value, { expected_family: 'v2' });
+}
+
+export function validateRunArtifactV3(value) {
+  return validateRunArtifact(value, { expected_family: 'v3' });
+}
+
+export function validateExperimentArtifact(value, { expected_family } = {}) {
+  const family = assertArtifactFamily(value, 'experiment.json', expected_family);
+  assertAllowedFields(value, artifactFields(EXPERIMENT_FIELDS, family), 'experiment.json');
   assertRunId(value.run_id, 'experiment.json.run_id');
   assertExperimentId(value.experiment_id, 'experiment.json.experiment_id');
   assertParameterSet(value.parameter_set, 'experiment.json.parameter_set');
@@ -389,6 +476,14 @@ export function validateExperimentArtifactV2(value) {
   }
   assertTimestamp(value.started_at, value.started_at_iso, 'experiment.json.started_at');
   return freezeRecord(value);
+}
+
+export function validateExperimentArtifactV2(value) {
+  return validateExperimentArtifact(value, { expected_family: 'v2' });
+}
+
+export function validateExperimentArtifactV3(value) {
+  return validateExperimentArtifact(value, { expected_family: 'v3' });
 }
 
 function validateManifestSymbol(symbol, manifest, position) {
@@ -479,9 +574,9 @@ function assertManifestSummary(actual, expected) {
   }
 }
 
-export function validateExperimentManifestV2(value) {
-  assertAllowedFields(value, MANIFEST_FIELDS, 'manifest.json');
-  assertVersion(value.schema_version, 'manifest.json');
+export function validateExperimentManifest(value, { expected_family } = {}) {
+  const family = assertArtifactFamily(value, 'manifest.json', expected_family);
+  assertAllowedFields(value, artifactFields(MANIFEST_FIELDS, family), 'manifest.json');
   assertRunId(value.run_id, 'manifest.json.run_id');
   assertExperimentId(value.experiment_id, 'manifest.json.experiment_id');
   assertParameterSetName(value.parameter_set_name, 'manifest.json.parameter_set_name');
@@ -545,6 +640,14 @@ export function validateExperimentManifestV2(value) {
   return freezeRecord(value);
 }
 
+export function validateExperimentManifestV2(value) {
+  return validateExperimentManifest(value, { expected_family: 'v2' });
+}
+
+export function validateExperimentManifestV3(value) {
+  return validateExperimentManifest(value, { expected_family: 'v3' });
+}
+
 function transitionTime(current, updatedAt, label) {
   const value = updatedAt == null ? Date.now() : Number(updatedAt);
   if (!Number.isInteger(value) || value < current.updated_at) {
@@ -559,7 +662,7 @@ export function transitionRunState(run, {
   error = null,
   patch = {},
 } = {}) {
-  const current = validateRunArtifactV2(run);
+  const current = validateRunArtifact(run);
   assertStatus(status, STRATEGY_RUN_STATUSES, 'Run transition');
   if (current.status === 'succeeded' && status !== 'succeeded') {
     throw artifactError('A succeeded Run is immutable.');
@@ -570,7 +673,6 @@ export function transitionRunState(run, {
   assertObject(patch, 'Run transition patch');
   for (const key of Object.keys(patch)) {
     if (!RUN_FIELDS.includes(key) || [
-      'schema_version',
       'run_id',
       'status',
       'started_at',
@@ -591,7 +693,7 @@ export function transitionRunState(run, {
     updated_at_iso: unixMillisecondsToIso(timestamp),
     error: status === 'failed' ? sanitizeStrategyRunError(error) : null,
   };
-  return validateRunArtifactV2(next);
+  return validateRunArtifact(next);
 }
 
 function symbolTransitionAllowed(from, to) {
@@ -609,7 +711,7 @@ export function transitionSymbolState(manifest, {
   error = null,
   details = {},
 } = {}) {
-  const current = validateExperimentManifestV2(manifest);
+  const current = validateExperimentManifest(manifest);
   if (!Number.isInteger(index) || index < 0 || index >= current.requested_symbols.length) {
     throw artifactError('Symbol transition index is outside requested_symbols.');
   }
@@ -663,7 +765,7 @@ export function transitionSymbolState(manifest, {
     symbols,
   };
   next.summary = deriveManifestSummary(next);
-  return validateExperimentManifestV2(next);
+  return validateExperimentManifest(next);
 }
 
 export function transitionExperimentState(manifest, {
@@ -671,7 +773,7 @@ export function transitionExperimentState(manifest, {
   updated_at,
   error = null,
 } = {}) {
-  const current = validateExperimentManifestV2(manifest);
+  const current = validateExperimentManifest(manifest);
   assertStatus(status, STRATEGY_RUN_STATUSES, 'Experiment transition');
   if (current.status === 'succeeded' && status !== 'succeeded') {
     throw artifactError('A succeeded Experiment is immutable.');
@@ -684,13 +786,16 @@ export function transitionExperimentState(manifest, {
     updated_at_iso: unixMillisecondsToIso(timestamp),
     error: status === 'failed' && error != null ? sanitizeStrategyRunError(error) : null,
   };
-  return validateExperimentManifestV2(next);
+  return validateExperimentManifest(next);
 }
 
 export function deriveRunSummary({ run, manifests = [] } = {}) {
-  const validRun = validateRunArtifactV2(run);
+  const validRun = validateRunArtifact(run);
+  const family = strategyRunArtifactFamily(validRun, 'run.json');
   if (!Array.isArray(manifests)) throw artifactError('Run manifests must be an array.');
-  const validManifests = manifests.map(validateExperimentManifestV2);
+  const validManifests = manifests.map((manifest) => (
+    validateExperimentManifest(manifest, { expected_family: family })
+  ));
   const requestedExperiments = validRun.planned_experiments?.length ?? validManifests.length;
   const plannedIds = new Set(
     (validRun.planned_experiments || []).map((plan, index) => (
@@ -755,7 +860,8 @@ export function buildResumePlan({
   experiments = [],
   manifests = [],
 } = {}) {
-  const validRun = validateRunArtifactV2(run);
+  const validRun = validateRunArtifact(run);
+  const family = strategyRunArtifactFamily(validRun, 'run.json');
   if (validRun.status === 'succeeded') {
     throw artifactError('Run has already succeeded.', { code: 'RUN_ALREADY_SUCCEEDED' });
   }
@@ -779,8 +885,12 @@ export function buildResumePlan({
   if (!Array.isArray(experiments) || !Array.isArray(manifests)) {
     throw artifactError('Resume experiments and manifests must be arrays.');
   }
-  const validExperiments = experiments.map(validateExperimentArtifactV2);
-  const validManifests = manifests.map(validateExperimentManifestV2);
+  const validExperiments = experiments.map((experiment) => (
+    validateExperimentArtifact(experiment, { expected_family: family })
+  ));
+  const validManifests = manifests.map((manifest) => (
+    validateExperimentManifest(manifest, { expected_family: family })
+  ));
   const experimentById = new Map(validExperiments.map((item) => [item.experiment_id, item]));
   const manifestById = new Map(validManifests.map((item) => [item.experiment_id, item]));
   if (!validRun.planned_experiments) {
