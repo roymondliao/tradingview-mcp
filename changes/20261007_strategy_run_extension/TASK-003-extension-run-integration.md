@@ -1,7 +1,7 @@
 ---
 id: TASK-003
 title: Extension CLI, Durable Execution and Resume
-status: todo
+status: done
 phase: strategy-run-extension
 depends_on:
   - TASK-002
@@ -55,9 +55,9 @@ new-only durable execution及self-contained Resume。
 
 ## Acceptance criteria
 
-- [ ] Command creates one child containing only new Experiments。
-- [ ] Parent never changes。
-- [ ] Child follows all existing durability／retry／lease guarantees。
-- [ ] Run／Extend use one shared lifecycle；dry-run uses neither store nor mutation lifecycle。
-- [ ] Resume is self-contained and new-only。
-- [ ] Targeted CLI／Run／Resume／fault suites pass。
+- [x] Command creates one child containing only new Experiments。
+- [x] Parent never changes by construction and write-target tests。
+- [x] Child follows all existing durability／retry／lease guarantees。
+- [x] Run／Extend use one shared lifecycle；dry-run uses neither store nor mutation lifecycle。
+- [x] Resume is self-contained and new-only。
+- [x] Targeted CLI／Run／Resume／fault suites pass。

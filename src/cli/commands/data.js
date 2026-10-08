@@ -121,11 +121,13 @@ register('data', {
       handler: (opts) => core.getPineBoxes({ study_filter: opts.filter, verbose: opts.verbose }),
     }],
     ['strategy', {
-      description: 'Deprecated alias: get strategy metrics by explicit entity ID',
+      deprecated: true,
+      description: 'Get strategy metrics by explicit entity ID',
       handler: (opts, positionals) => strategyCore.getStrategyReport({ entity_id: positionals[0] }),
     }],
     ['trades', {
-      description: 'Deprecated alias: get paired strategy trades by explicit entity ID',
+      deprecated: true,
+      description: 'Get paired strategy trades by explicit entity ID',
       options: {
         max: { type: 'string', short: 'n', description: 'Max trades to return' },
       },
@@ -134,7 +136,8 @@ register('data', {
       }),
     }],
     ['equity', {
-      description: 'Deprecated alias: get strategy equity by explicit entity ID',
+      deprecated: true,
+      description: 'Get strategy equity by explicit entity ID',
       handler: (opts, positionals) => strategyCore.getStrategyEquity({ entity_id: positionals[0] }),
     }],
     ['depth', {

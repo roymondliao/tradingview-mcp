@@ -15,7 +15,9 @@ Strategy Automation Run的TASK-008 automated gate已完成deterministic regressi
 - Capacity gate使用exact name`stock_all_list`，accepted count為648，並且只執行一個`baseline` Parameter Set。
 - 正式run會依序處理Watchlist內每一個Symbol乘上每一個Parameter Set。執行前應先確認測試Watchlist大小；若只驗證流程，使用少量Symbols的專用Watchlist，避免意外啟動大型工作。
 - 正式run可能建立或更新private Account Saved Strategy version，並安全refresh指定Pane Instance；不會Publish Pine Script。
-- New Formal Run artifact v3具備明確schema命名、固定Symbol retry與same-run `strategy resume`；既有artifact v2仍可format-preserving Resume。Legacy `strategy trading-export`維持artifact v1且不支援Resume。
+- New Formal Run artifact v4具備明確schema naming、`run_kind`、fixed Symbol retry、same-run
+  `strategy resume`及append-only `strategy extend`；既有artifact v2／v3仍可format-preserving Resume。
+  Legacy `strategy trading-export`維持artifact v1且不支援Resume。
 - 每個scenario使用新的explicit `run.run_id`；同一scenario的Resume必須沿用原Run Directory與Run ID，不得建立continuation Run。
 - 中斷及Desktop restart測試只能在專用Pane進行，不要與其他工作共用。
 - 不提交User-specific absolute paths、Account資料或完整output artifacts；只保存sanitized IDs、counts、timings及error codes。
@@ -96,7 +98,8 @@ Exit codes：
 
 確認：
 
-- 新`run.json`、`experiment.json`與Experiment `manifest.json` root使用`artifact_schema_version: 3`，不再輸出ambiguous root `schema_version`。
+- 新`run.json`、`experiment.json`與Experiment `manifest.json` root使用`artifact_schema_version: 4`，不再輸出ambiguous root `schema_version`。
+- Standalone `run.json`使用`run_kind: "standalone"`；Extension child使用`run_kind: "extension"`及strict `extension` lineage metadata。
 - 新`run.json.requested`使用`config_schema_version: 1`；User-facing Run Config仍使用`schema_version: 1`。
 - `watchlist.json`保存完整ordered Symbols與原始Snapshot identity。
 - 新formal Run的`watchlist.json.symbol_validation`必須為`performed: true`、`success: true`，且requested／valid counts等於Snapshot Symbol count、failed為0。
@@ -251,7 +254,9 @@ fnm exec --using=22 npm run tv -- strategy run --config "$SMALL_CONFIG"
 Process: Validating Watchlist Symbols...
 ```
 
-Watchlist validation只顯示process information，不顯示百分比。Run／Resume會依實際路徑顯示Run Config preflight、ownership、durable initialization／Resume resolution、Watchlist validation、Strategy sync、Experiment preparation／execution與finalization。
+Watchlist validation只顯示process information，不顯示百分比。Run／Extend／Resume會依實際路徑顯示
+Config／lineage preflight、ownership、durable initialization／Resume resolution、Watchlist validation、
+Strategy identity／sync、Experiment preparation／execution與finalization。
 
 ```text
 [██████████████░░░░░░] 68.4%  892/1304 processed | Experiment 2/3: candidate-check | succeeded 891 | failed 1
@@ -295,6 +300,32 @@ fnm exec --using=22 npm run tv -- strategy resume \
 ```
 
 Expected error：`RUN_ALREADY_SUCCEEDED`。
+
+### 10.3 Append-only Extension Run
+
+完成Parent Run後，在相同Config的`experiments.parameter_sets`尾端新增至少一項，不得修改既有prefix：
+
+```bash
+fnm exec --using=22 npm run tv -- strategy extend \
+  --run-directory "$SMALL_RUN_DIR" \
+  --config "$EXTENDED_CONFIG" \
+  --dry-run
+
+fnm exec --using=22 npm run tv -- strategy extend \
+  --run-directory "$SMALL_RUN_DIR" \
+  --config "$EXTENDED_CONFIG"
+```
+
+通過條件：
+
+- Dry-run顯示正確的`experiments_inherited`、`experiments_new`及new Parameter Set names，且不建立child。
+- Pine `saved_name`與normalized source hash必須相同；local source path可以不同。
+- Formal Extend建立sibling child Run Directory，只包含new Experiment directories。
+- Parent Run Directory沒有filesystem writes，bounded metadata／inventory snapshot保持一致。
+- Child `run.json`使用artifact v4與`run_kind: "extension"`，保存direct Parent fingerprint、lineage depth、
+  inherited count及config／lineage／run index mapping。
+- 中斷Child後，移走或暫時隱藏Parent Directory，再對Child執行`strategy resume`仍可完成；Resume不得讀取Parent。
+- 成功Child可以作下一次`strategy extend --run-directory`的Parent，形成A→B→…→N lineage。
 
 ## 11. Retry success and retry exhaustion
 
@@ -449,12 +480,12 @@ Final acceptance：
 
 ## 17. Legacy exporter regression
 
-確認下列既有操作未受Formal Run artifact v3影響：
+確認下列既有操作未受Formal Run artifact v4影響：
 
 - Formal `strategy run --dry-run`保持read-only。
 - `strategy trading-export --symbol ...`保持artifact v1 single-Symbol behavior。
 - `strategy trading-export --watchlist active ...`保持artifact v1 Active Watchlist behavior。
-- Legacy exporter不產生Formal Run v2／v3 Resume metadata，亦不接受`strategy resume`。
+- Legacy exporter不產生Formal Run v2／v3／v4 Resume metadata，亦不接受`strategy resume`。
 
 ## 18. Manual acceptance record and cleanup
 

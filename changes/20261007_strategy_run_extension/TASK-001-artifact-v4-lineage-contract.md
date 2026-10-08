@@ -1,7 +1,7 @@
 ---
 id: TASK-001
 title: Artifact v4 and Lineage Contract
-status: todo
+status: done
 phase: strategy-run-extension
 depends_on:
   - FEATURE-20261006-STRATEGY-RUN-SCHEMA-NAMING
@@ -48,8 +48,8 @@ scope: artifact-lineage-model
 
 ## Acceptance criteria
 
-- [ ] V4 contract and lineage reader are pure/read-only。
-- [ ] New standalone artifacts can be represented in v4。
-- [ ] Existing v2／v3 runs remain readable and format-preserving。
-- [ ] Ancestor corruption fails with `RUN_EXTENSION_LINEAGE_INVALID`。
-- [ ] Targeted tests and `git diff --check` pass。
+- [x] V4 contract and lineage reader are pure/read-only。
+- [x] New standalone artifacts can be represented in v4。
+- [x] Existing v2／v3 runs remain readable and format-preserving。
+- [x] Ancestor corruption fails with `RUN_EXTENSION_LINEAGE_INVALID`。
+- [x] Targeted tests and `git diff --check` pass。

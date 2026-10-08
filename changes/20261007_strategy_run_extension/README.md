@@ -1,7 +1,7 @@
 ---
 id: FEATURE-20261007-STRATEGY-RUN-EXTENSION
 title: Strategy Run Extension
-status: design
+status: implementation
 created: 2026-10-07
 depends_on:
   - FEATURE-20260926-STRATEGY-DURABLE-EXPORT-RECOVERY
@@ -15,7 +15,7 @@ scope:
 
 # Strategy Run Extension
 
-Status: `design`
+Status: `implementation`
 
 ## Objective
 
@@ -364,9 +364,10 @@ Config自身syntax／Inputs validation仍沿用`RUN_CONFIG_*`、`PARAMETER_SET_*
 
 | ID | Task | Status | Depends on |
 | --- | --- | --- | --- |
-| [TASK-001](./TASK-001-artifact-v4-lineage-contract.md) | Artifact v4 and Lineage Contract | `todo` | Artifact v3 |
-| [TASK-002](./TASK-002-extension-config-planner.md) | Append-only Config Diff and Planning | `todo` | TASK-001 |
-| [TASK-003](./TASK-003-extension-run-integration.md) | Extension CLI, Durable Execution and Resume | `todo` | TASK-002 |
-| [TASK-004](./TASK-004-regression-live-delivery.md) | Regression, Live Acceptance and Delivery | `todo` | TASK-003 |
+| [TASK-001](./TASK-001-artifact-v4-lineage-contract.md) | Artifact v4 and Lineage Contract | `done` | Artifact v3 |
+| [TASK-002](./TASK-002-extension-config-planner.md) | Append-only Config Diff and Planning | `done` | TASK-001 |
+| [TASK-003](./TASK-003-extension-run-integration.md) | Extension CLI, Durable Execution and Resume | `done` | TASK-002 |
+| [TASK-004](./TASK-004-regression-live-delivery.md) | Regression, Live Acceptance and Delivery | `in_progress` | TASK-003 |
 
-Detailed decisions見[`DECISIONS.md`](./DECISIONS.md)，module design見[`LLD.md`](./LLD.md)。
+Detailed decisions見[`DECISIONS.md`](./DECISIONS.md)，module design見[`LLD.md`](./LLD.md)，automated
+validation evidence見[`DELIVERY_EVIDENCE.md`](./DELIVERY_EVIDENCE.md)。

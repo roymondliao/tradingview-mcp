@@ -5,8 +5,11 @@
 import { parseArgs } from 'node:util';
 import { VERSION } from '../version.js';
 
-/** @type {Map<string, { description: string, options?: object, handler: Function, subcommands?: Map<string, object> }>} */
+/** @type {Map<string, { description: string, deprecated?: boolean, options?: object, handler: Function, subcommands?: Map<string, object> }>} */
 const commands = new Map();
+
+const DEPRECATED_STYLE_START = '\u001b[2;33m';
+const ANSI_STYLE_RESET = '\u001b[0m';
 
 export function register(name, config) {
   commands.set(name, config);
@@ -18,6 +21,22 @@ export function resultExitCode(result) {
   return result.failure_kind === 'cdp_connection' ? 2 : 1;
 }
 
+export function helpColorEnabled({ stream = process.stdout, env = process.env } = {}) {
+  if (Object.prototype.hasOwnProperty.call(env || {}, 'NO_COLOR')) return false;
+  return stream?.isTTY === true;
+}
+
+export function formatHelpDescription(config, {
+  color = helpColorEnabled(),
+} = {}) {
+  const description = String(config?.description || '');
+  if (config?.deprecated !== true) return description;
+  const label = color
+    ? `${DEPRECATED_STYLE_START}[deprecated]${ANSI_STYLE_RESET}`
+    : '[deprecated]';
+  return `${label} ${description}`;
+}
+
 function printHelp() {
   console.log('Usage: tv <command> [options]\n');
   console.log('Commands:');
@@ -25,9 +44,9 @@ function printHelp() {
   for (const [name, cmd] of commands) {
     if (cmd.subcommands) {
       const subs = [...cmd.subcommands.keys()].join(', ');
-      console.log(`  ${name.padEnd(maxLen + 2)}${cmd.description}  [${subs}]`);
+      console.log(`  ${name.padEnd(maxLen + 2)}${formatHelpDescription(cmd)}  [${subs}]`);
     } else {
-      console.log(`  ${name.padEnd(maxLen + 2)}${cmd.description}`);
+      console.log(`  ${name.padEnd(maxLen + 2)}${formatHelpDescription(cmd)}`);
     }
   }
   console.log('\nRun "tv <command> --help" for command-specific options.');
@@ -42,11 +61,11 @@ function printCommandHelp(name, cmd) {
     console.log('Subcommands:');
     const maxLen = Math.max(...[...cmd.subcommands.keys()].map(sub => sub.length));
     for (const [sub, subConf] of cmd.subcommands) {
-      console.log(`  ${sub.padEnd(maxLen + 2)}${subConf.description}`);
+      console.log(`  ${sub.padEnd(maxLen + 2)}${formatHelpDescription(subConf)}`);
     }
   } else {
     console.log(`Usage: tv ${name} [options]\n`);
-    console.log(cmd.description);
+    console.log(formatHelpDescription(cmd));
   }
   const opts = cmd.options || {};
   if (Object.keys(opts).length > 0) {
@@ -106,7 +125,7 @@ export async function run(argv) {
       });
       if (values.help) {
         console.log(`Usage: tv ${cmdName} ${subName}${sub.usage ? ` ${sub.usage}` : ''} [options]\n`);
-        console.log(sub.description);
+        console.log(formatHelpDescription(sub));
         if (Object.keys(options).length > 0) {
           console.log('\nOptions:');
           for (const [k, v] of Object.entries(options)) {

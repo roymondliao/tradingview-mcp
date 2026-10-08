@@ -1,7 +1,7 @@
 ---
 id: TASK-002
 title: Append-only Config Diff and Planning
-status: todo
+status: done
 phase: strategy-run-extension
 depends_on:
   - TASK-001
@@ -49,8 +49,8 @@ scope: extension-preflight-planning
 
 ## Acceptance criteria
 
-- [ ] Exact-prefix comparison is deterministic and side-effect free。
-- [ ] Only config suffix is returned as new work。
-- [ ] Existing experiments can never be silently reinterpreted。
-- [ ] Parent Base drives every effective plan fingerprint。
-- [ ] Targeted tests and `git diff --check` pass。
+- [x] Exact-prefix comparison is deterministic and side-effect free。
+- [x] Only config suffix is returned as new work。
+- [x] Existing experiments can never be silently reinterpreted。
+- [x] Parent Base drives every effective plan fingerprint。
+- [x] Targeted tests and `git diff --check` pass。

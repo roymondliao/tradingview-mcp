@@ -37,6 +37,8 @@ function rewriteFormalArtifactAsV2(path, { run = false } = {}) {
   delete artifact.artifact_schema_version;
   artifact.schema_version = 2;
   if (run) {
+    delete artifact.run_kind;
+    delete artifact.extension;
     delete artifact.requested.config_schema_version;
     artifact.requested.schema_version = 1;
   }
@@ -423,6 +425,29 @@ function formalDeps(preflight, calls, {
 }
 
 describe('Formal Strategy Run integration', () => {
+  it('adapts standalone Run preflight into the shared durable lifecycle', async () => {
+    const directory = temporaryDirectory();
+    const preflight = formalPreflight(directory, {
+      parameterSets: [{ name: 'baseline', inputs: {} }],
+    });
+    let received;
+    const result = await runStrategyAutomation({
+      config_path: '/tmp/run.json',
+      _deps: {
+        dryRunStrategyAutomation: async () => preflight,
+        now: () => 1000,
+        executePreparedDurableRun: async (options) => {
+          received = options;
+          return { success: true, run_id: options.spec.run.run_id };
+        },
+      },
+    });
+    assert.equal(result.success, true);
+    assert.equal(received.spec.run_kind, 'standalone');
+    assert.equal(received.spec.run.run_kind, 'standalone');
+    assert.equal(typeof received.spec.prepare_execution, 'function');
+  });
+
   it('creates canonical durable artifacts before mutation and succeeds across Experiments', async () => {
     const directory = temporaryDirectory();
     const preflight = formalPreflight(directory);
@@ -473,9 +498,9 @@ describe('Formal Strategy Run integration', () => {
         join(root, 'experiments', name, 'manifest.json'),
         'utf8',
       ));
-      assert.equal(experimentArtifact.artifact_schema_version, 3);
+      assert.equal(experimentArtifact.artifact_schema_version, 4);
       assert.equal('schema_version' in experimentArtifact, false);
-      assert.equal(manifestArtifact.artifact_schema_version, 3);
+      assert.equal(manifestArtifact.artifact_schema_version, 4);
       assert.equal('schema_version' in manifestArtifact, false);
       assert.equal('symbol' in experimentArtifact.target, false);
       assert.equal('resolution' in experimentArtifact.target, false);
@@ -483,7 +508,8 @@ describe('Formal Strategy Run integration', () => {
     const runArtifact = JSON.parse(readFileSync(join(root, 'run.json'), 'utf8'));
     const watchlistArtifact = JSON.parse(readFileSync(join(root, 'watchlist.json'), 'utf8'));
     assert.equal(runArtifact.status, 'succeeded');
-    assert.equal(runArtifact.artifact_schema_version, 3);
+    assert.equal(runArtifact.artifact_schema_version, 4);
+    assert.equal(runArtifact.run_kind, 'standalone');
     assert.equal(runArtifact.requested.config_schema_version, 1);
     assert.equal('schema_version' in runArtifact, false);
     assert.equal('schema_version' in runArtifact.requested, false);

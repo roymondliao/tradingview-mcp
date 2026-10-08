@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   STRATEGY_RUN_ARTIFACT_VERSION,
+  STRATEGY_RUN_PREVIOUS_ARTIFACT_VERSION,
   STRATEGY_RUN_LEGACY_ARTIFACT_VERSION,
   buildResumePlan,
   deriveManifestSummary,
@@ -19,6 +20,7 @@ import {
   validateRunArtifact,
   validateRunArtifactV2,
   validateRunArtifactV3,
+  validateRunArtifactV4,
 } from '../src/core/strategy-run-state.js';
 
 function hash(character) {
@@ -44,9 +46,12 @@ function plan(index, name, character) {
 }
 
 function versionFields(family) {
-  return family === 'v2'
-    ? { schema_version: STRATEGY_RUN_LEGACY_ARTIFACT_VERSION }
-    : { artifact_schema_version: STRATEGY_RUN_ARTIFACT_VERSION };
+  if (family === 'v2') return { schema_version: STRATEGY_RUN_LEGACY_ARTIFACT_VERSION };
+  return {
+    artifact_schema_version: family === 'v3'
+      ? STRATEGY_RUN_PREVIOUS_ARTIFACT_VERSION
+      : STRATEGY_RUN_ARTIFACT_VERSION,
+  };
 }
 
 function configVersionFields(family) {
@@ -60,6 +65,7 @@ function runArtifact({
 } = {}) {
   return {
     ...versionFields(family),
+    ...(family === 'v4' && { run_kind: 'standalone' }),
     run_id: 'run-1',
     status,
     requested: {
@@ -157,7 +163,11 @@ function watchlistArtifact() {
 }
 
 describe('Strategy Run artifact version validation', () => {
-  it('accepts explicit v3 and legacy v2 Run, Experiment, and Manifest shapes', () => {
+  it('accepts explicit v4/v3 and legacy v2 Run, Experiment, and Manifest shapes', () => {
+    const v4Run = validateRunArtifactV4(runArtifact({ family: 'v4' }));
+    assert.equal(v4Run.artifact_schema_version, 4);
+    assert.equal(v4Run.run_kind, 'standalone');
+
     const v3Run = validateRunArtifactV3(runArtifact());
     assert.equal(v3Run.artifact_schema_version, 3);
     assert.equal(v3Run.requested.config_schema_version, 1);
@@ -174,7 +184,7 @@ describe('Strategy Run artifact version validation', () => {
   it('rejects v1, future, dual-field, and cross-family artifacts', () => {
     const unsupported = [
       { ...runArtifact({ family: 'v2' }), schema_version: 1 },
-      { ...runArtifact(), artifact_schema_version: 4 },
+      { ...runArtifact(), artifact_schema_version: STRATEGY_RUN_ARTIFACT_VERSION + 1 },
     ];
     for (const value of unsupported) {
       assert.throws(

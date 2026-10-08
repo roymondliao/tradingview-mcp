@@ -4,9 +4,10 @@ import { CoreOperationError } from './errors.js';
 import { stableJsonStringify } from './stable-json.js';
 import { unixMillisecondsToIso } from './time.js';
 
-export const STRATEGY_RUN_ARTIFACT_VERSION = 3;
+export const STRATEGY_RUN_ARTIFACT_VERSION = 4;
+export const STRATEGY_RUN_PREVIOUS_ARTIFACT_VERSION = 3;
 export const STRATEGY_RUN_LEGACY_ARTIFACT_VERSION = 2;
-export const STRATEGY_RUN_ARTIFACT_FAMILIES = Object.freeze(['v2', 'v3']);
+export const STRATEGY_RUN_ARTIFACT_FAMILIES = Object.freeze(['v2', 'v3', 'v4']);
 export const STRATEGY_RUN_STATUSES = Object.freeze(['running', 'succeeded', 'failed']);
 export const STRATEGY_SYMBOL_STATUSES = Object.freeze([
   'running',
@@ -106,6 +107,25 @@ const PLANNED_EXPERIMENT_FIELDS = Object.freeze([
   'inputs_fingerprint',
   'effective_inputs',
 ]);
+const EXTENSION_FIELDS = Object.freeze([
+  'fingerprint_schema_version',
+  'parent_run_id',
+  'parent_artifact_schema_version',
+  'parent_run_fingerprint',
+  'lineage_fingerprint',
+  'lineage_depth',
+  'inherited_experiment_count',
+  'new_experiment_count',
+  'inherited_parameter_sets_fingerprint',
+  'requested_parameter_sets_fingerprint',
+  'new_parameter_sets',
+]);
+const EXTENSION_PARAMETER_SET_FIELDS = Object.freeze([
+  'name',
+  'config_index',
+  'lineage_index',
+  'run_index',
+]);
 const REQUESTED_FIELDS = Object.freeze([
   'run',
   'strategy',
@@ -167,7 +187,7 @@ function hasOwn(value, field) {
 
 function assertExpectedFamily(family, label = 'Artifact family') {
   if (family != null && !STRATEGY_RUN_ARTIFACT_FAMILIES.includes(family)) {
-    throw new TypeError(`${label} must be v2 or v3.`);
+    throw new TypeError(`${label} must be v2, v3, or v4.`);
   }
 }
 
@@ -194,26 +214,33 @@ export function strategyRunArtifactFamily(value, label = 'artifact') {
     }
     return 'v2';
   }
+  if (value.artifact_schema_version === STRATEGY_RUN_PREVIOUS_ARTIFACT_VERSION) return 'v3';
   if (value.artifact_schema_version !== STRATEGY_RUN_ARTIFACT_VERSION) {
     throw artifactError(
       `${label} artifact_schema_version ${String(value.artifact_schema_version)} is not resumable; expected ${STRATEGY_RUN_ARTIFACT_VERSION}.`,
       { code: 'RUN_RESUME_VERSION_UNSUPPORTED' },
     );
   }
-  return 'v3';
+  return 'v4';
 }
 
-export function strategyRunArtifactVersionFields(family = 'v3') {
+export function strategyRunArtifactVersionFields(family = 'v4') {
   assertExpectedFamily(family);
-  return family === 'v2'
-    ? Object.freeze({ schema_version: STRATEGY_RUN_LEGACY_ARTIFACT_VERSION })
-    : Object.freeze({ artifact_schema_version: STRATEGY_RUN_ARTIFACT_VERSION });
+  if (family === 'v2') {
+    return Object.freeze({ schema_version: STRATEGY_RUN_LEGACY_ARTIFACT_VERSION });
+  }
+  return Object.freeze({
+    artifact_schema_version: family === 'v3'
+      ? STRATEGY_RUN_PREVIOUS_ARTIFACT_VERSION
+      : STRATEGY_RUN_ARTIFACT_VERSION,
+  });
 }
 
-function artifactFields(fields, family) {
-  return family === 'v2'
+function artifactFields(fields, family, { run = false } = {}) {
+  const versioned = family === 'v2'
     ? ['schema_version', ...fields]
     : ['artifact_schema_version', ...fields];
+  return run && family === 'v4' ? [...versioned, 'run_kind', 'extension'] : versioned;
 }
 
 function assertArtifactFamily(value, label, expectedFamily) {
@@ -357,9 +384,89 @@ function plannedExperimentIdentity(plan, index) {
   };
 }
 
+function assertSha256Identity(value, label) {
+  assertNonEmptyString(value, label, 200);
+  if (!SHA256_ID_PATTERN.test(value)) {
+    throw artifactError(`${label} must be a sha256 identity.`);
+  }
+}
+
+function assertNonNegativeInteger(value, label, { positive = false } = {}) {
+  if (!Number.isInteger(value) || value < (positive ? 1 : 0)) {
+    throw artifactError(`${label} must be a ${positive ? 'positive' : 'non-negative'} integer.`);
+  }
+}
+
+function assertExtensionMetadata(value, run) {
+  assertAllowedFields(value, EXTENSION_FIELDS, 'run.json.extension');
+  if (value.fingerprint_schema_version !== 1) {
+    throw artifactError('run.json.extension.fingerprint_schema_version must be 1.');
+  }
+  assertRunId(value.parent_run_id, 'run.json.extension.parent_run_id');
+  if (value.parent_run_id === run.run_id) {
+    throw artifactError('run.json Extension Parent must differ from run_id.');
+  }
+  if (![2, 3, 4].includes(value.parent_artifact_schema_version)) {
+    throw artifactError('run.json.extension.parent_artifact_schema_version must be 2, 3, or 4.');
+  }
+  for (const field of [
+    'parent_run_fingerprint',
+    'lineage_fingerprint',
+    'inherited_parameter_sets_fingerprint',
+    'requested_parameter_sets_fingerprint',
+  ]) {
+    assertSha256Identity(value[field], `run.json.extension.${field}`);
+  }
+  assertNonNegativeInteger(value.lineage_depth, 'run.json.extension.lineage_depth', { positive: true });
+  assertNonNegativeInteger(
+    value.inherited_experiment_count,
+    'run.json.extension.inherited_experiment_count',
+    { positive: true },
+  );
+  assertNonNegativeInteger(
+    value.new_experiment_count,
+    'run.json.extension.new_experiment_count',
+    { positive: true },
+  );
+  if (!Array.isArray(value.new_parameter_sets)) {
+    throw artifactError('run.json.extension.new_parameter_sets must be an array.');
+  }
+  if (value.new_parameter_sets.length !== value.new_experiment_count) {
+    throw artifactError('run.json Extension new Parameter Set count is inconsistent.');
+  }
+  const requested = run.requested?.experiments?.parameter_sets;
+  if (!Array.isArray(requested) || requested.length !== value.new_experiment_count) {
+    throw artifactError('run.json Extension requested Parameter Sets must contain only the new suffix.');
+  }
+  if (
+    !Array.isArray(run.planned_experiments)
+    || run.planned_experiments.length !== value.new_experiment_count
+  ) {
+    throw artifactError('run.json Extension must persist every new Experiment plan before execution.');
+  }
+  value.new_parameter_sets.forEach((mapping, index) => {
+    const label = `run.json.extension.new_parameter_sets[${index}]`;
+    assertAllowedFields(mapping, EXTENSION_PARAMETER_SET_FIELDS, label);
+    assertParameterSetName(mapping.name, `${label}.name`);
+    for (const field of ['config_index', 'lineage_index', 'run_index']) {
+      assertNonNegativeInteger(mapping[field], `${label}.${field}`);
+    }
+    const lineageIndex = value.inherited_experiment_count + index;
+    if (
+      mapping.run_index !== index
+      || mapping.config_index !== lineageIndex
+      || mapping.lineage_index !== lineageIndex
+      || requested[index]?.name !== mapping.name
+      || run.planned_experiments[index]?.parameter_set?.name !== mapping.name
+    ) {
+      throw artifactError(`${label} does not match the child-local Run plan.`);
+    }
+  });
+}
+
 export function validateRunArtifact(value, { expected_family } = {}) {
   const family = assertArtifactFamily(value, 'run.json', expected_family);
-  assertAllowedFields(value, artifactFields(RUN_FIELDS, family), 'run.json');
+  assertAllowedFields(value, artifactFields(RUN_FIELDS, family, { run: true }), 'run.json');
   assertRunId(value.run_id);
   assertStatus(value.status, STRATEGY_RUN_STATUSES, 'run.json');
   assertRequestedConfigVersion(value.requested, family);
@@ -442,6 +549,18 @@ export function validateRunArtifact(value, { expected_family } = {}) {
       names.add(identity.name);
     });
   }
+  if (family === 'v4') {
+    if (!['standalone', 'extension'].includes(value.run_kind)) {
+      throw artifactError('run.json.run_kind must be standalone or extension for artifact v4.');
+    }
+    if (value.run_kind === 'standalone') {
+      if (value.extension != null) {
+        throw artifactError('A standalone v4 run.json must not contain extension metadata.');
+      }
+    } else {
+      assertExtensionMetadata(value.extension, value);
+    }
+  }
   if (!Array.isArray(value.experiments)) {
     throw artifactError('run.json.experiments must be an array.');
   }
@@ -459,6 +578,10 @@ export function validateRunArtifactV2(value) {
 
 export function validateRunArtifactV3(value) {
   return validateRunArtifact(value, { expected_family: 'v3' });
+}
+
+export function validateRunArtifactV4(value) {
+  return validateRunArtifact(value, { expected_family: 'v4' });
 }
 
 export function validateExperimentArtifact(value, { expected_family } = {}) {
@@ -484,6 +607,10 @@ export function validateExperimentArtifactV2(value) {
 
 export function validateExperimentArtifactV3(value) {
   return validateExperimentArtifact(value, { expected_family: 'v3' });
+}
+
+export function validateExperimentArtifactV4(value) {
+  return validateExperimentArtifact(value, { expected_family: 'v4' });
 }
 
 function validateManifestSymbol(symbol, manifest, position) {
@@ -646,6 +773,10 @@ export function validateExperimentManifestV2(value) {
 
 export function validateExperimentManifestV3(value) {
   return validateExperimentManifest(value, { expected_family: 'v3' });
+}
+
+export function validateExperimentManifestV4(value) {
+  return validateExperimentManifest(value, { expected_family: 'v4' });
 }
 
 function transitionTime(current, updatedAt, label) {
