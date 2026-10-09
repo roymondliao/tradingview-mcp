@@ -1,7 +1,7 @@
 ---
 id: TASK-004
 title: Regression, Live Acceptance and Delivery
-status: in_progress
+status: done
 phase: strategy-run-extension
 depends_on:
   - TASK-003
@@ -44,7 +44,7 @@ acceptance、operator documentation及release evidence。
 
 - [x] V2／v3／v4 compatibility matrix passes。
 - [x] Existing standalone Run／Resume behavior has no regression。
-- [ ] Live child contains only new Experiment artifacts。
-- [ ] Parent receives no filesystem writes and its bounded metadata／inventory snapshot is unchanged after all live scenarios。
+- [x] Live child contains only new Experiment artifacts。
+- [x] Parent receives no filesystem writes and its bounded metadata／inventory snapshot is unchanged after all live scenarios。
 - [x] Child Resume succeeds without Parent runtime dependency。
-- [x] Tasks、decisions、release notes and automated delivery evidence are complete；controlled live evidence remains pending。
+- [x] Tasks、decisions、release notes and delivery evidence are complete。

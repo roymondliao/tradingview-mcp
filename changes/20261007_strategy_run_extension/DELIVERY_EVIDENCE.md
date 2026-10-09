@@ -1,6 +1,6 @@
 # Strategy Run Extension — Delivery Evidence
 
-Status: automated gates passed; controlled TradingView Desktop live gate pending。
+Status: complete for release `1.4.0`。
 
 ## Implemented
 
@@ -20,8 +20,8 @@ Status: automated gates passed; controlled TradingView Desktop live gate pending
 | Node 24 `npm run test:unit` | 696 passed |
 | `npm run test:durable` | 130 passed |
 | `npm run lint` | 0 errors; 3 pre-existing warnings outside changed files |
-| `npm run release:check-version` | Version 1.3.1 synchronized |
-| `npm pack --dry-run --cache /private/tmp/tradingview-mcp-npm-cache` | Passed; 263 files |
+| `npm run release:check-version` | Version 1.4.0 synchronized |
+| `npm pack --dry-run --cache /private/tmp/tradingview-mcp-npm-cache` | Passed; 272 files |
 | `git diff --check` | Passed |
 
 Targeted evidence includes：
@@ -33,10 +33,43 @@ Targeted evidence includes：
 - V4 Extension child completes through `strategy resume` while its declared Parent directory is absent。
 - Standalone Run and Extension both pass one `DurableRunExecutionSpec` to the shared lifecycle service。
 
-## Pending controlled live gate
+## Controlled live evidence — 2026-10-08／09
 
-- Run one succeeded Parent with 3 Experiments on the dedicated TradingView test Pane。
-- Append at least 2 Parameter Sets and confirm Extension dry-run reports 3 inherited + 2 new。
-- Execute formal Extension and verify only 2 child Experiment directories。
-- Interrupt and Resume the child with Parent unavailable。
-- Record bounded Parent metadata／inventory snapshots and child artifact counts。
+The controlled TradingView Desktop flow used one 100-Symbol frozen Watchlist and the same Pine source/schema：
+
+```text
+Standalone A: obv-v3-20261007T031045Z-c79164b0
+  3 Experiments
+  └── Extension B: obv-v3-extension-20261008T143131Z-78e9f754
+        + extend-check, 100/100 succeeded
+        └── Extension C: obv-v3-extension-20261009T012334Z-4182723c
+              + extend-check-2, 100/100 succeeded
+              └── Extension D: obv-v3-extension-20261009T025102Z-edec730d
+                    + extend-resume-check
+```
+
+Verified：
+
+- B dry-run/formal reported 3 inherited + 1 new and created only `extend-check` artifacts。
+- C reported 4 inherited + 1 new、`lineage_depth: 2` and created only `extend-check-2` artifacts。
+- Both successful children contained 100 Symbol directories and 304 total files。
+- D received one SIGINT after 11 succeeded Symbols；CLI returned exit 130 and persisted
+  `RUN_INTERRUPTED` with 11 succeeded、1 failed and 88 pending。
+- Child-only Resume planning selected exactly 89 indices (`11..99`) and skipped successful indices `0..10`。
+- Direct Parent C was temporarily moved away before Resume；D completed to 100 succeeded with
+  `resumed: true` and no Parent／lineage read error。
+- The 11 pre-Resume succeeded entries retained identical attempt counts、timestamps and artifact paths。
+- Parent C `run.json` and `watchlist.json` checksums remained unchanged。
+- After Parent restore, bounded lineage validation succeeded for A→B→C→D at depth 3 with ordered sequence：
+
+```text
+baseline
+candidate-check
+rsi-check
+extend-check
+extend-check-2
+extend-resume-check
+```
+
+This covers chained append-only planning、new-only execution、immutable Parent、graceful interruption、
+self-contained Resume and post-restore lineage verification。

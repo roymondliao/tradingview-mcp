@@ -1,5 +1,7 @@
 # Strategy Run Extension — Release Notes
 
+Release: `1.4.0`
+
 ## Added
 
 - `tv strategy extend --run-directory <parent> --config <full-config> [--dry-run]`。

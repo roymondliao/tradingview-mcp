@@ -1,7 +1,7 @@
 ---
 id: FEATURE-20261007-STRATEGY-RUN-EXTENSION
 title: Strategy Run Extension
-status: implementation
+status: done
 created: 2026-10-07
 depends_on:
   - FEATURE-20260926-STRATEGY-DURABLE-EXPORT-RECOVERY
@@ -15,7 +15,7 @@ scope:
 
 # Strategy Run Extension
 
-Status: `implementation`
+Status: `done`
 
 ## Objective
 
@@ -346,19 +346,19 @@ Config自身syntax／Inputs validation仍沿用`RUN_CONFIG_*`、`PARAMETER_SET_*
 
 ## Acceptance criteria
 
-- [ ] Dry-run精確列出inherited與new Experiments且不建立artifacts。
-- [ ] Parent successful Run完全不變；filesystem write spy無Parent-targeted write，bounded metadata／inventory
+- [x] Dry-run精確列出inherited與new Experiments且不建立artifacts。
+- [x] Parent successful Run完全不變；filesystem write spy無Parent-targeted write，bounded metadata／inventory
       snapshot一致。
-- [ ] Child只包含new Experiments，沒有Parent Symbol artifacts。
-- [ ] Existing Config prefix任何mutation都在Desktop access前被拒絕。
-- [ ] New Inputs依Parent Base及current matching schema驗證。
-- [ ] V4 standalone／extension strict schemas及v2／v3 compatibility完整。
-- [ ] Extension child中斷後可用existing `strategy resume`完成。
-- [ ] Resume在Parent directory unavailable且Parent loader被設定為fail-fast時仍成功。
-- [ ] Chained Extension可沿lineage正確識別下一個new suffix。
-- [ ] Run／Extend formal paths共用同一durable execution lifecycle，沒有複製orchestration。
-- [ ] Fault tests證明initialization／manifest／finalization crash不破壞Parent。
-- [ ] Node 22／24 full unit、lint、pack dry-run及controlled live gate通過。
+- [x] Child只包含new Experiments，沒有Parent Symbol artifacts。
+- [x] Existing Config prefix任何mutation都在Desktop access前被拒絕。
+- [x] New Inputs依Parent Base及current matching schema驗證。
+- [x] V4 standalone／extension strict schemas及v2／v3 compatibility完整。
+- [x] Extension child中斷後可用existing `strategy resume`完成。
+- [x] Resume在Parent directory unavailable且Parent loader被設定為fail-fast時仍成功。
+- [x] Chained Extension可沿lineage正確識別下一個new suffix。
+- [x] Run／Extend formal paths共用同一durable execution lifecycle，沒有複製orchestration。
+- [x] Fault tests證明initialization／manifest／finalization crash不破壞Parent。
+- [x] Node 22／24 full unit、lint、pack dry-run及controlled live gate通過。
 
 ## Tasks
 
@@ -367,7 +367,7 @@ Config自身syntax／Inputs validation仍沿用`RUN_CONFIG_*`、`PARAMETER_SET_*
 | [TASK-001](./TASK-001-artifact-v4-lineage-contract.md) | Artifact v4 and Lineage Contract | `done` | Artifact v3 |
 | [TASK-002](./TASK-002-extension-config-planner.md) | Append-only Config Diff and Planning | `done` | TASK-001 |
 | [TASK-003](./TASK-003-extension-run-integration.md) | Extension CLI, Durable Execution and Resume | `done` | TASK-002 |
-| [TASK-004](./TASK-004-regression-live-delivery.md) | Regression, Live Acceptance and Delivery | `in_progress` | TASK-003 |
+| [TASK-004](./TASK-004-regression-live-delivery.md) | Regression, Live Acceptance and Delivery | `done` | TASK-003 |
 
 Detailed decisions見[`DECISIONS.md`](./DECISIONS.md)，module design見[`LLD.md`](./LLD.md)，automated
 validation evidence見[`DELIVERY_EVIDENCE.md`](./DELIVERY_EVIDENCE.md)。
