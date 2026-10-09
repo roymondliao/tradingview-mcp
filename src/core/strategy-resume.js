@@ -1009,6 +1009,14 @@ export async function durableStrategyRunResponse({
   signal,
 } = {}) {
   const interrupted = finalized.run.error?.code === 'RUN_INTERRUPTED';
+  const extensionFields = finalized.run.run_kind === 'extension'
+    ? Object.freeze({
+      run_kind: 'extension',
+      parent_run_id: finalized.run.extension.parent_run_id,
+      experiments_inherited: finalized.run.extension.inherited_experiment_count,
+      experiments_new: finalized.run.extension.new_experiment_count,
+    })
+    : Object.freeze({});
   const signalExitCode = Number.isInteger(signal?.reason?.exit_code)
     ? signal.reason.exit_code
     : null;
@@ -1018,6 +1026,7 @@ export async function durableStrategyRunResponse({
       success: false,
       ...(signalExitCode != null && { exit_code: signalExitCode }),
       run_id: finalized.run.run_id,
+      ...extensionFields,
       status: finalized.run.status,
       durable: true,
       resumed,
@@ -1041,6 +1050,7 @@ export async function durableStrategyRunResponse({
     success: finalized.run.status === 'succeeded',
     ...(cdpFailure && { failure_kind: 'cdp_connection' }),
     run_id: finalized.run.run_id,
+    ...extensionFields,
     status: finalized.run.status,
     durable: true,
     resumed,

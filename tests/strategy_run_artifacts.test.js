@@ -26,6 +26,7 @@ import {
 } from '../src/core/strategy-run-artifacts.js';
 import {
   STRATEGY_RUN_ARTIFACT_VERSION,
+  STRATEGY_RUN_PREVIOUS_ARTIFACT_VERSION,
   STRATEGY_RUN_LEGACY_ARTIFACT_VERSION,
   transitionSymbolState,
 } from '../src/core/strategy-run-state.js';
@@ -73,7 +74,9 @@ function runArtifact({
   return {
     ...(family === 'v2'
       ? { schema_version: STRATEGY_RUN_LEGACY_ARTIFACT_VERSION }
-      : { artifact_schema_version: STRATEGY_RUN_ARTIFACT_VERSION }),
+      : { artifact_schema_version: family === 'v3'
+        ? STRATEGY_RUN_PREVIOUS_ARTIFACT_VERSION
+        : STRATEGY_RUN_ARTIFACT_VERSION }),
     run_id: 'run-1',
     status: 'running',
     requested: {
@@ -143,7 +146,9 @@ function experimentArtifact(family = 'v3') {
   return {
     ...(family === 'v2'
       ? { schema_version: STRATEGY_RUN_LEGACY_ARTIFACT_VERSION }
-      : { artifact_schema_version: STRATEGY_RUN_ARTIFACT_VERSION }),
+      : { artifact_schema_version: family === 'v3'
+        ? STRATEGY_RUN_PREVIOUS_ARTIFACT_VERSION
+        : STRATEGY_RUN_ARTIFACT_VERSION }),
     run_id: 'run-1',
     experiment_id: planned.experiment_id,
     parameter_set: planned.parameter_set,
@@ -162,7 +167,9 @@ function manifestArtifact(family = 'v3') {
   return {
     ...(family === 'v2'
       ? { schema_version: STRATEGY_RUN_LEGACY_ARTIFACT_VERSION }
-      : { artifact_schema_version: STRATEGY_RUN_ARTIFACT_VERSION }),
+      : { artifact_schema_version: family === 'v3'
+        ? STRATEGY_RUN_PREVIOUS_ARTIFACT_VERSION
+        : STRATEGY_RUN_ARTIFACT_VERSION }),
     run_id: 'run-1',
     experiment_id: planned.experiment_id,
     parameter_set_name: 'baseline',

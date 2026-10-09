@@ -169,6 +169,11 @@ tv strategy trading-data <entity-id> --symbol TWSE:2344 --format csv --output tr
 tv strategy trading-export <entity-id> --symbol TWSE:2344 --output ./exports --format json
 tv strategy trading-export <entity-id> --watchlist active --output ./exports --format json
 tv strategy trading-export <entity-id> --watchlist active --output ./exports --fail-fast
+tv strategy run --config ./run.json --dry-run
+tv strategy run --config ./run.json
+tv strategy extend --run-directory ./output/<parent-run-id> --config ./run.json --dry-run
+tv strategy extend --run-directory ./output/<parent-run-id> --config ./run.json
+tv strategy resume --run-directory ./output/<run-id>
 tv screenshot -r chart             # capture chart
 tv pine compile                    # compile Pine Script
 tv pane layout 2x2                 # 4-chart grid

@@ -3,6 +3,10 @@ import * as core from '../../core/strategy.js';
 import * as trading from '../../core/strategy-trading.js';
 import { resolveTradingDataFormat } from '../../core/strategy-trading-format.js';
 import { dryRunStrategyAutomation, runStrategyAutomation } from '../../core/strategy-run.js';
+import {
+  dryRunStrategyExtension,
+  extendStrategyAutomation,
+} from '../../core/strategy-extend.js';
 import { resumeStrategyAutomation } from '../../core/strategy-resume.js';
 import { prepareContext } from '../../core/pane.js';
 import { CoreOperationError } from '../../core/errors.js';
@@ -77,7 +81,7 @@ function requireTradingDataPagination(offset, limit, snapshotId) {
 const SIGNAL_EXIT_CODES = Object.freeze({ SIGINT: 130, SIGTERM: 143 });
 export const STRATEGY_SIGNAL_COALESCE_WINDOW_MS = 250;
 
-/** Install graceful handlers only for one formal Run/Resume invocation. */
+/** Install graceful handlers only for one formal Run/Extend/Resume invocation. */
 export async function withStrategyAutomationSignals(operation, {
   process_facade = process,
   AbortControllerClass = AbortController,
@@ -175,6 +179,48 @@ register('strategy', {
           on_progress: onProgress,
           on_status: onStatus,
         }));
+      },
+    }],
+    ['extend', {
+      description: 'Append new Experiments to a succeeded Strategy Run as a child Run',
+      options: {
+        'run-directory': { type: 'string', description: 'Required succeeded Parent Run Directory' },
+        config: { type: 'string', description: 'Required full append-only Run Config JSON file' },
+        'dry-run': { type: 'boolean', description: 'Validate Parent, Config, and runtime without writes' },
+      },
+      handler: async (opts) => {
+        if (!opts['run-directory']) {
+          throw new CoreOperationError('--run-directory is required for strategy extend.', {
+            code: 'RUN_EXTENSION_PARENT_NOT_FOUND', phase: 'request_validation', retryable: false,
+          });
+        }
+        if (!opts.config) {
+          throw new CoreOperationError('--config is required for strategy extend.', {
+            code: 'RUN_CONFIG_REQUIRED', phase: 'request_validation', retryable: false,
+          });
+        }
+        const allowed = new Set(['run-directory', 'config', 'dry-run']);
+        const unknown = Object.keys(opts).filter((key) => !allowed.has(key));
+        if (unknown.length) {
+          throw new CoreOperationError(`Unsupported strategy extend option: --${unknown[0]}.`, {
+            code: 'RUN_EXTENSION_CONFIG_MISMATCH', phase: 'request_validation', retryable: false,
+          });
+        }
+        if (opts['dry-run']) {
+          return dryRunStrategyExtension({
+            run_directory: opts['run-directory'],
+            config_path: opts.config,
+          });
+        }
+        return withStrategyAutomationSignals((signal, onProgress, onStatus) => (
+          extendStrategyAutomation({
+            run_directory: opts['run-directory'],
+            config_path: opts.config,
+            signal,
+            on_progress: onProgress,
+            on_status: onStatus,
+          })
+        ));
       },
     }],
     ['active', {
@@ -291,7 +337,8 @@ register('strategy', {
       },
     }],
     ['select', {
-      description: 'Deprecated compatibility: select a Strategy Instance and wait for its report',
+      deprecated: true,
+      description: 'Select a Strategy Instance and wait for its report',
       options: {
         ...PANE_CONTEXT_OPTIONS,
         timeout: { type: 'string', description: 'Readback timeout in milliseconds (default 20000)' },
@@ -302,7 +349,8 @@ register('strategy', {
       })),
     }],
     ['report', {
-      description: 'Deprecated compatibility: get legacy Strategy performance metrics',
+      deprecated: true,
+      description: 'Get legacy Strategy performance metrics',
       options: PANE_CONTEXT_OPTIONS,
       handler: (opts, positionals) => withPaneContext(opts, () => core.getStrategyReport({ entity_id: positionals[0] })),
     }],
@@ -314,7 +362,8 @@ register('strategy', {
       })),
     }],
     ['trades', {
-      description: 'Deprecated compatibility: get a tail of paired Strategy trades',
+      deprecated: true,
+      description: 'Get a tail of paired Strategy trades',
       options: { ...PANE_CONTEXT_OPTIONS, limit: { type: 'string', short: 'n', description: 'Most recent trades (default 200, max 5000)' } },
       handler: (opts, positionals) => withPaneContext(opts, () => core.getStrategyTrades({
         entity_id: positionals[0], limit: opts.limit ? Number(opts.limit) : undefined,

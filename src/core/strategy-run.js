@@ -12,7 +12,6 @@ import {
   captureNamedWatchlistSnapshot,
   pendingWatchlistSymbolValidation,
   summarizeNamedWatchlistSnapshot,
-  validateNamedWatchlistSymbols,
 } from './watchlist.js';
 import {
   compareInputSchemas,
@@ -21,22 +20,14 @@ import {
 } from './strategy-parameter-sets.js';
 import { planStrategySync } from './strategy-sync.js';
 import { executeStrategySync } from './strategy-sync.js';
-import { withChartSession } from './chart-session.js';
-import { CoreOperationError } from './errors.js';
 import { unixMillisecondsToIso } from './time.js';
 import { reconnectTo } from '../connection.js';
 import { assertPaneContext } from './pane.js';
-import { createDurableRunStore } from './strategy-run-artifacts.js';
-import { acquireStrategyRunPaneLeases } from './strategy-run-lease.js';
 import {
   strategyRunArtifactVersionFields,
   transitionRunState,
 } from './strategy-run-state.js';
-import {
-  durableStrategyRunResponse,
-  executeDurableStrategyPlan,
-  finalizeDurableStrategyRun,
-} from './strategy-resume.js';
+import { executePreparedDurableRun } from './strategy-durable-run-lifecycle.js';
 import { durableStrategyTargetContext } from './strategy-durable-experiment.js';
 import { emitStrategyAutomationStatus } from './strategy-progress.js';
 
@@ -338,7 +329,8 @@ function initialRunArtifact({ internal, context, startedAt }) {
   };
   const watchlist = internal.watchlist;
   return {
-    ...strategyRunArtifactVersionFields('v3'),
+    ...strategyRunArtifactVersionFields('v4'),
+    run_kind: 'standalone',
     run_id: requested.run.run_id,
     status: 'running',
     requested: persistedRequested,
@@ -367,20 +359,6 @@ function initialRunArtifact({ internal, context, startedAt }) {
   };
 }
 
-function interruptedError(signal) {
-  const reason = signal?.reason;
-  const error = new CoreOperationError(
-    `Strategy Run was interrupted${reason ? `: ${reason.message || String(reason)}` : '.'}`,
-    { code: 'RUN_INTERRUPTED', phase: 'signal', cause: reason instanceof Error ? reason : undefined },
-  );
-  if (Number.isInteger(reason?.exit_code)) error.exit_code = reason.exit_code;
-  return error;
-}
-
-function assertNotAborted(signal) {
-  if (signal?.aborted) throw interruptedError(signal);
-}
-
 /** Execute one complete durable Strategy automation Run in its canonical directory. */
 export async function runStrategyAutomation({
   config_path,
@@ -403,8 +381,6 @@ export async function runStrategyAutomation({
       phase: 'preflight',
     });
   }
-
-  await emitStrategyAutomationStatus(on_status, 'acquiring_ownership');
   const internal = preflight._internal;
   const requested = internal.loaded.requested;
   const runContext = durableStrategyTargetContext(internal.target);
@@ -414,187 +390,82 @@ export async function runStrategyAutomation({
       timeframe: requested.backtest.timeframe,
     }),
   });
-  assertNotAborted(signal);
-  const acquireLeases = _deps.acquireLeases || acquireStrategyRunPaneLeases;
-  const leases = await acquireLeases({
-    run_directory: requested.output.run_path,
-    pane: runContext,
-    run_id: requested.run.run_id,
-    _deps: _deps.leases,
-  });
   const now = _deps.now || Date.now;
   const startedAt = now();
-  let store = null;
-  let initialized = false;
-  let run = null;
-  let primaryError = null;
-  let strategyIdentity = null;
-  try {
-    assertNotAborted(signal);
-    await emitStrategyAutomationStatus(on_status, 'initializing_run');
-    const recheckPane = _deps.assertPaneContext || assertPaneContext;
-    await recheckPane({
-      context: runContext,
-      symbol: null,
-      timeframe: null,
-      phase: 'strategy_run_precreate',
-      _deps: _deps.pane,
-    });
-    const createStore = _deps.createDurableRunStore || createDurableRunStore;
-    store = await createStore({
+  const initialRun = initialRunArtifact({ internal, context: runContext, startedAt });
+  const executeLifecycle = _deps.executePreparedDurableRun || executePreparedDurableRun;
+  return executeLifecycle({
+    spec: Object.freeze({
+      run_kind: 'standalone',
+      run: initialRun,
       output_directory: requested.output.directory_path,
-      run_id: requested.run.run_id,
-      _deps: _deps.artifacts,
-    });
-    run = initialRunArtifact({ internal, context: runContext, startedAt });
-    await store.writeInitialWatchlist(runWatchlist);
-    await store.replaceRun(run);
-    initialized = true;
-
-    const runWithSession = _deps.withChartSession || withChartSession;
-    await runWithSession({
+      frozen_watchlist: runWatchlist,
       context: runContext,
-      capture_chart_state: false,
-      _deps: _deps.session,
-    }, async () => {
-      const alreadyLockedSession = async (_options, operation) => operation();
-      assertNotAborted(signal);
-      await emitStrategyAutomationStatus(on_status, 'validating_watchlist');
-      const validateWatchlist = _deps.validateNamedWatchlistSymbols
-        || validateNamedWatchlistSymbols;
-      const symbolValidation = await validateWatchlist({
-        snapshot: runWatchlist,
-        context: runContext,
-        timeframe: requested.backtest.timeframe,
-        restore_chart: false,
-        signal,
-        _deps: _deps.watchlist_validation,
-      });
-      const validatedWatchlist = Object.freeze({
-        ...runWatchlist,
-        symbol_validation: symbolValidation,
-      });
-      await store.replaceWatchlist(validatedWatchlist);
-      if (!symbolValidation.success) {
-        throw new CoreOperationError(
-          `Watchlist Symbol validation failed for ${symbolValidation.failed} of ${symbolValidation.requested} Symbols.`,
-          {
-            code: 'WATCHLIST_SYMBOL_VALIDATION_FAILED',
-            phase: 'watchlist_symbol_validation',
-            context: runContext,
-          },
-        );
-      }
-      assertNotAborted(signal);
-      await emitStrategyAutomationStatus(on_status, 'synchronizing_strategy');
-      const runSync = _deps.executeStrategySync || executeStrategySync;
-      const sync = await runSync({
-        saved_name: requested.strategy.saved_name,
-        source: internal.loaded.pine_source,
-        source_sha256: requested.strategy.source_sha256,
-        candidate_schema: internal.candidate.input_schema,
-        current_schema: internal.current_schema,
-        context: runContext,
-        expected_plan: preflight.strategy_sync,
-        timeout_ms: _deps.timeout_ms,
-        _deps: { ..._deps.sync, withChartSession: alreadyLockedSession },
-      });
-      strategyIdentity = Object.freeze({
-        script_id: sync.account.script_id,
-        version: String(sync.account.version),
-        source_sha256: sync.source_sha256,
-        entity_id: sync.pane.entity_id,
-      });
-      run = transitionRunState(run, {
-        status: 'running',
-        updated_at: Math.max(run.updated_at, now()),
-        patch: {
-          resolved: { ...run.resolved, strategy: strategyIdentity },
-        },
-      });
-      await store.replaceRun(run);
-
-      await emitStrategyAutomationStatus(on_status, 'preparing_experiments');
-      const prepare = _deps.prepareParameterSetExecution || prepareParameterSetExecution;
-      const prepared = await prepare({
-        candidate_schema: internal.candidate.input_schema,
-        parameter_sets: requested.experiments.parameter_sets,
-        identity: strategyIdentity,
-        context: runContext,
-        _deps: _deps.parameter_sets,
-      });
-      run = transitionRunState(run, {
-        status: 'running',
-        updated_at: Math.max(run.updated_at, now()),
-        patch: {
-          base_inputs: prepared.base_inputs,
-          base_inputs_fingerprint: prepared.base_inputs_fingerprint,
-          planned_experiments: prepared.planned_experiments,
-        },
-      });
-      await store.replaceRun(run);
-      assertNotAborted(signal);
-      await emitStrategyAutomationStatus(on_status, 'executing_experiments');
-      await executeDurableStrategyPlan({
-        store,
-        run,
-        watchlist: validatedWatchlist,
-        prepared,
-        identity: strategyIdentity,
-        context: runContext,
-        on_progress,
-        signal,
-        timeout_ms: _deps.timeout_ms,
-        _deps: { now, ..._deps.execution, parameter_sets: {
-          ..._deps.execution?.parameter_sets,
-          withChartSession: alreadyLockedSession,
-        } },
-      });
-    });
-    assertNotAborted(signal);
-  } catch (error) {
-    primaryError = error instanceof CoreOperationError ? error : new CoreOperationError(
-      `Strategy Run failed: ${error?.message || String(error)}`,
-      {
-        code: error?.code || 'STRATEGY_RUN_FAILED',
-        phase: error?.phase || 'strategy_run_execution',
-        retryable: error?.retryable === true,
-        context: runContext,
-        cause: error,
+      prepare_creation: async () => {
+        const recheckPane = _deps.assertPaneContext || assertPaneContext;
+        await recheckPane({
+          context: runContext,
+          symbol: null,
+          timeframe: null,
+          phase: 'strategy_run_precreate',
+          _deps: _deps.pane,
+        });
       },
-    );
-  }
-  let response = null;
-  let completionError = null;
-  try {
-    if (!initialized) {
-      if (primaryError) throw primaryError;
-      throw new CoreOperationError('Strategy Run did not initialize durable output.', {
-        code: 'STRATEGY_RUN_FAILED', phase: 'strategy_run_initialization',
-      });
-    }
-    await emitStrategyAutomationStatus(on_status, 'finalizing_run');
-    const finalized = await finalizeDurableStrategyRun({
-      store,
-      error: primaryError,
-      _deps: { now, ..._deps.finalize },
-    });
-    response = await durableStrategyRunResponse({
-      finalized,
-      store,
-      context: runContext,
-      strategy: strategyIdentity,
-      resumed: false,
-      signal,
-    });
-  } catch (error) {
-    completionError = error;
-  }
-  try {
-    await leases.release();
-  } catch (error) {
-    if (!completionError) completionError = error;
-  }
-  if (completionError) throw completionError;
-  return response;
+      prepare_execution: async ({
+        run,
+        store,
+        already_locked_session: alreadyLockedSession,
+      }) => {
+        await emitStrategyAutomationStatus(on_status, 'synchronizing_strategy');
+        const runSync = _deps.executeStrategySync || executeStrategySync;
+        const sync = await runSync({
+          saved_name: requested.strategy.saved_name,
+          source: internal.loaded.pine_source,
+          source_sha256: requested.strategy.source_sha256,
+          candidate_schema: internal.candidate.input_schema,
+          current_schema: internal.current_schema,
+          context: runContext,
+          expected_plan: preflight.strategy_sync,
+          timeout_ms: _deps.timeout_ms,
+          _deps: { ..._deps.sync, withChartSession: alreadyLockedSession },
+        });
+        const strategyIdentity = Object.freeze({
+          script_id: sync.account.script_id,
+          version: String(sync.account.version),
+          source_sha256: sync.source_sha256,
+          entity_id: sync.pane.entity_id,
+        });
+        let preparedRun = transitionRunState(run, {
+          status: 'running',
+          updated_at: Math.max(run.updated_at, now()),
+          patch: { resolved: { ...run.resolved, strategy: strategyIdentity } },
+        });
+        await store.replaceRun(preparedRun);
+        await emitStrategyAutomationStatus(on_status, 'preparing_experiments');
+        const prepare = _deps.prepareParameterSetExecution || prepareParameterSetExecution;
+        const prepared = await prepare({
+          candidate_schema: internal.candidate.input_schema,
+          parameter_sets: requested.experiments.parameter_sets,
+          identity: strategyIdentity,
+          context: runContext,
+          _deps: _deps.parameter_sets,
+        });
+        preparedRun = transitionRunState(preparedRun, {
+          status: 'running',
+          updated_at: Math.max(preparedRun.updated_at, now()),
+          patch: {
+            base_inputs: prepared.base_inputs,
+            base_inputs_fingerprint: prepared.base_inputs_fingerprint,
+            planned_experiments: prepared.planned_experiments,
+          },
+        });
+        await store.replaceRun(preparedRun);
+        return Object.freeze({ run: preparedRun, prepared, strategy: strategyIdentity });
+      },
+    }),
+    signal,
+    on_progress,
+    on_status,
+    _deps,
+  });
 }

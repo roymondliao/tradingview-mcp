@@ -11,7 +11,11 @@ import { execFileSync } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { readFileSync, writeFileSync, unlinkSync } from 'fs';
-import { resultExitCode } from '../src/cli/router.js';
+import {
+  formatHelpDescription,
+  helpColorEnabled,
+  resultExitCode,
+} from '../src/cli/router.js';
 import {
   STRATEGY_SIGNAL_COALESCE_WINDOW_MS,
   withStrategyAutomationSignals,
@@ -228,7 +232,29 @@ describe('CLI — help and routing', () => {
     assert.ok(stdout.includes('equity'));
     assert.ok(stdout.includes('run'));
     assert.ok(stdout.includes('resume'));
+    assert.ok(stdout.includes('extend'));
+    assert.match(stdout, /select\s+\[deprecated\] Select a Strategy Instance/);
+    assert.match(stdout, /report\s+\[deprecated\] Get legacy Strategy/);
+    assert.match(stdout, /trades\s+\[deprecated\] Get a tail/);
+    assert.doesNotMatch(stdout, /\u001b\[/);
     assert.doesNotMatch(stdout, /trading-(?:report|data|export)(?:Get|Export)/);
+  });
+
+  it('formats deprecated help badges only with TTY color and honors NO_COLOR', () => {
+    const config = { deprecated: true, description: 'Legacy command' };
+    assert.equal(formatHelpDescription(config, { color: false }), '[deprecated] Legacy command');
+    assert.equal(
+      formatHelpDescription(config, { color: true }),
+      '\u001b[2;33m[deprecated]\u001b[0m Legacy command',
+    );
+    assert.equal(helpColorEnabled({ stream: { isTTY: true }, env: {} }), true);
+    assert.equal(helpColorEnabled({ stream: { isTTY: false }, env: {} }), false);
+    assert.equal(helpColorEnabled({ stream: { isTTY: true }, env: { NO_COLOR: '' } }), false);
+
+    const individual = run(['strategy', 'select', '--help']);
+    assert.equal(individual.exitCode, 0);
+    assert.match(individual.stdout, /^Usage:[\s\S]*\[deprecated\] Select a Strategy Instance/m);
+    assert.doesNotMatch(individual.stdout, /\u001b\[/);
   });
 
   it('strategy run exposes dry-run and formal Run Config execution', () => {
@@ -264,6 +290,22 @@ describe('CLI — help and routing', () => {
     ]);
     assert.equal(unsupported.exitCode, 1);
     assert.equal(JSON.parse(unsupported.stderr).phase, 'request_validation');
+  });
+
+  it('strategy extend requires Parent, Config, and exposes dry-run', () => {
+    const help = run(['strategy', 'extend', '--help']);
+    assert.equal(help.exitCode, 0);
+    assert.ok(help.stdout.includes('--run-directory'));
+    assert.ok(help.stdout.includes('--config'));
+    assert.ok(help.stdout.includes('--dry-run'));
+
+    const missingParent = run(['strategy', 'extend', '--config', './run.json']);
+    assert.equal(missingParent.exitCode, 1);
+    assert.equal(JSON.parse(missingParent.stderr).code, 'RUN_EXTENSION_PARENT_NOT_FOUND');
+
+    const missingConfig = run(['strategy', 'extend', '--run-directory', './parent']);
+    assert.equal(missingConfig.exitCode, 1);
+    assert.equal(JSON.parse(missingConfig.stderr).code, 'RUN_CONFIG_REQUIRED');
   });
 
   it('strategy trading-data help exposes Offset/Limit/Snapshot pagination', () => {
