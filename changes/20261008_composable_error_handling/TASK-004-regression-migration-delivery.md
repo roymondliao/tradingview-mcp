@@ -12,8 +12,8 @@ scope: repository-migration-delivery
 
 ## Goal
 
-盤點並遷移其餘module-local error helpers，完成compatibility matrix、documentation、fault injection及release
-evidence，確保新composition foundation不是只有Strategy特例。
+盤點其餘module-local error helpers，完成本Feature vertical slice的migration、compatibility matrix、documentation、
+fault injection及release evidence，並將已review但延後的module列入bounded follow-up inventory。
 
 ## Expected ownership
 
@@ -25,12 +25,14 @@ evidence，確保新composition foundation不是只有Strategy特例。
 ## Requirements
 
 - Generate reviewed inventory of local error constructors、wrappers、message heuristics and result diagnostics。
-- Classify each as keep-local mapper、shared mapper、source normalizer or presentation projection。
+- Classify each as source boundary、domain boundary、keep-local mapper、shared mapper or presentation projection。
 - Migrate by bounded module groups；每批都有tests，不執行blind mechanical rewrite。
-- Remove permanent message-regex CDP detection after inventory reaches zero。
-- Document additive runtime `kind` and unchanged artifact schemas。
-- Add fault matrix for nested CDP／filesystem／interrupt/domain causes。
+- Remove message-regex CDP detection after normalized diagnostics cover all production presentation entrypoints。
+- Document field ownership、additive runtime `kind` and unchanged artifact schemas。
+- Record exact legacy／persisted code-to-kind maps；不得使用prefix／substring inference。
+- Add fault matrix for process signal、owned timeout、caller/cascade abort、CDP、artifact、filesystem and domain causes。
 - Confirm no sensitive cause/stack/runtime object reaches CLI／MCP output。
+- Track reviewed deferred modules explicitly；本Task不要求在同一PR進行unbounded repository rewrite。
 
 ## Validation
 
@@ -46,6 +48,8 @@ evidence，確保新composition foundation不是只有Strategy特例。
 ## Acceptance criteria
 
 - [ ] Error inventory has no unreviewed module-local classifier。
+- [ ] Strategy／CDP／presentation vertical slice has no missing-kind normalized output。
+- [ ] Deferred modules are reviewed, classified and assigned bounded follow-up scope。
 - [ ] No production presentation layer classifies by message regex。
 - [ ] CLI／MCP parity and exit-code matrix pass。
 - [ ] Existing documented error codes have compatibility evidence。

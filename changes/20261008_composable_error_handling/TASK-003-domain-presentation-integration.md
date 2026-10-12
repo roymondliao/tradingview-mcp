@@ -30,13 +30,17 @@ scope: strategy-cli-mcp-integration
 ## Requirements
 
 - Define Run、Resume and Extension boundary policies from shared mappers。
-- Promote interrupt／CDP／filesystem causes before identity translation。
+- Attach owned workflow phase while preserving source code／kind／stage／message。
+- Preserve typed abort reason；promote only normalized CDP／generic filesystem causes before identity translation。
 - Translate Resume identity to Extension identity only for true semantic identity errors。
+- Use `CORE_UNCLASSIFIED_ERROR / internal` for unknown errors；never use an identity fallback code。
 - Replace duplicate `diagnostic()` implementations with boundary diagnostics。
-- Replace CLI message regex with kind-based exit code。
+- Replace CLI message regex with fixed `0/1/2/130/143` kind/signal exit policy。
+- For aggregated results, explicit 130／143 wins；otherwise any reportable `kind: cdp` yields 2，other failures yield 1。
 - Make MCP `coreErrorPayload()` consume `toCoreDiagnostic()`。
 - Preserve bounded errors arrays and result response compatibility。
 - Keep persisted artifact errors exact `{code, phase, message}`。
+- Rehydrate persisted runtime kind with a Strategy-owned exact code map；unknown codes remain intact and use runtime internal kind。
 
 ## Required scenarios
 
@@ -46,20 +50,26 @@ scope: strategy-cli-mcp-integration
 | Layout `dev` not open | `TARGET_LAYOUT_NOT_OPEN`, `kind: validation`, exit 1 |
 | Layout resolves but saved identity differs | `RUN_EXTENSION_IDENTITY_MISMATCH`, `kind: identity`, exit 1 |
 | Parent artifact missing | Existing lineage/artifact code, artifact kind |
-| SIGINT/SIGTERM | `RUN_INTERRUPTED`, interrupt kind, exit 130/143 |
+| SIGINT/SIGTERM | `RUN_INTERRUPTED`, interrupt kind, owning phase + `process_signal` stage, exit 130/143 |
+| CDP-owned AbortError timeout | `CDP_TIMEOUT`, cdp kind, exit 2 |
+| Unknown error during Extension identity | `CORE_UNCLASSIFIED_ERROR`, internal kind, bounded root-cause message, exit 1 |
 
 ## Tests
 
 - Dry-run/formal same-cause contract parity。
 - CLI/MCP exact field parity。
 - Nested cause promotion through Resume→Extension wrappers。
+- Phase／stage coexistence and no historical `phase: signal` write on new interrupt errors。
+- Aggregated exit behavior does not depend on first-error ordering。
 - No stack/cause leak。
 - Existing Strategy error codes and bounded responses non-regression。
-- V2／v3／v4 persisted error shape remains readable／write-compatible。
+- V2／v3／v4 persisted error shape remains readable／write-compatible，including historical `phase: signal`。
+- Exact persisted code-to-kind rehydration and unknown persisted code behavior。
 
 ## Acceptance criteria
 
 - [ ] Motivating Extend dry-run misclassification is fixed。
 - [ ] Presentation layers perform no domain classification。
 - [ ] CLI exit code no longer depends on error message text。
+- [ ] CLI and MCP receive only normalized diagnostics with known kind。
 - [ ] Strategy targeted and durable suites pass。
