@@ -1,6 +1,6 @@
 # Composable Error Handling — Delivery Evidence
 
-Status: automated gates passed；live Desktop checks pending
+Status: complete for release `1.4.1`。
 
 Date: 2026-10-12
 
@@ -20,12 +20,12 @@ Date: 2026-10-12
 
 | Gate | Result |
 | --- | --- |
-| Node 22 unit suite | 719 passed，0 failed |
-| Node 24 unit suite | 719 passed，0 failed |
-| Durable suite | 132 passed，0 failed |
+| Node 22 unit suite | 720 passed，0 failed |
+| Node 24 unit suite | 720 passed，0 failed |
+| Durable suite | 133 passed，0 failed |
 | ESLint | 0 errors；3 pre-existing unused-variable warnings |
 | Package dry-run | Passed with isolated npm cache；276 files |
-| Version synchronization | 1.4.0 synchronized |
+| Version synchronization | 1.4.1 synchronized |
 | Diff whitespace validation | Passed |
 | Markdown links／fences | Passed for feature documents |
 
@@ -41,9 +41,11 @@ Date: 2026-10-12
 - Persisted error records remain exact { code, phase, message } and recover runtime kind by exact map。
 - CLI aggregation returns 2 when one reportable diagnostic has kind cdp。
 
-## Pending live checks
+## Live manual validation
 
-1. Desktop unavailable：run Strategy Extension dry-run against a valid Parent／Config and confirm CDP diagnostic plus exit 2。
-2. Desktop available：run the same dry-run and confirm a valid Extension plan or only true resource／identity diagnostics。
-3. SIGINT during a formal Run／Extend and Resume：confirm owning phase、process_signal semantics、durable error and exit 130。
-4. MCP parity for one live CDP failure：confirm the same code／kind／phase／stage／retryable fields as CLI。
+- Strategy Run SIGINT returned exit 130、`interrupt` kind and `strategy_run_execution` phase。
+- Strategy Resume SIGINT preserved the Run ID、durable progress and `strategy_resume_execution` phase。
+- A subsequent Resume completed all 7 Experiments and 700 Symbols without replaying completed work。
+- Strategy Extension SIGINT during Watchlist validation created an immutable Child with one new Experiment、exit 130 and `strategy_extension_execution` phase。
+- Failed durable artifacts retained the strict `{ code, phase, message }` error schema while runtime output restored `kind` and retry policy。
+- User-confirmed live manual validation is complete for the release candidate。

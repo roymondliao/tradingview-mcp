@@ -1,7 +1,7 @@
 ---
 id: FEATURE-20261008-COMPOSABLE-ERROR-HANDLING
 title: Composable Error Handling
-status: testing
+status: complete
 created: 2026-10-08
 depends_on:
   - FEATURE-20261007-STRATEGY-RUN-EXTENSION
@@ -14,7 +14,7 @@ scope:
 
 # Composable Error Handling
 
-Status: `testing`
+Status: `complete`
 
 ## Objective
 

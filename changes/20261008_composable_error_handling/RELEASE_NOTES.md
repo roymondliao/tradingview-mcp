@@ -1,5 +1,7 @@
 # Composable Error Handling — Release Notes
 
+Release: `1.4.1`
+
 ## Highlights
 
 - Adds composable Source、Domain and Presentation error boundaries。

@@ -1,7 +1,7 @@
 ---
 id: TASK-004
 title: Regression, Migration and Delivery
-status: testing
+status: complete
 phase: composable-error-handling
 depends_on:
   - TASK-003
@@ -56,4 +56,4 @@ Reviewed inventory is maintained in [`ERROR_INVENTORY.md`](./ERROR_INVENTORY.md)
 - [x] CLI／MCP parity and exit-code matrix pass。
 - [x] Existing documented error codes have compatibility evidence。
 - [x] Artifact v2／v3／v4 regression passes without schema migration。
-- [ ] Live Desktop manual evidence is complete。
+- [x] Live Desktop manual evidence is complete。
