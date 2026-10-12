@@ -504,7 +504,11 @@ export async function getStudyInputs({ entity_id, _deps } = {}) {
 
 function studyInputError(code, message, entityId) {
   return new CoreOperationError(message, {
-    code, phase: 'study_input_validation', entity_id: entityId, retryable: false,
+    code,
+    kind: 'validation',
+    phase: 'study_input_validation',
+    entity_id: entityId,
+    retryable: false,
   });
 }
 

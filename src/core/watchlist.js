@@ -12,7 +12,7 @@ import {
   getClient as _getClient,
 } from '../connection.js';
 import { openPanel as _openPanel } from './ui.js';
-import { CoreOperationError } from './errors.js';
+import { CoreOperationError, isNormalizedCoreError } from './errors.js';
 import { unixMillisecondsToIso } from './time.js';
 import { sha256Hex, stableJsonStringify } from './stable-json.js';
 import { writeJsonArtifact } from './artifacts.js';
@@ -28,10 +28,17 @@ const WATCHLIST_SYMBOL_RESTORE_TIMEOUT_MS = 8000;
 
 function interruptedValidation(signal) {
   if (!signal?.aborted) return;
-  if (signal.reason instanceof Error) throw signal.reason;
-  throw new CoreOperationError('Watchlist Symbol validation was interrupted.', {
-    code: 'RUN_INTERRUPTED', phase: 'signal', cause: signal.reason,
-  });
+  if (isNormalizedCoreError(signal.reason)) throw signal.reason;
+  throw new CoreOperationError(
+    signal.reason?.message || 'Watchlist Symbol validation was aborted without a classified reason.',
+    {
+      code: 'CORE_UNCLASSIFIED_ERROR',
+      kind: 'internal',
+      phase: 'watchlist_symbol_validation',
+      stage: 'abort',
+      cause: signal.reason instanceof Error ? signal.reason : undefined,
+    },
+  );
 }
 
 async function probeWatchlistSymbolInPage(requestedSymbol, timeoutMs, pollMs) {

@@ -1,5 +1,5 @@
 /** Shared formal durable lifecycle for standalone and Extension Strategy Runs. */
-import { CoreOperationError } from './errors.js';
+import { CoreOperationError, isNormalizedCoreError } from './errors.js';
 import { withChartSession } from './chart-session.js';
 import { createDurableRunStore } from './strategy-run-artifacts.js';
 import { acquireStrategyRunPaneLeases } from './strategy-run-lease.js';
@@ -10,16 +10,21 @@ import {
   finalizeDurableStrategyRun,
 } from './strategy-resume.js';
 import { emitStrategyAutomationStatus } from './strategy-progress.js';
+import { createStrategyErrorBoundary } from './strategy-error-policy.js';
 
 function interruptedError(signal) {
   const reason = signal?.reason;
-  const error = new CoreOperationError(
-    `Strategy automation was interrupted${reason ? `: ${reason.message || String(reason)}` : '.'}`,
-    { code: 'RUN_INTERRUPTED', phase: 'signal', cause: reason instanceof Error ? reason : undefined },
-  );
-  if (Number.isInteger(reason?.exit_code)) error.exit_code = reason.exit_code;
-  if (reason?.signal) error.signal = reason.signal;
-  return error;
+  if (isNormalizedCoreError(reason)) return reason;
+  if (reason) {
+    return createStrategyErrorBoundary({ phase: 'strategy_run_execution' }).error(reason, { signal });
+  }
+  return new CoreOperationError('Strategy automation was aborted without a classified reason.', {
+    code: 'CORE_UNCLASSIFIED_ERROR',
+    kind: 'internal',
+    phase: 'strategy_run_execution',
+    stage: 'abort',
+    cause: reason instanceof Error ? reason : undefined,
+  });
 }
 
 function assertNotAborted(signal) {
@@ -27,13 +32,17 @@ function assertNotAborted(signal) {
 }
 
 function executionFailure(error, context) {
-  if (error instanceof CoreOperationError) return error;
-  return new CoreOperationError(`Strategy Run failed: ${error?.message || String(error)}`, {
-    code: error?.code || 'STRATEGY_RUN_FAILED',
-    phase: error?.phase || 'strategy_run_execution',
-    retryable: error?.retryable === true,
+  if (isNormalizedCoreError(error)) return error;
+  const normalized = createStrategyErrorBoundary({ phase: 'strategy_run_execution' }).error(error);
+  if (normalized.context || !context) return normalized;
+  return new CoreOperationError(normalized.message, {
+    code: normalized.code,
+    kind: normalized.kind,
+    phase: normalized.phase,
+    stage: normalized.stage,
+    retryable: normalized.retryable,
     context,
-    cause: error,
+    cause: normalized.cause,
   });
 }
 

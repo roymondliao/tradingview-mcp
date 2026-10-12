@@ -1,7 +1,7 @@
 ---
 id: TASK-003
 title: Domain Boundaries and Presentation Parity
-status: todo
+status: done
 phase: composable-error-handling
 depends_on:
   - TASK-002
@@ -68,8 +68,8 @@ scope: strategy-cli-mcp-integration
 
 ## Acceptance criteria
 
-- [ ] Motivating Extend dry-run misclassification is fixed。
-- [ ] Presentation layers perform no domain classification。
-- [ ] CLI exit code no longer depends on error message text。
-- [ ] CLI and MCP receive only normalized diagnostics with known kind。
-- [ ] Strategy targeted and durable suites pass。
+- [x] Motivating Extend dry-run misclassification is fixed。
+- [x] Presentation layers perform no domain classification。
+- [x] CLI exit code no longer depends on error message text。
+- [x] CLI and MCP receive only normalized diagnostics with known kind。
+- [x] Strategy targeted and durable suites pass。

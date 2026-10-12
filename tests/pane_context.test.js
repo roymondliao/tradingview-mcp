@@ -130,14 +130,12 @@ describe('Tab metadata discovery', () => {
   it('keeps bounded metadata diagnostics in tab list results', async () => {
     const result = await listTabs({
       _deps: {
-        fetch: async () => ({
-          json: async () => [{
+        discoverTargets: async () => [{
             id: 'target-dev',
             type: 'page',
             title: 'Chart',
             url: 'https://www.tradingview.com/chart/short-dev/',
           }],
-        }),
         readTargetMetadata: async () => { throw new Error(`private failure ${'x'.repeat(400)}`); },
       },
     });

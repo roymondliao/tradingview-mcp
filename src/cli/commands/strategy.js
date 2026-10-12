@@ -20,24 +20,24 @@ import {
 function requireStrategySymbolArgs(entityId, symbol, timeout, command) {
   if (!entityId) {
     throw new CoreOperationError('entity_id is required. Use study list --type strategy.', {
-      code: 'STRATEGY_ENTITY_REQUIRED', phase: 'request_validation',
+      code: 'STRATEGY_ENTITY_REQUIRED', kind: 'validation', phase: 'request_validation',
     });
   }
   if (!symbol) {
     throw new CoreOperationError(`--symbol is required for strategy ${command}.`, {
-      code: 'SYMBOL_REQUIRED', phase: 'request_validation', entity_id: entityId,
+      code: 'SYMBOL_REQUIRED', kind: 'validation', phase: 'request_validation', entity_id: entityId,
     });
   }
   if (!/^[^:\s]+:[^:\s]+$/.test(String(symbol).trim())) {
     throw new CoreOperationError('--symbol must use exchange:symbol format.', {
-      code: 'SYMBOL_INVALID', phase: 'request_validation', entity_id: entityId, symbol,
+      code: 'SYMBOL_INVALID', kind: 'validation', phase: 'request_validation', entity_id: entityId, symbol,
     });
   }
   if (timeout != null) {
     const value = Number(timeout);
     if (!Number.isInteger(value) || value < 100 || value > 60000) {
       throw new CoreOperationError('--timeout must be an integer from 100 to 60000.', {
-        code: 'STRATEGY_RUNTIME_INVALID', phase: 'request_validation', entity_id: entityId, symbol,
+        code: 'STRATEGY_RUNTIME_INVALID', kind: 'validation', phase: 'request_validation', entity_id: entityId, symbol,
       });
     }
   }
@@ -51,7 +51,7 @@ function requireStrategyExportArgs(entityId, { symbol, watchlist, timeout, failF
     const value = Number(timeout);
     if (!Number.isInteger(value) || value < 100 || value > 60000) {
       throw new CoreOperationError('--timeout must be an integer from 100 to 60000.', {
-        code: 'STRATEGY_RUNTIME_INVALID', phase: 'request_validation', entity_id: entityId, symbol,
+        code: 'STRATEGY_RUNTIME_INVALID', kind: 'validation', phase: 'request_validation', entity_id: entityId, symbol,
       });
     }
   }
@@ -62,17 +62,17 @@ function requireTradingDataPagination(offset, limit, snapshotId) {
   const parsedLimit = limit == null ? 500 : Number(limit);
   if (!Number.isInteger(parsedOffset) || parsedOffset < 0) {
     throw new CoreOperationError('--offset must be a non-negative integer.', {
-      code: 'STRATEGY_RUNTIME_INVALID', phase: 'request_validation',
+      code: 'STRATEGY_RUNTIME_INVALID', kind: 'validation', phase: 'request_validation',
     });
   }
   if (!Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 5000) {
     throw new CoreOperationError('--limit must be an integer from 1 to 5000.', {
-      code: 'STRATEGY_RUNTIME_INVALID', phase: 'request_validation',
+      code: 'STRATEGY_RUNTIME_INVALID', kind: 'validation', phase: 'request_validation',
     });
   }
   if (parsedOffset > 0 && !snapshotId) {
     throw new CoreOperationError('--snapshot-id is required when --offset is greater than 0.', {
-      code: 'STALE_STRATEGY_SNAPSHOT', phase: 'request_validation',
+      code: 'STALE_STRATEGY_SNAPSHOT', kind: 'identity', phase: 'request_validation',
     });
   }
   return { offset: parsedOffset, limit: parsedLimit };
@@ -86,6 +86,7 @@ export async function withStrategyAutomationSignals(operation, {
   process_facade = process,
   AbortControllerClass = AbortController,
   progress_renderer,
+  operation_phase = 'strategy_automation',
   _signal_now = Date.now,
 } = {}) {
   if (typeof operation !== 'function') throw new TypeError('Signal operation callback is required.');
@@ -108,10 +109,13 @@ export async function withStrategyAutomationSignals(operation, {
       interruptBursts += 1;
       if (interruptBursts === 1) {
         const reason = new CoreOperationError(`Received ${signalName}.`, {
-          code: 'RUN_INTERRUPTED', phase: 'signal',
+          code: 'RUN_INTERRUPTED',
+          kind: 'interrupt',
+          phase: operation_phase,
+          stage: 'process_signal',
+          signal: signalName,
+          exit_code: exitCode,
         });
-        reason.signal = signalName;
-        reason.exit_code = exitCode;
         controller.abort(reason);
         return;
       }
@@ -142,7 +146,10 @@ register('strategy', {
       handler: async (opts) => {
         if (!opts.config) {
           throw new CoreOperationError('--config is required for strategy run.', {
-            code: 'RUN_CONFIG_REQUIRED', phase: 'request_validation', retryable: false,
+            code: 'RUN_CONFIG_REQUIRED',
+            kind: 'validation',
+            phase: 'request_validation',
+            retryable: false,
           });
         }
         if (opts['dry-run']) {
@@ -153,7 +160,7 @@ register('strategy', {
           signal,
           on_progress: onProgress,
           on_status: onStatus,
-        }));
+        }), { operation_phase: 'strategy_run_execution' });
       },
     }],
     ['resume', {
@@ -164,13 +171,19 @@ register('strategy', {
       handler: async (opts) => {
         if (!opts['run-directory']) {
           throw new CoreOperationError('--run-directory is required for strategy resume.', {
-            code: 'RUN_RESUME_NOT_FOUND', phase: 'request_validation', retryable: false,
+            code: 'RUN_RESUME_NOT_FOUND',
+            kind: 'validation',
+            phase: 'request_validation',
+            retryable: false,
           });
         }
         const unknown = Object.keys(opts).filter((key) => key !== 'run-directory');
         if (unknown.length) {
           throw new CoreOperationError(`Unsupported strategy resume option: --${unknown[0]}.`, {
-            code: 'RUN_RESUME_ARTIFACT_INVALID', phase: 'request_validation', retryable: false,
+            code: 'RUN_RESUME_ARTIFACT_INVALID',
+            kind: 'validation',
+            phase: 'request_validation',
+            retryable: false,
           });
         }
         return withStrategyAutomationSignals((signal, onProgress, onStatus) => resumeStrategyAutomation({
@@ -178,7 +191,7 @@ register('strategy', {
           signal,
           on_progress: onProgress,
           on_status: onStatus,
-        }));
+        }), { operation_phase: 'strategy_resume_execution' });
       },
     }],
     ['extend', {
@@ -191,19 +204,28 @@ register('strategy', {
       handler: async (opts) => {
         if (!opts['run-directory']) {
           throw new CoreOperationError('--run-directory is required for strategy extend.', {
-            code: 'RUN_EXTENSION_PARENT_NOT_FOUND', phase: 'request_validation', retryable: false,
+            code: 'RUN_EXTENSION_PARENT_NOT_FOUND',
+            kind: 'validation',
+            phase: 'request_validation',
+            retryable: false,
           });
         }
         if (!opts.config) {
           throw new CoreOperationError('--config is required for strategy extend.', {
-            code: 'RUN_CONFIG_REQUIRED', phase: 'request_validation', retryable: false,
+            code: 'RUN_CONFIG_REQUIRED',
+            kind: 'validation',
+            phase: 'request_validation',
+            retryable: false,
           });
         }
         const allowed = new Set(['run-directory', 'config', 'dry-run']);
         const unknown = Object.keys(opts).filter((key) => !allowed.has(key));
         if (unknown.length) {
           throw new CoreOperationError(`Unsupported strategy extend option: --${unknown[0]}.`, {
-            code: 'RUN_EXTENSION_CONFIG_MISMATCH', phase: 'request_validation', retryable: false,
+            code: 'RUN_EXTENSION_CONFIG_MISMATCH',
+            kind: 'validation',
+            phase: 'request_validation',
+            retryable: false,
           });
         }
         if (opts['dry-run']) {
@@ -220,7 +242,7 @@ register('strategy', {
             on_progress: onProgress,
             on_status: onStatus,
           })
-        ));
+        ), { operation_phase: 'strategy_extension_execution' });
       },
     }],
     ['active', {
@@ -271,7 +293,7 @@ register('strategy', {
         const pagination = requireTradingDataPagination(opts.offset, opts.limit, opts['snapshot-id']);
         if (opts.force && !opts.output) {
           throw new CoreOperationError('--force requires --output.', {
-            code: 'OUTPUT_WRITE_FAILED', phase: 'output_validation',
+            code: 'OUTPUT_WRITE_FAILED', kind: 'validation', phase: 'output_validation',
           });
         }
         const format = resolveTradingDataFormat({ format: opts.format, output: opts.output });
@@ -316,7 +338,7 @@ register('strategy', {
         });
         if (!opts.output) {
           throw new CoreOperationError('--output directory is required for strategy trading-export.', {
-            code: 'OUTPUT_WRITE_FAILED', phase: 'output_validation',
+            code: 'OUTPUT_WRITE_FAILED', kind: 'validation', phase: 'output_validation',
             entity_id: entityId, symbol: opts.symbol,
           });
         }

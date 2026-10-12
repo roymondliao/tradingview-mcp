@@ -1,7 +1,7 @@
 ---
 id: TASK-002
 title: Source Boundary and Abort Normalization
-status: todo
+status: done
 phase: composable-error-handling
 depends_on:
   - TASK-001
@@ -50,9 +50,9 @@ source處產生完整Core contract，並消除`core/tab.js` production raw fetch
 
 ## Acceptance criteria
 
-- [ ] No production target-list caller directly uses global `fetch`。
-- [ ] CDP failures always carry kind/code/stage before entering domain code。
-- [ ] Owned timeout cannot be misclassified as interrupt；cascade preserves primary reason。
-- [ ] Raw filesystem errno is classified by operation owner, not a global errno mapper。
-- [ ] `tv status` and `tv tab list` expose equivalent discovery semantics。
-- [ ] Targeted connection／tab／artifact tests pass。
+- [x] No production target-list caller directly uses global `fetch`。
+- [x] CDP failures always carry kind/code/stage before entering domain code。
+- [x] Owned timeout cannot be misclassified as interrupt；cascade preserves primary reason。
+- [x] Raw filesystem errno is classified by operation owner, not a global errno mapper。
+- [x] `tv status` and `tv tab list` expose equivalent discovery semantics。
+- [x] Targeted connection／tab／artifact tests pass。

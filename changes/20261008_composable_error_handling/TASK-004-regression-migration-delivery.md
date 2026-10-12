@@ -1,7 +1,7 @@
 ---
 id: TASK-004
 title: Regression, Migration and Delivery
-status: todo
+status: testing
 phase: composable-error-handling
 depends_on:
   - TASK-003
@@ -21,6 +21,8 @@ fault injection及release evidence，並將已review但延後的module列入boun
 - CLI command validation boundaries
 - MCP tool adapters
 - Error inventory／manual test／release notes／delivery evidence
+
+Reviewed inventory is maintained in [`ERROR_INVENTORY.md`](./ERROR_INVENTORY.md)。
 
 ## Requirements
 
@@ -47,11 +49,11 @@ fault injection及release evidence，並將已review但延後的module列入boun
 
 ## Acceptance criteria
 
-- [ ] Error inventory has no unreviewed module-local classifier。
-- [ ] Strategy／CDP／presentation vertical slice has no missing-kind normalized output。
-- [ ] Deferred modules are reviewed, classified and assigned bounded follow-up scope。
-- [ ] No production presentation layer classifies by message regex。
-- [ ] CLI／MCP parity and exit-code matrix pass。
-- [ ] Existing documented error codes have compatibility evidence。
-- [ ] Artifact v2／v3／v4 regression passes without schema migration。
-- [ ] Manual／release／delivery documentation is complete。
+- [x] Error inventory has no unreviewed module-local classifier。
+- [x] Strategy／CDP／presentation vertical slice has no missing-kind normalized output。
+- [x] Deferred modules are reviewed, classified and assigned bounded follow-up scope。
+- [x] No production presentation layer classifies by message regex。
+- [x] CLI／MCP parity and exit-code matrix pass。
+- [x] Existing documented error codes have compatibility evidence。
+- [x] Artifact v2／v3／v4 regression passes without schema migration。
+- [ ] Live Desktop manual evidence is complete。

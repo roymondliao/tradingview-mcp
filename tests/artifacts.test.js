@@ -103,7 +103,7 @@ describe('Atomic artifact transaction', () => {
     writeFileSync(output, 'old');
     await assert.rejects(
       writeTradingDataArtifact({ result: batchResult(), output }),
-      (error) => error.code === 'OUTPUT_ALREADY_EXISTS',
+      (error) => error.code === 'OUTPUT_ALREADY_EXISTS' && error.kind === 'conflict',
     );
     assert.equal(readFileSync(output, 'utf8'), 'old');
   });
@@ -132,7 +132,9 @@ describe('Atomic artifact transaction', () => {
         result: batchResult(), output, force: true,
         _deps: { createWriteStream: () => failingWritable },
       }),
-      (error) => error.code === 'OUTPUT_WRITE_FAILED' && error.phase === 'artifact_write',
+      (error) => error.code === 'OUTPUT_WRITE_FAILED'
+        && error.kind === 'filesystem'
+        && error.phase === 'artifact_write',
     );
     assert.equal(readFileSync(output, 'utf8'), 'old');
     assert.deepEqual(readdirSync(directory), ['trades.json']);
@@ -196,7 +198,7 @@ describe('Atomic artifact set transaction', () => {
     await initial.publish();
     await assert.rejects(
       createArtifactSetTransaction({ output_directory: directory, run_id: 'run-1' }),
-      (error) => error.code === 'OUTPUT_ALREADY_EXISTS',
+      (error) => error.code === 'OUTPUT_ALREADY_EXISTS' && error.kind === 'conflict',
     );
     assert.deepEqual(
       JSON.parse(readFileSync(join(directory, 'run-1', 'manifest.json'), 'utf8')),

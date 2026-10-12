@@ -10,7 +10,13 @@
  * (Approach from issue #155 and PR #163, verified on Desktop 3.1.0.)
  */
 import CDP from 'chrome-remote-interface';
-import { getClient, reconnectTo, CDP_HOST, CDP_PORT } from '../connection.js';
+import {
+  CDP_HOST,
+  CDP_PORT,
+  discoverCdpTargets,
+  getClient,
+  reconnectTo,
+} from '../connection.js';
 import { chartRuntimeMetadataExpression } from './layout-identity.js';
 
 const METADATA_ATTEMPTS = 2;
@@ -49,10 +55,9 @@ export async function readTargetMetadata(targetId, { _deps } = {}) {
  * List all open chart tabs (CDP page targets).
  */
 export async function list({ _deps } = {}) {
-  const fetchTargets = _deps?.fetch || fetch;
+  const discoverTargets = _deps?.discoverTargets || discoverCdpTargets;
   const readMetadata = _deps?.readTargetMetadata || readTargetMetadata;
-  const resp = await fetchTargets(`http://${CDP_HOST}:${CDP_PORT}/json/list`);
-  const targets = await resp.json();
+  const targets = await discoverTargets();
 
   // Chart tabs plus new-tab landing pages (layout picker), so every tab in the
   // top bar is listable and switchable.
@@ -94,9 +99,9 @@ export async function list({ _deps } = {}) {
 }
 
 /** Resolve the public Tab index for an already attached CDP target. */
-export async function identifyTab(targetId) {
-  const resp = await fetch(`http://${CDP_HOST}:${CDP_PORT}/json/list`);
-  const targets = await resp.json();
+export async function identifyTab(targetId, { _deps } = {}) {
+  const discoverTargets = _deps?.discoverTargets || discoverCdpTargets;
+  const targets = await discoverTargets();
   const tabs = targets.filter(t => t.type === 'page' && (/tradingview\.com\/chart/i.test(t.url) || t.title === 'New tab'));
   const tabIndex = tabs.findIndex((tab) => tab.id === targetId);
   if (tabIndex < 0) return null;
@@ -157,8 +162,7 @@ export async function attachTab({ tab_index, url_chart_id, layout_id, saved_layo
  * is the one whose DOM actually contains `.tabs-container .tab`.
  */
 async function withShell(fn) {
-  const resp = await fetch(`http://${CDP_HOST}:${CDP_PORT}/json/list`);
-  const targets = await resp.json();
+  const targets = await discoverCdpTargets();
   const candidates = targets.filter(t => t.type === 'page' && /\/window\/index\.html/i.test(t.url || ''));
 
   for (const cand of candidates) {
@@ -201,8 +205,7 @@ async function isTargetVisible(targetId) {
 
 /** Find an open new-tab landing page target (shows the layout picker). */
 async function findLandingTarget() {
-  const resp = await fetch(`http://${CDP_HOST}:${CDP_PORT}/json/list`);
-  const targets = await resp.json();
+  const targets = await discoverCdpTargets();
   return targets.find(t => t.type === 'page' && t.title === 'New tab') || null;
 }
 

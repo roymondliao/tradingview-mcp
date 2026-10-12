@@ -15,6 +15,7 @@ import { stableJsonStringify } from './stable-json.js';
 function problem(code, message, path = null) {
   return Object.freeze({
     code,
+    kind: code === 'RUN_EXTENSION_IDENTITY_MISMATCH' ? 'identity' : 'validation',
     phase: 'extension_config',
     message,
     retryable: false,

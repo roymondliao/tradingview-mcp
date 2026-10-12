@@ -1,10 +1,13 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import './errors.test.js';
 import {
   CdpOperationError,
+  discoverCdpTargets,
   selectActiveChartTarget,
   withTimeout,
 } from '../src/connection.js';
+import { CoreOperationError } from '../src/core/errors.js';
 
 const chart = (id) => ({
   id,
@@ -27,6 +30,7 @@ describe('CDP operation timeout', () => {
       (err) => {
         assert.ok(err instanceof CdpOperationError);
         assert.equal(err.code, 'CDP_TIMEOUT');
+        assert.equal(err.kind, 'cdp');
         assert.equal(err.stage, 'runtime_evaluate');
         assert.equal(err.timeout_ms, 5);
         assert.equal(err.target_id, 'chart-1');
@@ -37,6 +41,89 @@ describe('CDP operation timeout', () => {
 
   it('returns a completed operation before the deadline', async () => {
     assert.equal(await withTimeout(Promise.resolve('ready'), 50), 'ready');
+  });
+});
+
+describe('CDP target discovery source boundary', () => {
+  it('normalizes raw fetch failures at the source', async () => {
+    await assert.rejects(
+      discoverCdpTargets({
+        _deps: {
+          fetch: async () => { throw new TypeError('fetch failed'); },
+        },
+      }),
+      (error) => {
+        assert.ok(error instanceof CdpOperationError);
+        assert.equal(error.code, 'CDP_DISCOVERY_FAILED');
+        assert.equal(error.kind, 'cdp');
+        assert.equal(error.stage, 'target_discovery');
+        assert.equal(error.retryable, true);
+        assert.equal(error.cause.message, 'fetch failed');
+        return true;
+      },
+    );
+  });
+
+  it('uses the owned deadline reason instead of treating AbortError as an interrupt', async () => {
+    await assert.rejects(
+      discoverCdpTargets({
+        timeout_ms: 25,
+        _deps: {
+          setTimeout: (callback) => {
+            callback();
+            return 1;
+          },
+          clearTimeout: () => {},
+          fetch: async (_url, { signal }) => { throw signal.reason; },
+        },
+      }),
+      (error) => {
+        assert.equal(error.code, 'CDP_TIMEOUT');
+        assert.equal(error.kind, 'cdp');
+        assert.equal(error.timeout_ms, 25);
+        return true;
+      },
+    );
+  });
+
+  it('preserves an externally owned normalized cancellation reason', async () => {
+    const controller = new AbortController();
+    controller.abort(new CoreOperationError('Received SIGTERM.', {
+      code: 'RUN_INTERRUPTED',
+      kind: 'interrupt',
+      phase: 'strategy_run_execution',
+      stage: 'process_signal',
+      signal: 'SIGTERM',
+      exit_code: 143,
+    }));
+    await assert.rejects(
+      discoverCdpTargets({
+        signal: controller.signal,
+        _deps: { fetch: async () => { throw new Error('must not fetch'); } },
+      }),
+      (error) => error.code === 'RUN_INTERRUPTED'
+        && error.kind === 'interrupt'
+        && error.exit_code === 143,
+    );
+  });
+
+  it('validates HTTP and target-list shape as CDP failures', async () => {
+    await assert.rejects(
+      discoverCdpTargets({
+        _deps: {
+          fetch: async () => ({ ok: false, status: 503 }),
+        },
+      }),
+      (error) => error.code === 'CDP_DISCOVERY_FAILED' && error.kind === 'cdp',
+    );
+    await assert.rejects(
+      discoverCdpTargets({
+        _deps: {
+          fetch: async () => ({ ok: true, json: async () => ({}) }),
+        },
+      }),
+      (error) => error.code === 'CDP_DISCOVERY_FAILED' && error.kind === 'cdp',
+    );
   });
 });
 

@@ -47,8 +47,8 @@ async function pollLoop(fetcher, { interval = 500, dedupe = true, label = 'strea
         process.stdout.write(line + '\n');
       }
     } catch (err) {
-      // Connection errors — retry silently
-      if (/CDP|ECONNREFUSED/i.test(err.message)) {
+      // Normalized connection errors — retry silently.
+      if (err?.kind === 'cdp') {
         await sleep(2000);
         continue;
       }

@@ -230,7 +230,7 @@ describe('Durable JSON primitives', () => {
         value: { status: 'new' },
         _deps: { writeFile: async () => { throw new Error('disk full'); } },
       }),
-      (error) => error.code === 'OUTPUT_WRITE_FAILED',
+      (error) => error.code === 'OUTPUT_WRITE_FAILED' && error.kind === 'filesystem',
     );
     assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), { status: 'old' });
   });
@@ -245,7 +245,7 @@ describe('Durable JSON primitives', () => {
         value: { status: 'new' },
         _deps: { rename: async () => { throw new Error('rename failed'); } },
       }),
-      (error) => error.code === 'OUTPUT_WRITE_FAILED',
+      (error) => error.code === 'OUTPUT_WRITE_FAILED' && error.kind === 'filesystem',
     );
     assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), { status: 'old' });
     assert.deepEqual(readdirSync(directory), ['run.json']);
@@ -302,7 +302,7 @@ describe('Durable Run store', () => {
 
     await assert.rejects(
       createDurableRunStore({ output_directory: output, run_id: 'run-1' }),
-      (error) => error.code === 'RUN_OUTPUT_EXISTS',
+      (error) => error.code === 'RUN_OUTPUT_EXISTS' && error.kind === 'conflict',
     );
   });
 
@@ -404,7 +404,7 @@ describe('Durable Run store', () => {
     const output = temporaryDirectory();
     await assert.rejects(
       openDurableRunStore({ run_directory: join(output, 'missing') }),
-      (error) => error.code === 'RUN_RESUME_NOT_FOUND',
+      (error) => error.code === 'RUN_RESUME_NOT_FOUND' && error.kind === 'artifact',
     );
 
     const legacy = join(output, 'legacy-run');

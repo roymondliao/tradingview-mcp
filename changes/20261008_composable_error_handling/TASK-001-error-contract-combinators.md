@@ -1,7 +1,7 @@
 ---
 id: TASK-001
 title: Shared Error Contract and Combinators
-status: todo
+status: done
 phase: composable-error-handling
 blocks:
   - TASK-002
@@ -50,8 +50,8 @@ domain public code或CLI exit behavior。
 
 ## Acceptance criteria
 
-- [ ] Foundation is dependency-leaf and domain-agnostic。
-- [ ] Presentation cannot receive a missing-kind legacy error。
-- [ ] Same normalized error projects deterministically。
-- [ ] Cause and stack never enter diagnostics。
-- [ ] Targeted tests and `git diff --check` pass。
+- [x] Foundation is dependency-leaf and domain-agnostic。
+- [x] Presentation cannot receive a missing-kind legacy error。
+- [x] Same normalized error projects deterministically。
+- [x] Cause and stack never enter diagnostics。
+- [x] Targeted tests and `git diff --check` pass。

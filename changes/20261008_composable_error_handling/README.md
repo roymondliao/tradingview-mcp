@@ -1,7 +1,7 @@
 ---
 id: FEATURE-20261008-COMPOSABLE-ERROR-HANDLING
 title: Composable Error Handling
-status: planned
+status: testing
 created: 2026-10-08
 depends_on:
   - FEATURE-20261007-STRATEGY-RUN-EXTENSION
@@ -14,7 +14,7 @@ scope:
 
 # Composable Error Handling
 
-Status: `planned`
+Status: `testing`
 
 ## Objective
 
@@ -348,9 +348,12 @@ kind。Compatibility mapper以domain-owned exact code map補齊kind，無法識�
 
 | ID | Task | Status | Depends on |
 | --- | --- | --- | --- |
-| [TASK-001](./TASK-001-error-contract-combinators.md) | Shared Error Contract and Combinators | `todo` | Current `CoreOperationError` |
-| [TASK-002](./TASK-002-infrastructure-normalization.md) | Source Boundary and Abort Normalization | `todo` | TASK-001 |
-| [TASK-003](./TASK-003-domain-presentation-integration.md) | Domain Boundaries and Presentation Parity | `todo` | TASK-002 |
-| [TASK-004](./TASK-004-regression-migration-delivery.md) | Regression, Migration and Delivery | `todo` | TASK-003 |
+| [TASK-001](./TASK-001-error-contract-combinators.md) | Shared Error Contract and Combinators | `done` | Current `CoreOperationError` |
+| [TASK-002](./TASK-002-infrastructure-normalization.md) | Source Boundary and Abort Normalization | `done` | TASK-001 |
+| [TASK-003](./TASK-003-domain-presentation-integration.md) | Domain Boundaries and Presentation Parity | `done` | TASK-002 |
+| [TASK-004](./TASK-004-regression-migration-delivery.md) | Regression, Migration and Delivery | `testing` | TASK-003 |
 
 Detailed decisions見[`DECISIONS.md`](./DECISIONS.md)，low-level design見[`LLD.md`](./LLD.md)。
+Reviewed migration inventory見[`ERROR_INVENTORY.md`](./ERROR_INVENTORY.md)。
+Automated and pending live evidence見[`DELIVERY_EVIDENCE.md`](./DELIVERY_EVIDENCE.md)，release summary見
+[`RELEASE_NOTES.md`](./RELEASE_NOTES.md)。

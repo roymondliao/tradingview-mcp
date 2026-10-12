@@ -19,26 +19,27 @@ import { unixMillisecondsToIso } from './time.js';
 import { stableJsonStringify } from './stable-json.js';
 import { executePreparedDurableRun } from './strategy-durable-run-lifecycle.js';
 import { emitStrategyAutomationStatus } from './strategy-progress.js';
+import {
+  createStrategyErrorBoundary,
+  strategyDiagnostic,
+  strategyDiagnostics,
+} from './strategy-error-policy.js';
 
 function diagnostic(error, fallbackCode = 'RUN_EXTENSION_LINEAGE_INVALID') {
-  return Object.freeze({
-    code: error?.code || fallbackCode,
-    phase: error?.phase || 'extension_preflight',
-    message: String(error?.message || error || fallbackCode).slice(0, 1000),
-    retryable: error?.retryable === true,
-  });
+  void fallbackCode;
+  return strategyDiagnostic(error, { phase: 'extension_preflight' });
 }
 
 function identityDiagnostic(error) {
-  if (error?.code !== 'RUN_RESUME_IDENTITY_MISMATCH') {
-    return diagnostic(error, 'RUN_EXTENSION_IDENTITY_MISMATCH');
-  }
-  return Object.freeze({
-    code: 'RUN_EXTENSION_IDENTITY_MISMATCH',
+  return createStrategyErrorBoundary({
     phase: 'extension_identity',
-    message: String(error.message || error).slice(0, 1000),
-    retryable: false,
-  });
+    translations: {
+      RUN_RESUME_IDENTITY_MISMATCH: {
+        code: 'RUN_EXTENSION_IDENTITY_MISMATCH',
+        kind: 'identity',
+      },
+    },
+  }).diagnostic(error);
 }
 
 function publicPreflight(preflight) {
@@ -85,7 +86,12 @@ async function outputCollision(path, _deps) {
     return true;
   } catch (error) {
     if (error?.code === 'ENOENT') return false;
-    throw error;
+    throw new CoreOperationError(error?.message || String(error), {
+      code: 'RUN_OUTPUT_INVALID',
+      kind: 'filesystem',
+      stage: 'output_collision_check',
+      cause: error,
+    });
   }
 }
 
@@ -118,7 +124,7 @@ export async function dryRunStrategyExtension({
       extension: null,
       blocked: Object.freeze(['lineage']),
       warnings: Object.freeze(warnings),
-      errors: Object.freeze(errors),
+      errors: strategyDiagnostics(errors, { phase: 'extension_preflight' }),
     });
   }
   const compare = _deps.compareStrategyExtensionConfig || compareStrategyExtensionConfig;
@@ -137,14 +143,18 @@ export async function dryRunStrategyExtension({
       extension: null,
       blocked: Object.freeze(['runtime_identity', 'execution']),
       warnings: Object.freeze(warnings),
-      errors: Object.freeze(errors),
+      errors: strategyDiagnostics(errors, { phase: 'extension_preflight' }),
     });
   }
   try {
     if (await outputCollision(comparison.requested.output.run_path, _deps.fs || {})) {
       errors.push(diagnostic(new CoreOperationError(
         `Run output already exists: ${comparison.requested.output.run_path}`,
-        { code: 'RUN_OUTPUT_EXISTS', phase: 'output_validation' },
+        {
+          code: 'RUN_OUTPUT_EXISTS',
+          kind: 'conflict',
+          phase: 'output_validation',
+        },
       )));
     }
   } catch (error) {
@@ -163,7 +173,7 @@ export async function dryRunStrategyExtension({
       extension: null,
       blocked: Object.freeze(['runtime_identity', 'execution']),
       warnings: Object.freeze(warnings),
-      errors: Object.freeze(errors),
+      errors: strategyDiagnostics(errors, { phase: 'extension_preflight' }),
     });
   }
 
@@ -181,7 +191,8 @@ export async function dryRunStrategyExtension({
     identity: identity.strategy,
   }) : null;
   errors.push(...(plan?.errors || []));
-  const valid = errors.length === 0 && plan?.valid === true;
+  const normalizedErrors = strategyDiagnostics(errors, { phase: 'extension_preflight' });
+  const valid = normalizedErrors.length === 0 && plan?.valid === true;
   const response = {
     success: valid,
     valid,
@@ -200,7 +211,7 @@ export async function dryRunStrategyExtension({
     }),
     blocked: Object.freeze(valid ? [] : ['execution']),
     warnings: Object.freeze(warnings),
-    errors: Object.freeze(errors),
+    errors: normalizedErrors,
   };
   if (!_include_internal || !valid) return Object.freeze(response);
   return Object.freeze({
@@ -332,6 +343,7 @@ export async function extendStrategyAutomation({
         ) {
           throw new CoreOperationError('Parent or Config changed after Extension preflight.', {
             code: 'RUN_EXTENSION_LINEAGE_INVALID',
+            kind: 'artifact',
             phase: 'extension_precreate',
           });
         }
@@ -343,6 +355,7 @@ export async function extendStrategyAutomation({
         if (!sameStableIdentity(internal.identity, currentIdentity)) {
           throw new CoreOperationError('Strategy or Pane identity changed after Extension preflight.', {
             code: 'RUN_EXTENSION_IDENTITY_MISMATCH',
+            kind: 'identity',
             phase: 'extension_identity',
           });
         }
@@ -359,6 +372,7 @@ export async function extendStrategyAutomation({
         ) {
           throw new CoreOperationError('Extension plan changed after child initialization.', {
             code: 'RUN_EXTENSION_IDENTITY_MISMATCH',
+            kind: 'identity',
             phase: 'extension_identity',
           });
         }

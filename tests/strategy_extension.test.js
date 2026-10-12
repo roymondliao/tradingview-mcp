@@ -18,6 +18,8 @@ import {
 import { validateRunArtifactV4 } from '../src/core/strategy-run-state.js';
 import { openDurableRunStore } from '../src/core/strategy-run-artifacts.js';
 import { loadStrategyResume, resumeStrategyAutomation } from '../src/core/strategy-resume.js';
+import { CdpOperationError } from '../src/connection.js';
+import { CoreOperationError } from '../src/core/errors.js';
 import {
   WATCHLIST_SYMBOL_VALIDATION_ATTEMPT_TIMEOUT_MS,
   WATCHLIST_SYMBOL_VALIDATION_MAX_ATTEMPTS,
@@ -208,6 +210,69 @@ async function executeSymbolAttempt({ attempt, symbol }) {
 }
 
 describe('Strategy Extension preflight', () => {
+  it('preserves CDP discovery semantics through Resume and Extension identity boundaries', async () => {
+    const current = fixture();
+    const result = await dryRunStrategyExtension({
+      run_directory: current.lineage.parent_directory,
+      config_path: current.loaded.config_path,
+      _deps: preflightDeps(current, {
+        resolveStrategyResumeIdentity: async () => {
+          throw new CdpOperationError('CDP target discovery failed: fetch failed', {
+            code: 'CDP_DISCOVERY_FAILED',
+            stage: 'target_discovery',
+            cause: new TypeError('fetch failed'),
+          });
+        },
+      }),
+    });
+    assert.equal(result.valid, false);
+    assert.deepEqual(result.errors[0], {
+      code: 'CDP_DISCOVERY_FAILED',
+      kind: 'cdp',
+      message: 'CDP target discovery failed: fetch failed',
+      phase: 'extension_identity',
+      stage: 'target_discovery',
+      retryable: true,
+    });
+  });
+
+  it('uses the unclassified fallback instead of inventing an identity mismatch', async () => {
+    const current = fixture();
+    const result = await dryRunStrategyExtension({
+      run_directory: current.lineage.parent_directory,
+      config_path: current.loaded.config_path,
+      _deps: preflightDeps(current, {
+        resolveStrategyResumeIdentity: async () => { throw new TypeError('unexpected resolver failure'); },
+      }),
+    });
+    assert.equal(result.valid, false);
+    assert.equal(result.errors[0].code, 'CORE_UNCLASSIFIED_ERROR');
+    assert.equal(result.errors[0].kind, 'internal');
+    assert.equal(result.errors[0].phase, 'extension_identity');
+    assert.equal(result.errors[0].message, 'unexpected resolver failure');
+  });
+
+  it('rebinds a known Resume identity diagnostic to the Extension identity phase', async () => {
+    const current = fixture();
+    const result = await dryRunStrategyExtension({
+      run_directory: current.lineage.parent_directory,
+      config_path: current.loaded.config_path,
+      _deps: preflightDeps(current, {
+        resolveStrategyResumeIdentity: async () => {
+          throw new CoreOperationError('Layout is not open.', {
+            code: 'TARGET_LAYOUT_NOT_OPEN',
+            kind: 'validation',
+            phase: 'resume_identity',
+          });
+        },
+      }),
+    });
+    assert.equal(result.valid, false);
+    assert.equal(result.errors[0].code, 'TARGET_LAYOUT_NOT_OPEN');
+    assert.equal(result.errors[0].kind, 'validation');
+    assert.equal(result.errors[0].phase, 'extension_identity');
+  });
+
   it('accepts only the appended suffix and allows the same Pine source at a new path', async () => {
     const current = fixture();
     const result = await dryRunStrategyExtension({

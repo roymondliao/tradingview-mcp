@@ -4,6 +4,8 @@
  */
 import { parseArgs } from 'node:util';
 import { VERSION } from '../version.js';
+import { ownDataProperty, toCoreDiagnostic } from '../core/errors.js';
+import { normalizePresentationError } from '../core/error-policy.js';
 
 /** @type {Map<string, { description: string, deprecated?: boolean, options?: object, handler: Function, subcommands?: Map<string, object> }>} */
 const commands = new Map();
@@ -18,7 +20,18 @@ export function register(name, config) {
 export function resultExitCode(result) {
   if ([130, 143].includes(result?.exit_code)) return result.exit_code;
   if (result?.success !== false) return 0;
+  const diagnostics = [
+    result,
+    ...(Array.isArray(result?.errors) ? result.errors : []),
+    ...(result?.error && typeof result.error === 'object' ? [result.error] : []),
+  ];
+  if (diagnostics.some((diagnostic) => diagnostic?.kind === 'cdp')) return 2;
   return result.failure_kind === 'cdp_connection' ? 2 : 1;
+}
+
+export function diagnosticExitCode(diagnostic) {
+  if ([130, 143].includes(diagnostic?.exit_code)) return diagnostic.exit_code;
+  return diagnostic?.kind === 'cdp' ? 2 : 1;
 }
 
 export function helpColorEnabled({ stream = process.stdout, env = process.env } = {}) {
@@ -177,31 +190,15 @@ async function execute(handler, values, positionals) {
 }
 
 function handleError(err) {
-  const message = err.message || String(err);
+  const diagnostic = toCoreDiagnostic(normalizePresentationError(err, {
+    phase: ownDataProperty(err, 'phase') || 'cli_execution',
+  }));
+  const { message, ...fields } = diagnostic;
   const payload = {
     success: false,
-    ...(err.code && { code: err.code }),
+    ...fields,
     error: message,
-    ...(err.stage && { stage: err.stage }),
-    ...(err.phase && { phase: err.phase }),
-    ...(err.entity_id && { entity_id: err.entity_id }),
-    ...(err.symbol && { symbol: err.symbol }),
-    ...(err.retryable !== undefined && { retryable: err.retryable === true }),
-    ...(err.context && { context: err.context }),
-    ...(err.timeout_ms !== undefined && { timeout_ms: err.timeout_ms }),
-    ...(err.target_id && { target_id: err.target_id }),
-    ...(err.chart_id && { chart_id: err.chart_id }),
-    ...([130, 143].includes(err.exit_code) && { exit_code: err.exit_code }),
   };
-  if ([130, 143].includes(err.exit_code)) {
-    console.error(JSON.stringify(payload, null, 2));
-    process.exit(err.exit_code);
-  }
-  // Connection failures get exit code 2
-  if (String(err.code || '').startsWith('CDP_') || /CDP|connection|ECONNREFUSED|not running/i.test(message)) {
-    console.error(JSON.stringify(payload, null, 2));
-    process.exit(2);
-  }
   console.error(JSON.stringify(payload, null, 2));
-  process.exit(1);
+  process.exit(diagnosticExitCode(diagnostic));
 }

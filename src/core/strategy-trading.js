@@ -37,16 +37,17 @@ import {
 } from './strategy-trading-format.js';
 import { CoreOperationError, sanitizeCoreContext } from './errors.js';
 import { unixMillisecondsToIso } from './time.js';
+import { strategyErrorKind } from './strategy-error-policy.js';
 
 function validateStrategyContextRequest({ entity_id, context }) {
   if (!entity_id || !String(entity_id).trim()) {
     throw new CoreOperationError('entity_id is required. Use study list --type strategy.', {
-      code: 'STRATEGY_ENTITY_REQUIRED', phase: 'request_validation', context,
+      code: 'STRATEGY_ENTITY_REQUIRED', kind: 'validation', phase: 'request_validation', context,
     });
   }
   if (!context || typeof context !== 'object') {
     throw new CoreOperationError('Resolved Pane context is required.', {
-      code: 'CHART_SESSION_INVALID', phase: 'request_validation', entity_id,
+      code: 'CHART_SESSION_INVALID', kind: 'validation', phase: 'request_validation', entity_id,
     });
   }
 }
@@ -56,11 +57,13 @@ function validateStrategySymbolRequest({ entity_id, symbol, context, command }) 
   if (!symbol || !String(symbol).trim()) {
     throw new CoreOperationError(`--symbol is required for ${command}.`, {
       code: 'SYMBOL_REQUIRED', phase: 'request_validation', entity_id, context,
+      kind: 'validation',
     });
   }
   if (!/^[^:\s]+:[^:\s]+$/.test(String(symbol).trim())) {
     throw new CoreOperationError('--symbol must use exchange:symbol format.', {
       code: 'SYMBOL_INVALID', phase: 'request_validation', entity_id, symbol, context,
+      kind: 'validation',
     });
   }
 }
@@ -71,6 +74,7 @@ function paginationValues({ offset, limit, snapshot_id }) {
   if (!Number.isInteger(parsedOffset) || parsedOffset < 0) {
     throw new CoreOperationError('offset must be a non-negative integer.', {
       code: 'STRATEGY_RUNTIME_INVALID', phase: 'request_validation',
+      kind: 'validation',
     });
   }
   if (
@@ -80,12 +84,13 @@ function paginationValues({ offset, limit, snapshot_id }) {
   ) {
     throw new CoreOperationError(
       `limit must be an integer from 1 to ${strategyRuntimeLimits.max_batch_limit}.`,
-      { code: 'STRATEGY_RUNTIME_INVALID', phase: 'request_validation' },
+      { code: 'STRATEGY_RUNTIME_INVALID', kind: 'validation', phase: 'request_validation' },
     );
   }
   if (parsedOffset > 0 && (!snapshot_id || !String(snapshot_id).trim())) {
     throw new CoreOperationError('--snapshot-id is required when offset is greater than 0.', {
       code: 'STALE_STRATEGY_SNAPSHOT', phase: 'request_validation',
+      kind: 'identity',
     });
   }
   return {
@@ -462,27 +467,31 @@ export async function getStrategyTradingData({
 export function validateStrategyTradingExportScope({ entity_id, symbol, watchlist, fail_fast } = {}) {
   if (!entity_id || !String(entity_id).trim()) {
     throw new CoreOperationError('entity_id is required. Use study list --type strategy.', {
-      code: 'STRATEGY_ENTITY_REQUIRED', phase: 'request_validation',
+      code: 'STRATEGY_ENTITY_REQUIRED', kind: 'validation', phase: 'request_validation',
     });
   }
   if (Boolean(symbol) === Boolean(watchlist)) {
     throw new CoreOperationError('Provide exactly one of --symbol or --watchlist active.', {
       code: 'TRADING_EXPORT_SCOPE_INVALID', phase: 'request_validation', entity_id,
+      kind: 'validation',
     });
   }
   if (watchlist && watchlist !== 'active') {
     throw new CoreOperationError('--watchlist currently supports only active.', {
       code: 'WATCHLIST_SCOPE_UNSUPPORTED', phase: 'request_validation', entity_id,
+      kind: 'validation',
     });
   }
   if (symbol && !/^[^:\s]+:[^:\s]+$/.test(String(symbol).trim())) {
     throw new CoreOperationError('--symbol must use exchange:symbol format.', {
       code: 'SYMBOL_INVALID', phase: 'request_validation', entity_id, symbol,
+      kind: 'validation',
     });
   }
   if (fail_fast && !watchlist) {
     throw new CoreOperationError('--fail-fast requires --watchlist active.', {
       code: 'TRADING_EXPORT_SCOPE_INVALID', phase: 'request_validation', entity_id,
+      kind: 'validation',
     });
   }
 }
@@ -490,7 +499,13 @@ export function validateStrategyTradingExportScope({ entity_id, symbol, watchlis
 function artifactWriteError(error, { entity_id, symbol, context, phase = 'artifact_write' }) {
   if (error instanceof CoreOperationError) return error;
   return new CoreOperationError(`Failed to write Strategy Trading export: ${error?.message || String(error)}`, {
-    code: 'OUTPUT_WRITE_FAILED', phase, entity_id, symbol, context, cause: error,
+    code: 'OUTPUT_WRITE_FAILED',
+    kind: 'filesystem',
+    phase,
+    entity_id,
+    symbol,
+    context,
+    cause: error,
   });
 }
 
@@ -1199,7 +1214,7 @@ export async function exportStrategySnapshotIntoRun({
     await transaction.replaceJson(manifestPath, manifest(status, completedAt));
     const manifestInfo = await transaction.artifactInfo(manifestPath);
     const hasCdpFailure = symbolResults.some((item) => (
-      item.status === 'failed' && String(item.error?.code || '').startsWith('CDP_')
+      item.status === 'failed' && strategyErrorKind(item.error?.code) === 'cdp'
     ));
     return {
       success: summary.failed === 0,
