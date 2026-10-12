@@ -1,3 +1,6 @@
+import { ownDataProperty, toCoreDiagnostic } from '../core/errors.js';
+import { normalizePresentationError } from '../core/error-policy.js';
+
 /**
  * Shared MCP response formatting helper.
  * All tool files use this instead of manually constructing MCP responses.
@@ -11,18 +14,15 @@ export function jsonResult(obj, isError = false) {
 
 /** Preserve stable Core error metadata without exposing stack/cause/runtime objects. */
 export function coreErrorPayload(error, extra = {}) {
+  const diagnostic = toCoreDiagnostic(normalizePresentationError(error, {
+    phase: ownDataProperty(error, 'phase') || 'mcp_delivery',
+  }));
+  const { message, ...fields } = diagnostic;
   return {
     success: false,
-    ...(error?.code && { code: error.code }),
-    error: error?.message || String(error),
-    ...(error?.stage && { stage: error.stage }),
-    ...(error?.phase && { phase: error.phase }),
-    ...(error?.entity_id && { entity_id: error.entity_id }),
-    ...(error?.symbol && { symbol: error.symbol }),
-    ...(error?.retryable !== undefined && { retryable: error.retryable === true }),
-    ...(error?.context && { context: error.context }),
-    ...(error?.timeout_ms !== undefined && { timeout_ms: error.timeout_ms }),
     ...extra,
+    ...fields,
+    error: message,
   };
 }
 

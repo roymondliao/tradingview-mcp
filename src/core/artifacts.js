@@ -21,8 +21,15 @@ import {
   resolveTradingDataFormat,
 } from './strategy-trading-format.js';
 
-function outputError(message, { code = 'OUTPUT_WRITE_FAILED', phase, cause } = {}) {
-  return new CoreOperationError(message, { code, phase, cause });
+function outputError(message, {
+  code = 'OUTPUT_WRITE_FAILED',
+  kind = 'filesystem',
+  phase,
+  cause,
+} = {}) {
+  return new CoreOperationError(message, {
+    code, kind, phase, cause,
+  });
 }
 
 function isMissing(error) {
@@ -32,14 +39,20 @@ function isMissing(error) {
 /** Encode a Symbol as one deterministic, traversal-safe path segment. */
 export function safeSymbolPathSegment(symbol) {
   const input = String(symbol ?? '').trim();
-  if (!input) throw outputError('Symbol is required for an artifact path.', { phase: 'output_validation' });
+  if (!input) {
+    throw outputError('Symbol is required for an artifact path.', {
+      kind: 'validation', phase: 'output_validation',
+    });
+  }
   const encoded = [...input].map((character) => (
     /[A-Za-z0-9._-]/.test(character)
       ? character
       : `_u${character.codePointAt(0).toString(16).toUpperCase()}_`
   )).join('');
   if (!encoded || encoded === '.' || encoded === '..') {
-    throw outputError('Symbol did not produce a safe artifact path.', { phase: 'output_validation' });
+    throw outputError('Symbol did not produce a safe artifact path.', {
+      kind: 'validation', phase: 'output_validation',
+    });
   }
   return encoded;
 }
@@ -49,12 +62,14 @@ export function assertSafeRelativeArtifactPath(relativePath) {
   const value = String(relativePath ?? '');
   if (!value || value.includes('\0') || isAbsolute(value)) {
     throw outputError('Artifact path must be a non-empty safe relative path.', {
+      kind: 'validation',
       phase: 'output_validation',
     });
   }
   const segments = value.split(/[\\/]+/);
   if (segments.some((segment) => !segment || segment === '.' || segment === '..')) {
     throw outputError('Artifact path must not contain empty or traversal segments.', {
+      kind: 'validation',
       phase: 'output_validation',
     });
   }
@@ -64,7 +79,9 @@ export function assertSafeRelativeArtifactPath(relativePath) {
 function safeRunId(value) {
   const runId = String(value ?? '').trim();
   if (!runId || runId === '.' || runId === '..' || !/^[A-Za-z0-9._-]+$/.test(runId)) {
-    throw outputError('run_id must be one safe path segment.', { phase: 'output_validation' });
+    throw outputError('run_id must be one safe path segment.', {
+      kind: 'validation', phase: 'output_validation',
+    });
   }
   return runId;
 }
@@ -86,7 +103,9 @@ export async function createArtifactSetTransaction({
   _deps = {},
 } = {}) {
   if (output_directory == null || !String(output_directory).trim()) {
-    throw outputError('An output directory is required.', { phase: 'output_validation' });
+    throw outputError('An output directory is required.', {
+      kind: 'validation', phase: 'output_validation',
+    });
   }
   const deps = {
     createWriteStream: nodeCreateWriteStream,
@@ -124,6 +143,7 @@ export async function createArtifactSetTransaction({
     if (!existing) return;
     if (existing.isSymbolicLink() || !existing.isDirectory()) {
       throw outputError(`Run output target is not a replaceable directory: ${finalPath}`, {
+        kind: 'validation',
         phase: 'output_validation',
       });
     }
@@ -134,6 +154,7 @@ export async function createArtifactSetTransaction({
     const artifactPath = resolve(stagingPath, safeRelative);
     if (artifactPath !== stagingPath && !artifactPath.startsWith(`${stagingPath}${sep}`)) {
       throw outputError('Artifact path escaped the staging directory.', {
+        kind: 'validation',
         phase: 'output_validation',
       });
     }
@@ -146,7 +167,7 @@ export async function createArtifactSetTransaction({
     validateReplaceTarget(existing);
     if (existing && !force) {
       throw outputError(`Output run already exists: ${finalPath}`, {
-        code: 'OUTPUT_ALREADY_EXISTS', phase: 'output_validation',
+        code: 'OUTPUT_ALREADY_EXISTS', kind: 'conflict', phase: 'output_validation',
       });
     }
     await deps.mkdir(stagingPath, { recursive: false });
@@ -231,6 +252,7 @@ export async function createArtifactSetTransaction({
       if (state !== 'open') throw new Error(`Artifact set transaction is ${state}.`);
       if ([...streams].some((stream) => !stream.writableFinished && !stream.destroyed)) {
         throw outputError('Cannot publish while an artifact stream is still open.', {
+          kind: 'conflict',
           phase: 'artifact_publish',
         });
       }
@@ -238,7 +260,7 @@ export async function createArtifactSetTransaction({
       validateReplaceTarget(existing);
       if (existing && !force) {
         throw outputError(`Output run already exists: ${finalPath}`, {
-          code: 'OUTPUT_ALREADY_EXISTS', phase: 'artifact_publish',
+          code: 'OUTPUT_ALREADY_EXISTS', kind: 'conflict', phase: 'artifact_publish',
         });
       }
 
@@ -273,7 +295,10 @@ export async function createArtifactSetTransaction({
         if (error instanceof CoreOperationError) throw error;
         if (error?.code === 'EEXIST' || error?.code === 'ENOTEMPTY') {
           throw outputError(`Output run already exists: ${finalPath}`, {
-            code: 'OUTPUT_ALREADY_EXISTS', phase: 'artifact_publish', cause: error,
+            code: 'OUTPUT_ALREADY_EXISTS',
+            kind: 'conflict',
+            phase: 'artifact_publish',
+            cause: error,
           });
         }
         throw outputError(`Failed to publish run output: ${finalPath}`, {
@@ -305,7 +330,9 @@ export async function createArtifactSetTransaction({
  */
 export async function createArtifactTransaction({ output, force = false, _deps = {} } = {}) {
   if (output == null || !String(output).trim()) {
-    throw outputError('An output file is required.', { phase: 'output_validation' });
+    throw outputError('An output file is required.', {
+      kind: 'validation', phase: 'output_validation',
+    });
   }
   const deps = {
     createWriteStream: nodeCreateWriteStream,
@@ -332,12 +359,13 @@ export async function createArtifactTransaction({ output, force = false, _deps =
     const existing = await deps.lstat(outputPath);
     if (existing.isDirectory()) {
       throw outputError(`Output target is a directory: ${outputPath}`, {
+        kind: 'validation',
         phase: 'output_validation',
       });
     }
     if (!force) {
       throw outputError(`Output already exists: ${outputPath}`, {
-        code: 'OUTPUT_ALREADY_EXISTS', phase: 'output_validation',
+        code: 'OUTPUT_ALREADY_EXISTS', kind: 'conflict', phase: 'output_validation',
       });
     }
   } catch (error) {
@@ -401,7 +429,10 @@ export async function createArtifactTransaction({ output, force = false, _deps =
         state = 'aborted';
         if (error?.code === 'EEXIST') {
           throw outputError(`Output already exists: ${outputPath}`, {
-            code: 'OUTPUT_ALREADY_EXISTS', phase: 'artifact_publish', cause: error,
+            code: 'OUTPUT_ALREADY_EXISTS',
+            kind: 'conflict',
+            phase: 'artifact_publish',
+            cause: error,
           });
         }
         if (error instanceof CoreOperationError) throw error;
@@ -460,6 +491,7 @@ export async function writeTradingDataArtifact({
 } = {}) {
   if (!result || typeof result !== 'object' || !Array.isArray(result.trades)) {
     throw outputError('Canonical Trading Data result with trades is required.', {
+      kind: 'validation',
       phase: 'output_validation',
     });
   }

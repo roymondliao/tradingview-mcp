@@ -964,7 +964,13 @@ describe('Formal Strategy Run integration', () => {
         symbols_succeeded: 3,
         symbols_failed: 1,
       },
-      error: { code: 'RUN_INTERRUPTED', phase: 'signal', message: 'Received SIGINT.' },
+      error: {
+        code: 'RUN_INTERRUPTED',
+        kind: 'interrupt',
+        phase: 'signal',
+        message: 'Received SIGINT.',
+        retryable: false,
+      },
       resume_supported: true,
     });
   });

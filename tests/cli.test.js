@@ -85,6 +85,8 @@ describe('Strategy automation CLI signals', () => {
       facade.emit('SIGINT');
       assert.equal(signal.aborted, true);
       assert.equal(signal.reason.exit_code, 130);
+      assert.equal(signal.reason.kind, 'interrupt');
+      assert.equal(signal.reason.stage, 'process_signal');
       return { success: false, exit_code: signal.reason.exit_code };
     }, { process_facade: facade, progress_renderer: progress });
     assert.equal(result.exit_code, 130);
@@ -150,6 +152,17 @@ describe('CLI — help and routing', () => {
     assert.equal(resultExitCode({ success: true }), 0);
     assert.equal(resultExitCode({ success: false, failure_kind: 'partial' }), 1);
     assert.equal(resultExitCode({ success: false, failure_kind: 'cdp_connection' }), 2);
+    assert.equal(resultExitCode({
+      success: false,
+      errors: [{ code: 'CDP_DISCOVERY_FAILED', kind: 'cdp' }],
+    }), 2);
+    assert.equal(resultExitCode({
+      success: false,
+      errors: [
+        { code: 'RUN_CONFIG_INVALID', kind: 'validation' },
+        { code: 'CDP_DISCOVERY_FAILED', kind: 'cdp' },
+      ],
+    }), 2);
     assert.equal(resultExitCode({ success: false, exit_code: 130 }), 130);
     assert.equal(resultExitCode({ success: false, exit_code: 143 }), 143);
   });

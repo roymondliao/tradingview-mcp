@@ -46,15 +46,19 @@ const REQUIRED_SYMBOL_ARTIFACTS = Object.freeze(['report', 'trades', 'reconcilia
 
 function operationError(message, {
   code = 'OUTPUT_WRITE_FAILED',
+  kind = 'filesystem',
   phase = 'artifact_state_write',
   cause,
 } = {}) {
-  return new CoreOperationError(message, { code, phase, cause });
+  return new CoreOperationError(message, {
+    code, kind, phase, cause,
+  });
 }
 
 function artifactInvalid(message, cause) {
   return operationError(message, {
     code: 'RUN_RESUME_ARTIFACT_INVALID',
+    kind: 'artifact',
     phase: 'resume_validation',
     cause,
   });
@@ -74,6 +78,7 @@ function assertRunId(value, { resume = false } = {}) {
     if (resume) throw artifactInvalid('Run Directory name must be one safe Run ID segment.');
     throw operationError('run_id must be one safe path segment.', {
       code: 'RUN_OUTPUT_INVALID',
+      kind: 'validation',
       phase: 'output_validation',
     });
   }
@@ -195,7 +200,7 @@ export async function atomicReplaceJson({
   _deps = {},
 } = {}) {
   if (typeof path !== 'string' || !path.trim()) {
-    throw operationError('A JSON artifact path is required.');
+    throw operationError('A JSON artifact path is required.', { kind: 'validation' });
   }
   const deps = filesystemDeps(_deps);
   const outputPath = resolve(path);
@@ -204,15 +209,21 @@ export async function atomicReplaceJson({
   try {
     serialized = JSON.stringify(value, null, 2);
   } catch (error) {
-    throw operationError(`JSON artifact is not serializable: ${outputPath}`, { cause: error });
+    throw operationError(`JSON artifact is not serializable: ${outputPath}`, {
+      kind: 'validation',
+      cause: error,
+    });
   }
   if (typeof serialized !== 'string') {
-    throw operationError(`JSON artifact must have a serializable value: ${outputPath}`);
+    throw operationError(`JSON artifact must have a serializable value: ${outputPath}`, {
+      kind: 'validation',
+    });
   }
   const content = `${serialized}\n`;
   if (Buffer.byteLength(content, 'utf8') > max_bytes) {
     throw operationError(`JSON artifact exceeds the ${max_bytes}-byte limit: ${outputPath}`, {
       code: 'RUN_RESUME_ARTIFACT_INVALID',
+      kind: 'validation',
       phase: 'artifact_state_write',
     });
   }
@@ -459,6 +470,7 @@ export async function createDurableRunStore({
   if (typeof output_directory !== 'string' || !output_directory.trim()) {
     throw operationError('An output directory is required.', {
       code: 'RUN_OUTPUT_INVALID',
+      kind: 'validation',
       phase: 'output_validation',
     });
   }
@@ -477,6 +489,7 @@ export async function createDurableRunStore({
     if (isAlreadyExists(error)) {
       throw operationError(`Run output already exists: ${runPath}`, {
         code: 'RUN_OUTPUT_EXISTS',
+        kind: 'conflict',
         phase: 'output_validation',
         cause: error,
       });
@@ -493,6 +506,7 @@ export async function openDurableRunStore({ run_directory, _deps = {} } = {}) {
   if (typeof run_directory !== 'string' || !run_directory.trim()) {
     throw operationError('Run Directory is required.', {
       code: 'RUN_RESUME_NOT_FOUND',
+      kind: 'validation',
       phase: 'resume_load',
     });
   }
@@ -505,6 +519,7 @@ export async function openDurableRunStore({ run_directory, _deps = {} } = {}) {
     if (isMissing(error)) {
       throw operationError(`Run Directory was not found: ${runPath}`, {
         code: 'RUN_RESUME_NOT_FOUND',
+        kind: 'artifact',
         phase: 'resume_load',
         cause: error,
       });
@@ -651,6 +666,7 @@ export async function readDurableRunArtifacts({ run_directory, _deps = {} } = {}
     if (error?.code === 'RUN_RESUME_ARTIFACT_INVALID' && error.cause?.code === 'ENOENT') {
       throw operationError(`Run metadata was not found: ${store.artifactPath('run.json')}`, {
         code: 'RUN_RESUME_NOT_FOUND',
+        kind: 'artifact',
         phase: 'resume_load',
         cause: error,
       });

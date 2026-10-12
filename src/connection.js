@@ -1,4 +1,8 @@
 import CDP from 'chrome-remote-interface';
+import {
+  CoreOperationError,
+  isNormalizedCoreError,
+} from './core/errors.js';
 
 let client = null;
 let targetInfo = null;
@@ -22,15 +26,29 @@ function positiveEnvNumber(name, fallback) {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
-export class CdpOperationError extends Error {
-  constructor(message, { code = 'CDP_ERROR', stage, timeout_ms, target_id, chart_id, cause } = {}) {
-    super(message, cause ? { cause } : undefined);
+export class CdpOperationError extends CoreOperationError {
+  constructor(message, {
+    code = 'CDP_ERROR',
+    phase,
+    stage,
+    timeout_ms,
+    target_id,
+    chart_id,
+    retryable = true,
+    cause,
+  } = {}) {
+    super(message, {
+      code,
+      kind: 'cdp',
+      phase,
+      stage,
+      timeout_ms,
+      target_id,
+      chart_id,
+      retryable,
+      cause,
+    });
     this.name = 'CdpOperationError';
-    this.code = code;
-    if (stage) this.stage = stage;
-    if (timeout_ms !== undefined) this.timeout_ms = timeout_ms;
-    if (target_id) this.target_id = target_id;
-    if (chart_id) this.chart_id = chart_id;
   }
 }
 
@@ -58,29 +76,62 @@ function remainingTimeout(deadline, preferred, stage) {
   return Math.max(1, Math.min(preferred, remaining));
 }
 
-async function fetchTargets(timeoutMs = CDP_TIMEOUTS.discovery) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+export async function discoverCdpTargets({
+  timeout_ms = CDP_TIMEOUTS.discovery,
+  signal,
+  _deps = {},
+} = {}) {
+  const timeoutMs = Math.max(1, Number(timeout_ms) || CDP_TIMEOUTS.discovery);
+  const fetchImpl = _deps.fetch || fetch;
+  const setTimer = _deps.setTimeout || setTimeout;
+  const clearTimer = _deps.clearTimeout || clearTimeout;
+  const AbortControllerClass = _deps.AbortController || AbortController;
+  const controller = new AbortControllerClass();
+  let externalAbort;
+  if (signal) {
+    externalAbort = () => {
+      const reason = isNormalizedCoreError(signal.reason)
+        ? signal.reason
+        : new CoreOperationError('CDP target discovery was cancelled without a classified reason.', {
+          code: 'CORE_UNCLASSIFIED_ERROR',
+          kind: 'internal',
+          stage: 'target_discovery',
+          cause: signal.reason instanceof Error ? signal.reason : undefined,
+        });
+      controller.abort(reason);
+    };
+    if (signal.aborted) externalAbort();
+    else signal.addEventListener('abort', externalAbort, { once: true });
+  }
+  const timeoutReason = new CdpOperationError(
+    `CDP target discovery timed out after ${timeoutMs}ms`,
+    {
+      code: 'CDP_TIMEOUT',
+      stage: 'target_discovery',
+      timeout_ms: timeoutMs,
+    },
+  );
+  const timer = setTimer(() => controller.abort(timeoutReason), timeoutMs);
   try {
-    const resp = await fetch(`http://${CDP_HOST}:${CDP_PORT}/json/list`, { signal: controller.signal });
+    if (controller.signal.aborted) throw controller.signal.reason;
+    const resp = await fetchImpl(`http://${CDP_HOST}:${CDP_PORT}/json/list`, {
+      signal: controller.signal,
+    });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const targets = await resp.json();
     if (!Array.isArray(targets)) throw new Error('CDP target list is not an array');
     return targets;
   } catch (err) {
-    if (err instanceof CdpOperationError) throw err;
-    const timedOut = err?.name === 'AbortError';
-    throw new CdpOperationError(
-      timedOut ? `CDP target discovery timed out after ${timeoutMs}ms` : `CDP target discovery failed: ${err.message}`,
-      {
-        code: timedOut ? 'CDP_TIMEOUT' : 'CDP_DISCOVERY_FAILED',
-        stage: 'target_discovery',
-        ...(timedOut && { timeout_ms: timeoutMs }),
-        cause: err,
-      },
-    );
+    if (isNormalizedCoreError(controller.signal.reason)) throw controller.signal.reason;
+    if (isNormalizedCoreError(err)) throw err;
+    throw new CdpOperationError(`CDP target discovery failed: ${err?.message || String(err)}`, {
+      code: 'CDP_DISCOVERY_FAILED',
+      stage: 'target_discovery',
+      cause: err,
+    });
   } finally {
-    clearTimeout(timer);
+    clearTimer(timer);
+    if (signal && externalAbort) signal.removeEventListener('abort', externalAbort);
   }
 }
 
@@ -328,12 +379,12 @@ export async function reconnectTo(targetId) {
 }
 
 async function findChartTarget(timeoutMs) {
-  const targets = await fetchTargets(timeoutMs);
+  const targets = await discoverCdpTargets({ timeout_ms: timeoutMs });
   return selectActiveChartTarget(targets, { timeoutMs: Math.min(timeoutMs, CDP_TIMEOUTS.activeTarget) });
 }
 
 async function findTargetById(id, timeoutMs) {
-  const targets = await fetchTargets(timeoutMs);
+  const targets = await discoverCdpTargets({ timeout_ms: timeoutMs });
   return targets.find(t => t.id === id) || null;
 }
 

@@ -206,6 +206,7 @@ export function symbolIdentitiesMatch(expected, actual) {
 function contextChanged(message, { context, phase, symbol, cause } = {}) {
   return new CoreOperationError(message, {
     code: 'PANE_CONTEXT_CHANGED',
+    kind: 'identity',
     phase,
     symbol,
     retryable: false,
@@ -259,7 +260,7 @@ function assertInventoryOwnership(context, inventory, phase) {
 export async function activatePaneContext({ context, phase = 'pane_context', activate = true, reacquire = true, _deps } = {}) {
   if (!context?.target_id || !Number.isInteger(context?.pane_index)) {
     throw new CoreOperationError('Resolved context requires target_id and pane_index.', {
-      code: 'CHART_SESSION_INVALID', phase, context,
+      code: 'CHART_SESSION_INVALID', kind: 'validation', phase, context,
     });
   }
   const identify = _deps?.identifyTab || identifyTab;
@@ -300,17 +301,13 @@ export async function activatePaneContext({ context, phase = 'pane_context', act
     };
   } catch (error) {
     if (error instanceof CoreOperationError) throw error;
-    if (error?.code === 'CDP_TARGET_NOT_FOUND') {
-      throw contextChanged(`Chart target is closed or unavailable: ${context.target_id}`, {
-        context, phase, cause: error,
-      });
-    }
-    if (!String(error?.code || '').startsWith('CDP_')) {
-      throw contextChanged(`Unable to reacquire the expected Pane context: ${error?.message || String(error)}`, {
-        context, phase, cause: error,
-      });
-    }
-    throw error;
+    throw new CoreOperationError(error?.message || String(error), {
+      code: 'CORE_UNCLASSIFIED_ERROR',
+      kind: 'internal',
+      phase,
+      context,
+      cause: error,
+    });
   }
 }
 

@@ -10,7 +10,10 @@ import {
   join,
   resolve,
 } from 'node:path';
-import { CoreOperationError } from './errors.js';
+import {
+  CoreOperationError,
+  isNormalizedCoreError,
+} from './errors.js';
 import { check as checkPine } from './pine.js';
 import { normalizedPineSourceSha256 } from './pine-input-schema.js';
 import {
@@ -57,20 +60,29 @@ import { sha256Hex, stableJsonStringify } from './stable-json.js';
 import { reconnectTo } from '../connection.js';
 import { validateNamedWatchlistSymbols } from './watchlist.js';
 import { emitStrategyAutomationStatus } from './strategy-progress.js';
+import {
+  createStrategyErrorBoundary,
+  rehydrateStrategyRunError,
+  strategyErrorKind,
+} from './strategy-error-policy.js';
 
 const PINE_SOURCE_MAX_BYTES = 8 * 1024 * 1024;
 
 function resumeError(message, {
   code = 'RUN_RESUME_ARTIFACT_INVALID',
+  kind = strategyErrorKind(code) || 'artifact',
   phase = 'resume_validation',
   cause,
 } = {}) {
-  return new CoreOperationError(message, { code, phase, cause });
+  return new CoreOperationError(message, {
+    code, kind, phase, cause,
+  });
 }
 
 function identityError(message, cause) {
   return resumeError(message, {
     code: 'RUN_RESUME_IDENTITY_MISMATCH',
+    kind: 'identity',
     phase: 'resume_identity',
     cause,
   });
@@ -481,7 +493,13 @@ export async function readPersistedPineSource(run, _deps = {}) {
     return Object.freeze({ path, source, source_sha256: sourceSha256 });
   } catch (error) {
     if (error?.code === 'RUN_RESUME_IDENTITY_MISMATCH') throw error;
-    throw identityError(`Unable to verify persisted Pine source: ${path}.`, error);
+    throw new CoreOperationError(error?.message || String(error), {
+      code: 'PINE_SOURCE_READ_FAILED',
+      kind: 'filesystem',
+      phase: 'resume_identity',
+      stage: 'pine_source_read',
+      cause: error,
+    });
   }
 }
 
@@ -623,12 +641,8 @@ function preparedInputsFromRun(run, strategy, context) {
 }
 
 function wrapIdentityFailure(error, message) {
-  if (
-    error?.code === 'RUN_RESUME_IDENTITY_MISMATCH'
-    && error?.phase === 'resume_identity'
-  ) throw error;
-  if (String(error?.code || '').startsWith('CDP_')) throw error;
-  throw identityError(message, error);
+  void message;
+  throw createStrategyErrorBoundary({ phase: 'resume_identity' }).error(error);
 }
 
 /** Resolve current read-only runtime bindings and prove all stable identities. */
@@ -741,13 +755,17 @@ export async function withStrategyResumeContext({
 
 function interruptedError(signal) {
   const reason = signal?.reason;
-  const error = new CoreOperationError(
-    `Strategy automation was interrupted${reason ? `: ${reason.message || String(reason)}` : '.'}`,
-    { code: 'RUN_INTERRUPTED', phase: 'signal', cause: reason instanceof Error ? reason : undefined },
-  );
-  if (Number.isInteger(reason?.exit_code)) error.exit_code = reason.exit_code;
-  if (reason?.signal) error.signal = reason.signal;
-  return error;
+  if (isNormalizedCoreError(reason)) return reason;
+  if (reason) {
+    return createStrategyErrorBoundary({ phase: 'strategy_run_execution' }).error(reason, { signal });
+  }
+  return new CoreOperationError('Strategy automation was aborted without a classified reason.', {
+    code: 'CORE_UNCLASSIFIED_ERROR',
+    kind: 'internal',
+    phase: 'strategy_run_execution',
+    stage: 'abort',
+    cause: reason instanceof Error ? reason : undefined,
+  });
 }
 
 function assertNotAborted(signal) {
@@ -982,7 +1000,9 @@ export async function finalizeDurableStrategyRun({
     && manifests.every((manifest) => manifest.status === 'succeeded');
   const terminalError = error || (!complete
     ? new CoreOperationError('Strategy Run has incomplete or failed Experiments.', {
-      code: 'STRATEGY_RUN_FAILED', phase: 'strategy_run_execution',
+      code: 'STRATEGY_RUN_FAILED',
+      kind: 'internal',
+      phase: 'strategy_run_execution',
     })
     : null);
   const summary = loaded.run.planned_experiments
@@ -1009,6 +1029,9 @@ export async function durableStrategyRunResponse({
   signal,
 } = {}) {
   const interrupted = finalized.run.error?.code === 'RUN_INTERRUPTED';
+  const runtimeError = finalized.run.error
+    ? rehydrateStrategyRunError(finalized.run.error)
+    : null;
   const extensionFields = finalized.run.run_kind === 'extension'
     ? Object.freeze({
       run_kind: 'extension',
@@ -1037,7 +1060,13 @@ export async function durableStrategyRunResponse({
         symbols_succeeded: summary.symbols_succeeded ?? 0,
         symbols_failed: summary.symbols_failed ?? 0,
       }),
-      error: finalized.run.error,
+      error: runtimeError ? Object.freeze({
+        code: runtimeError.code,
+        kind: runtimeError.kind,
+        phase: runtimeError.phase,
+        message: runtimeError.message,
+        retryable: runtimeError.retryable,
+      }) : null,
       resume_supported: true,
     });
   }
@@ -1045,7 +1074,7 @@ export async function durableStrategyRunResponse({
     store.artifactInfo('run.json'),
     store.artifactInfo('watchlist.json'),
   ]);
-  const cdpFailure = String(finalized.run.error?.code || '').startsWith('CDP_');
+  const cdpFailure = runtimeError?.kind === 'cdp';
   return Object.freeze({
     success: finalized.run.status === 'succeeded',
     ...(cdpFailure && { failure_kind: 'cdp_connection' }),
@@ -1072,7 +1101,15 @@ export async function durableStrategyRunResponse({
     }),
     summary: finalized.summary,
     experiments: finalized.experiments,
-    ...(finalized.run.error && { error: finalized.run.error }),
+    ...(runtimeError && {
+      error: Object.freeze({
+        code: runtimeError.code,
+        kind: runtimeError.kind,
+        phase: runtimeError.phase,
+        message: runtimeError.message,
+        retryable: runtimeError.retryable,
+      }),
+    }),
     artifacts: Object.freeze({ run: runArtifact, watchlist: watchlistArtifact }),
     retry_supported: true,
     resume_supported: true,

@@ -11,8 +11,10 @@ export const STRATEGY_RUN_OUTPUT_FORMATS = Object.freeze(['json', 'jsonl', 'csv'
 const PATH_SAFE_NAME = /^[A-Za-z0-9_-]{1,100}$/;
 const ROOT_FIELDS = ['schema_version', 'run', 'strategy', 'target', 'backtest', 'experiments', 'output'];
 
-function problem(code, message, path, phase = 'config_validation') {
-  return Object.freeze({ code, message, ...(path && { path }), phase, retryable: false });
+function problem(code, message, path, phase = 'config_validation', kind = 'validation') {
+  return Object.freeze({
+    code, kind, message, ...(path && { path }), phase, retryable: false,
+  });
 }
 
 function isObject(value) {
@@ -252,6 +254,7 @@ export async function loadStrategyRunConfig({ config_path, _deps = {} } = {}) {
         `Unable to read Run Config: ${configPath} (${error?.message || String(error)})`,
         'config_path',
         'config_load',
+        'filesystem',
       )],
       warnings,
       config_path: configPath,
@@ -311,6 +314,7 @@ export async function loadStrategyRunConfig({ config_path, _deps = {} } = {}) {
         `Unable to read Pine source: ${strategyPath} (${error?.message || String(error)})`,
         'strategy.file',
         'filesystem_validation',
+        'filesystem',
       ));
     }
   }
@@ -324,6 +328,7 @@ export async function loadStrategyRunConfig({ config_path, _deps = {} } = {}) {
           `output.directory exists but is not a directory: ${outputDirectory}`,
           'output.directory',
           'filesystem_validation',
+          'filesystem',
         ));
       }
     } catch (error) {
@@ -345,6 +350,7 @@ export async function loadStrategyRunConfig({ config_path, _deps = {} } = {}) {
         `Run output already exists: ${outputPath}`,
         'run.run_id',
         'filesystem_validation',
+        'conflict',
       ));
     } catch (error) {
       if (!isMissing(error)) {
@@ -353,6 +359,7 @@ export async function loadStrategyRunConfig({ config_path, _deps = {} } = {}) {
           `Unable to inspect Run output: ${outputPath} (${error?.message || String(error)})`,
           'output.directory',
           'filesystem_validation',
+          'filesystem',
         ));
       }
     }

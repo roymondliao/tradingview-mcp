@@ -1,22 +1,25 @@
 # Composable Error Handling — Low-Level Design
 
-Status: `proposed`
+Status: `accepted`
 
 ## 1. Module boundaries
 
 | Module | Responsibility |
 | --- | --- |
-| `core/errors.js` | Error kinds、normalized carrier、bounded cause traversal、safe diagnostic projection。 |
-| `core/error-policy.js` | Pure mapper composition、boundary factory、translation／fallback helpers。 |
-| `connection.js` | CDP discovery/connect/command source normalization。 |
+| `core/errors.js` | Error kinds、carrier、normalized-contract checks、bounded cause traversal、safe diagnostic projection。 |
+| `core/error-policy.js` | Pure mapper composition、boundary factory、preservation／translation／fallback helpers。 |
+| `connection.js` | CDP discovery/connect/command及owned deadline source normalization。 |
 | `core/tab.js` | Consume injected normalized target discovery；no raw production fetch。 |
-| `core/strategy-resume.js` | Resume semantic errors only；no infrastructure reclassification。 |
-| `core/strategy-extend.js` | Compose Extension-specific translation and diagnostic aggregation。 |
-| `core/strategy-run.js` | Reuse common preflight boundaries。 |
-| `cli/router.js` | `toCoreDiagnostic()` delivery and kind-based exit code。 |
+| `core/artifacts.js` | Generic artifact／filesystem operation ownership。 |
+| `core/strategy-run-artifacts.js` | Strategy durable artifact semantics及strict persisted projection。 |
+| `core/strategy-resume.js` | Resume domain phase、semantic identity errors、persisted code rehydration。 |
+| `core/strategy-extend.js` | Extension phase、exact translation及diagnostic aggregation。 |
+| `core/strategy-run.js` | Run domain phase及common preflight boundaries。 |
+| `cli/commands/strategy.js` | POSIX signal owner及typed AbortSignal reason。 |
+| `cli/router.js` | `toCoreDiagnostic()` delivery and fixed exit policy。 |
 | `tools/_format.js` | MCP delivery from the same diagnostic projection。 |
 
-`error-policy.js`不得import Strategy、artifact、CLI或MCP modules。
+`error-policy.js`不得import Strategy、artifact、CLI或MCP modules。Domain code maps留在擁有它們的domain。
 
 ## 2. Core error carrier
 
@@ -34,45 +37,89 @@ export const CORE_ERROR_KINDS = Object.freeze([
 
 export class CoreOperationError extends Error {
   constructor(message, {
-    code = 'CORE_OPERATION_FAILED',
-    kind = 'internal',
+    code = 'CORE_OPERATION_FAILED', // legacy carrier default; fallback uses CORE_UNCLASSIFIED_ERROR
+    kind, // migration期間optional；normalized boundary output required
     phase,
     stage,
+    entity_id,
+    symbol,
     retryable = false,
+    context,
+    timeout_ms,
+    target_id,
+    chart_id,
+    signal,
+    exit_code,
     cause,
-    ...boundedMetadata
-  } = {}) { /* validate and project */ }
+  } = {}) { /* validate explicit fields only */ }
 }
 ```
 
-Constructor validates kind/code/phase bounds and never copies arbitrary source fields。
+Rules：
 
-`CdpOperationError`可改為extends `CoreOperationError`，或由connection-private adapter立即轉換；public
-callers只依Core contract，不依class identity。
+- 不使用`...boundedMetadata`，所有metadata明確列出並validate／bound。
+- 有提供kind時必須是known value；不得以`kind = internal`掩蓋legacy call site。
+- `isNormalizedCoreError(error)`要求bounded non-empty code、known kind、message、retryable及phase／stage至少一個。
+- 新增或已遷移的constructor call必須explicit kind。
+- Compatibility mapper可接受legacy missing-kind error，但presentation只能接收normalized error。
+- `signal`只接受SIGINT／SIGTERM；`exit_code`只接受130／143且必須與signal一致。
 
-## 3. Cause traversal
+`CdpOperationError`直接extends `CoreOperationError`並固定`kind: cdp`。Public callers依Core contract，不依
+class identity。
+
+## 3. Field enrichment
+
+Source boundary先建立：
+
+```text
+code + kind + stage + message + retryable + private cause
+```
+
+Domain boundary可建立equivalent immutable copy增加owning phase：
+
+```text
+preserve code + kind + stage + message + retryable
+add/replace phase with current owned workflow phase
+```
+
+Domain boundary不得覆寫source stage或將source code翻譯成不相關domain semantic code。True semantic translation
+只透過exact map。
+
+## 4. Cause traversal
+
+最多檢查16個object nodes，root算第一個node；第17個node不讀取：
 
 ```js
-export const CORE_ERROR_CAUSE_MAX_DEPTH = 16;
+export const CORE_ERROR_CAUSE_MAX_NODES = 16;
+
+function ownDataProperty(object, key) {
+  const descriptor = Object.getOwnPropertyDescriptor(object, key);
+  return descriptor && Object.hasOwn(descriptor, 'value')
+    ? descriptor.value
+    : undefined;
+}
 
 export function findErrorCause(error, predicate, {
-  max_depth = CORE_ERROR_CAUSE_MAX_DEPTH,
+  max_nodes = CORE_ERROR_CAUSE_MAX_NODES,
 } = {}) {
   const seen = new Set();
   let current = error;
-  for (let depth = 0; current && depth <= max_depth; depth += 1) {
+  for (let visited = 0; isTraversableErrorValue(current) && visited < max_nodes; visited += 1) {
     if (seen.has(current)) break;
     seen.add(current);
     if (predicate(current)) return current;
-    current = current.cause;
+    current = ownDataProperty(current, 'cause');
   }
   return null;
 }
 ```
 
-Traversal不throw getter errors；implementation只接受normal Error／plain object own `cause`。
+Traversal只接受normal Error或plain object，且只讀own data-property `cause`；accessor getter不呼叫。Predicate
+也只讀owned projected fields，不能spread、serialize或反射整個source object。
 
-## 4. Mapper contract
+同一bounded traversal utility亦供root-cause message selection使用。
+
+## 5. Mapper contract
 
 ```ts
 type ErrorMapper = (error: unknown, context?: object) => CoreOperationError | null;
@@ -83,47 +130,67 @@ Rules：
 - Pure；不得mutation error/context。
 - Match時回normalized error。
 - 不match回`null`，不得throw。
-- Mapper output必須有known kind/code。
+- Mapper output必須通過`isNormalizedCoreError()`。
 - Fallback mapper必須排最後且always match。
-
-Composition：
 
 ```js
 export function composeErrorMappers(...mappers) {
+  assertFinalFallback(mappers);
   return (error, context) => {
     for (const mapper of mappers) {
       const mapped = mapper(error, context);
-      if (mapped) return mapped;
+      if (!mapped) continue;
+      assertNormalizedCoreError(mapped);
+      return mapped;
     }
     throw new TypeError('Error mapper chain requires a final fallback.');
   };
 }
 ```
 
-## 5. Reusable mappers
+## 6. Reusable mappers
 
-### Preserve interrupt
+### Preserve owned abort reason
 
-Match`RUN_INTERRUPTED`、owned AbortSignal reason及allowed 130／143 metadata。不得將ordinary discovery
-timeout誤分類為user interrupt。
+`preserveOwnedAbortReason`只match以下情況：
 
-### Promote infrastructure cause
+- `signal.reason`已是normalized error。
+- Current error／cause已是`RUN_INTERRUPTED / interrupt`。
+- Allowed SIGINT／SIGTERM metadata與130／143一致。
 
-Bounded scan完整cause chain，優先找：
+Ordinary `AbortError`不match；deadline、caller與cascade semantics由controller owner在source產生。
+
+### Promote normalized infrastructure cause
+
+Bounded scan只提升：
 
 ```text
 kind: cdp
 kind: filesystem
-code prefix CDP_ (legacy adapter during migration)
 ```
 
-Legacy raw network messages只允許在source adapter內判斷，不成為generic domain mapper。
+Migration compatibility可以透過explicit known-code map補kind後再提升。Generic promotion不得使用`CDP_` prefix、
+raw errno或network message heuristic。Artifact與conflict已具有更精確semantics，不當作generic filesystem提升。
+
+Promoted copy保留source code／kind／stage／message／retryable，並加入current domain phase。
 
 ### Preserve normalized error
 
-若error已是complete Core contract，保留object或建立equivalent immutable copy。
+若error已符合完整Core contract，保留object或建立equivalent immutable copy；context指定owning phase時只做field
+enrichment，不重新分類。
 
-### Translate codes
+### Normalize legacy exact codes
+
+```js
+normalizeLegacyCodes({
+  RUN_OUTPUT_EXISTS: { kind: 'conflict' },
+  RUN_RESUME_ARTIFACT_INVALID: { kind: 'artifact' },
+});
+```
+
+Map由domain owner提供。沒有mapping就decline，不使用prefix／substring。
+
+### Translate exact codes
 
 ```js
 translateErrorCodes({
@@ -135,22 +202,45 @@ translateErrorCodes({
 });
 ```
 
-Translation保留message/cause，但只在前置infrastructure mapper decline後執行。
+Translation保留bounded message／private cause，只在前置abort及infrastructure mappers decline後執行，並排在
+generic normalized preservation之前。
 
-### Bounded fallback
-
-Caller提供owned code/kind/phase及bounded message prefix；unknown properties不copy。
-
-## 6. Boundary factory
+### Bounded unclassified fallback
 
 ```js
-export function createErrorBoundary({ mappers, projection = toCoreDiagnostic }) {
-  const normalize = composeErrorMappers(...mappers);
+boundedUnclassifiedError({
+  phase: 'extension_identity',
+});
+```
+
+固定輸出：
+
+```text
+code: CORE_UNCLASSIFIED_ERROR
+kind: internal
+retryable: false
+phase: owned workflow when available
+message: bounded safe deepest root-cause message
+```
+
+Unknown properties不copy，fallback不得接受identity／validation等domain code。
+
+## 7. Boundary factory
+
+```js
+export function createErrorBoundary({
+  phase,
+  mappers,
+  projection = toCoreDiagnostic,
+}) {
+  const normalizeMapped = composeErrorMappers(...mappers);
+  const normalize = (error, context = {}) => enrichOwnedPhase(
+    normalizeMapped(error, { ...context, phase }),
+    phase,
+  );
   return Object.freeze({
     normalize,
-    error(error, context) {
-      return normalize(error, context);
-    },
+    error: normalize,
     diagnostic(error, context) {
       return projection(normalize(error, context));
     },
@@ -158,23 +248,75 @@ export function createErrorBoundary({ mappers, projection = toCoreDiagnostic }) 
 }
 ```
 
-Domain owns boundary definition, not implementation primitives。
+Domain owns boundary definition與phase；shared factory只執行順序、validation及projection。
 
-## 7. CDP target discovery
+## 8. Abort ownership implementation
+
+### POSIX process signal
+
+`withStrategyAutomationSignals()` owns SIGINT／SIGTERM：
+
+```js
+controller.abort(new CoreOperationError(`Received ${signalName}.`, {
+  code: 'RUN_INTERRUPTED',
+  kind: 'interrupt',
+  phase: currentPhase,
+  stage: 'process_signal',
+  signal: signalName,
+  exit_code: SIGNAL_EXIT_CODES[signalName],
+}));
+```
+
+Receiver保留reason，不再建立第二個generic interrupted wrapper。Historical `phase: signal` artifacts仍可讀。
+
+### Owned deadline
+
+Timer owner建立typed timeout reason或保留explicit `deadlineExpired` state：
+
+```js
+const reason = new CdpOperationError(
+  `CDP target discovery timed out after ${timeoutMs}ms`,
+  {
+    code: 'CDP_TIMEOUT',
+    stage: 'target_discovery',
+    timeout_ms: timeoutMs,
+    retryable: true,
+  },
+);
+controller.abort(reason);
+```
+
+Fetch丟出的AbortError只是private cause；public error使用typed reason。
+
+### Caller cancellation
+
+Explicit external caller cancellation使用`RUN_CANCELLED / interrupt`，沒有POSIX exit metadata，因此CLI exit 1。
+
+### Cascade cancellation
+
+Worker coordinator使用primary normalized error作abort reason。被取消worker不得以`RUN_INTERRUPTED`覆蓋primary
+error。
+
+### Ownerless abort
+
+無typed reason且owner無法證明deadline／caller semantics時，進入`CORE_UNCLASSIFIED_ERROR / internal`，並保留
+bounded safe AbortError message。
+
+## 9. CDP target discovery source boundary
 
 `connection.js` exports：
 
 ```js
-export async function discoverCdpTargets({ timeout_ms, _deps } = {})
+export async function discoverCdpTargets({ timeout_ms, signal, _deps } = {})
 ```
 
 It owns：
 
 - Host／port construction。
-- Abort timeout。
+- Owner deadline與external typed reason composition。
 - HTTP status and JSON shape validation。
 - `CDP_DISCOVERY_FAILED`／`CDP_TIMEOUT` normalization。
-- `kind: cdp`、stage／phase、retryable semantics。
+- `kind: cdp`、`stage: target_discovery`及explicit retryable semantics。
 
 `core/tab.js`：
 
@@ -185,29 +327,48 @@ const targets = await discoverTargets();
 
 Tests仍可inject arrays/errors，但production不得call global `fetch`。
 
-## 8. Strategy boundary composition
+## 10. Filesystem and artifact source boundaries
+
+Filesystem classification依owned operation，不依errno alone：
+
+```text
+read required formal artifact
+  → missing／invalid／corrupt → artifact
+
+create immutable Run output or acquire lease
+  → exists／owned／collision → conflict
+
+generic read／write／rename／fsync without stronger semantics
+  → filesystem
+```
+
+Source error保留raw filesystem error作private cause。Higher Strategy boundary只看到normalized result。
+
+## 11. Strategy boundary composition
 
 ```js
 const extensionIdentityBoundary = createErrorBoundary({
+  phase: 'extension_identity',
   mappers: [
-    preserveInterruptError,
-    promoteInfrastructureCause,
-    preserveKnownResourceError,
+    preserveOwnedAbortReason,
+    promoteInfrastructureCause({
+      legacy_codes: STRATEGY_LEGACY_INFRASTRUCTURE_KINDS,
+    }),
     translateErrorCodes({
       RUN_RESUME_IDENTITY_MISMATCH: {
         code: 'RUN_EXTENSION_IDENTITY_MISMATCH',
         kind: 'identity',
-        phase: 'extension_identity',
       },
     }),
-    boundedFallbackError({
-      code: 'RUN_EXTENSION_IDENTITY_MISMATCH',
-      kind: 'identity',
-      phase: 'extension_identity',
-    }),
+    preserveNormalizedError,
+    normalizeLegacyCodes(EXTENSION_LEGACY_ERROR_KINDS),
+    boundedUnclassifiedError(),
   ],
 });
 ```
+
+Unknown fallback不能使用`RUN_EXTENSION_IDENTITY_MISMATCH`。只有known Resume identity error，或Extension成功
+讀取後自行偵測的stable drift，才能使用Extension identity code。
 
 Dry-run：
 
@@ -221,16 +382,16 @@ Formal：
 throw extensionIdentityBoundary.error(error);
 ```
 
-Run／Resume建立各自translation map，但共用interrupt/infrastructure/resource policies。
+Run／Resume建立各自exact maps，但共用abort preservation、normalized infrastructure promotion及fallback primitive。
 
-## 9. Diagnostic projection
+## 12. Diagnostic projection
 
-`toCoreDiagnostic()` returns message field；delivery adapters rename only at outer envelope if compatibility requires：
+`toCoreDiagnostic()`只接受normalized error，並從一份explicit allowlist建立immutable value：
 
 ```js
 const diagnostic = toCoreDiagnostic(error);
 
-// CLI/MCP envelope
+// CLI/MCP compatibility envelope
 {
   success: false,
   ...diagnostic,
@@ -238,23 +399,32 @@ const diagnostic = toCoreDiagnostic(error);
 }
 ```
 
-避免CLI `handleError()`與MCP `coreErrorPayload()`各自重列safe field allowlist。Projection implementation只存在
-Core一次。
+Delivery adapter若輸出`error`，應避免同時重複輸出`message`，但Core parity比較基於normalize後的diagnostic。
+CLI `handleError()`與MCP `coreErrorPayload()`不再各自維護field allowlist。
 
-## 10. Exit policy
+## 13. Exit policy
 
 ```js
-export function errorExitCode(diagnostic) {
-  if (diagnostic.kind === 'interrupt') return diagnostic.exit_code;
-  if (diagnostic.kind === 'cdp') return 2;
+export function diagnosticExitCode(diagnostic) {
+  if ([130, 143].includes(diagnostic?.exit_code)) return diagnostic.exit_code;
+  if (diagnostic?.kind === 'cdp') return 2;
+  return 1;
+}
+
+export function resultExitCode(result) {
+  if ([130, 143].includes(result?.exit_code)) return result.exit_code;
+  if (result?.success !== false) return 0;
+  const diagnostics = collectReportableDiagnostics(result);
+  if (diagnostics.some((item) => item.kind === 'cdp')) return 2;
+  if (result?.failure_kind === 'cdp_connection') return 2; // migration only
   return 1;
 }
 ```
 
-Result responses：若含`errors[]`，outer service應提供derived `failure_kind`／primary kind，或CLI從first
-reportable diagnostic計算。Ordering由domain定義，CLI不排序。
+`collectReportableDiagnostics()`只讀top-level normalized diagnostic及bounded `errors[]`，不排序、不讀message。
+Migration完成後刪除`failure_kind` compatibility branch。
 
-## 11. Artifact projection
+## 14. Artifact projection and kind rehydration
 
 `sanitizeStrategyRunError()`繼續輸出exact：
 
@@ -264,35 +434,75 @@ phase
 message
 ```
 
-Tests必須證明runtime kind不進入run／manifest／Symbol strict artifact validators。
+Strategy domain維護supported persisted codes的exact map：
 
-## 12. Test matrix
+```js
+const STRATEGY_RUN_ERROR_KINDS = Object.freeze({
+  CDP_DISCOVERY_FAILED: 'cdp',
+  CDP_TIMEOUT: 'cdp',
+  RUN_INTERRUPTED: 'interrupt',
+  RUN_OUTPUT_EXISTS: 'conflict',
+  RUN_RESUME_ARTIFACT_INVALID: 'artifact',
+  // reviewed supported v2/v3/v4 codes
+});
 
-### Pure combinators
+export function rehydrateStrategyRunError(record) {
+  const kind = STRATEGY_RUN_ERROR_KINDS[record.code] || 'internal';
+  return new CoreOperationError(record.message, {
+    code: record.code,
+    kind,
+    phase: record.phase,
+  });
+}
+```
 
-- Mapper ordering、decline、fallback。
-- Cause cycle、depth 16／17、non-Error values。
-- Infrastructure promotion through two／three domain wrappers。
-- Immutability and bounded projection。
+Unknown persisted code保留原code／phase／message，runtime kind設為internal並透過test／observability seam記錄。
+Rehydration不mutation artifact，不將kind寫回disk，不使用prefix或message。
 
-### Infrastructure
+## 15. Test matrix
 
-- ECONNREFUSED／fetch failure → `CDP_DISCOVERY_FAILED`。
-- Abort timeout → `CDP_TIMEOUT`。
+### Field contract and pure combinators
+
+- Kind／code／phase／stage responsibility及invalid values。
+- Legacy missing-kind accepted before normalization；presentation rejects it。
+- Mapper ordering、decline、fallback與exact maps。
+- Cause cycle、16／17 nodes、getter cause及non-Error values。
+- Unknown fallback使用deepest bounded safe message及`CORE_UNCLASSIFIED_ERROR`。
+- Immutability and explicit diagnostic allowlist。
+
+### Abort ownership
+
+- SIGINT → interrupt／130；SIGTERM → interrupt／143。
+- Caller cancel → interrupt／1。
+- CDP owned deadline → cdp／2，不是interrupt。
+- Cascade cancellation preserves primary error。
+- Lease loss remains conflict。
+- Ownerless AbortError becomes unclassified internal。
+- Historical `phase: signal` artifact remains readable。
+
+### Source boundaries
+
+- ECONNREFUSED／fetch failure → `CDP_DISCOVERY_FAILED / cdp`。
+- CDP deadline → `CDP_TIMEOUT / cdp`。
 - HTTP error／invalid JSON shape。
 - `tab list`、Layout resolver and status share one discovery adapter。
+- Required artifact ENOENT → artifact。
+- Immutable output EEXIST → conflict。
+- Generic filesystem write failure → filesystem。
 
 ### Domain
 
-- CDP offline during Extension identity stays CDP。
+- CDP offline during Extension identity keeps source code／kind／stage and gains Extension phase。
 - Layout missing stays resource validation。
 - Stable saved Layout／Pane drift becomes Extension identity mismatch。
+- Unknown error does not become identity mismatch。
 - Dry-run/formal parity for each case。
 
-### Presentation
+### Presentation and persistence
 
-- CLI／MCP field parity。
-- Exit 0／1／2／130／143。
-- No message-regex dependency after migration。
-- No stack/cause/private metadata leakage。
-- Artifact error projection remains v2／v3／v4 compatible。
+- CLI／MCP Core field parity。
+- Exit 0／1／2／130／143 and aggregated mixed errors。
+- No message-regex／prefix classification after migration。
+- No stack／cause／private metadata leakage。
+- Artifact projection remains exact v2／v3／v4 shape。
+- Persisted exact-code kind rehydration and unknown-code fallback。

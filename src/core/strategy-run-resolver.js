@@ -7,14 +7,19 @@ import { CoreOperationError } from './errors.js';
 import { stableJsonStringify } from './stable-json.js';
 
 function resolutionError(code, message, context = {}) {
-  const error = new Error(message);
-  Object.assign(error, { code, phase: 'resource_resolution', retryable: false, ...context });
-  return error;
+  return new CoreOperationError(message, {
+    code,
+    kind: 'validation',
+    phase: 'resource_resolution',
+    retryable: false,
+    context,
+  });
 }
 
 function resumeIdentityError(message, cause) {
   return new CoreOperationError(message, {
     code: 'RUN_RESUME_IDENTITY_MISMATCH',
+    kind: 'identity',
     phase: 'resume_identity',
     cause,
   });

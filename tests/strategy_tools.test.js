@@ -131,7 +131,7 @@ describe('Strategy Trading MCP parity', () => {
       tradingCore: {
         getStrategyTradingReport: async () => {
           throw new CoreOperationError('snapshot changed', {
-            code: 'STALE_STRATEGY_SNAPSHOT', phase: 'trading_data_batch',
+            code: 'STALE_STRATEGY_SNAPSHOT', kind: 'identity', phase: 'trading_data_batch',
             entity_id: 'strategy-1', symbol: 'TWSE:2344', retryable: true, context,
           });
         },
@@ -144,6 +144,7 @@ describe('Strategy Trading MCP parity', () => {
     assert.deepEqual(payload(response), {
       success: false,
       code: 'STALE_STRATEGY_SNAPSHOT',
+      kind: 'identity',
       error: 'snapshot changed',
       phase: 'trading_data_batch',
       entity_id: 'strategy-1',

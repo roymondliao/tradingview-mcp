@@ -19,6 +19,7 @@ import {
 } from './strategy-durable-experiment.js';
 import { deriveRunSummary, strategyRunArtifactFamily } from './strategy-run-state.js';
 import { sha256Hex, stableJsonStringify } from './stable-json.js';
+import { strategyErrorKind } from './strategy-error-policy.js';
 
 export const STRATEGY_RUN_LINEAGE_MAX_DEPTH = 64;
 export const STRATEGY_RUN_LINEAGE_MAX_EXPERIMENTS = 4096;
@@ -29,10 +30,13 @@ const RUN_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
 
 function lineageError(message, {
   code = 'RUN_EXTENSION_LINEAGE_INVALID',
+  kind = strategyErrorKind(code) || 'artifact',
   phase = 'extension_lineage',
   cause,
 } = {}) {
-  return new CoreOperationError(message, { code, phase, cause });
+  return new CoreOperationError(message, {
+    code, kind, phase, cause,
+  });
 }
 
 function sha256Identity(value) {

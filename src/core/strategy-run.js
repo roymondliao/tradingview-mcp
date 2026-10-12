@@ -30,18 +30,13 @@ import {
 import { executePreparedDurableRun } from './strategy-durable-run-lifecycle.js';
 import { durableStrategyTargetContext } from './strategy-durable-experiment.js';
 import { emitStrategyAutomationStatus } from './strategy-progress.js';
+import {
+  strategyDiagnostic,
+  strategyDiagnostics,
+} from './strategy-error-policy.js';
 
-function diagnostic(error, fallbackCode, phase) {
-  return Object.freeze({
-    code: error?.code || fallbackCode,
-    message: String(error?.message || error || fallbackCode).slice(0, 1000),
-    phase: error?.phase || phase,
-    retryable: error?.retryable === true,
-    ...(error?.path && { path: error.path }),
-    ...(error?.layout_name && { layout_name: error.layout_name }),
-    ...(error?.pane_index != null && { pane_index: error.pane_index }),
-    ...(error?.match_count != null && { match_count: error.match_count }),
-  });
+function diagnostic(error, _legacyFallbackCode, phase) {
+  return strategyDiagnostic(error, { phase });
 }
 
 function blocked(stage, reason) {
@@ -52,6 +47,7 @@ function compilerDiagnostics(result) {
   if (!result?.compiled) {
     return [Object.freeze({
       code: 'PINE_COMPILE_FAILED',
+      kind: 'validation',
       message: 'Local Pine source did not compile.',
       phase: 'candidate_compile',
       retryable: false,
@@ -60,7 +56,10 @@ function compilerDiagnostics(result) {
   }
   if (!result?.input_schema?.available) {
     return (result?.input_schema?.errors || []).map((error) => Object.freeze({
-      ...error, phase: 'candidate_schema', retryable: false,
+      ...error,
+      kind: error.kind || 'validation',
+      phase: 'candidate_schema',
+      retryable: false,
     }));
   }
   return [];
@@ -90,7 +89,7 @@ export async function dryRunStrategyAutomation({ config_path, _include_internal 
       symbol_validation: { performed: false, reason: 'formal_run_only' },
       blocked: [blocked('all_resolution', 'Run Config root is invalid.')],
       warnings,
-      errors,
+      errors: strategyDiagnostics(errors, { phase: 'config_load' }),
     };
   }
 
@@ -253,11 +252,9 @@ export async function dryRunStrategyAutomation({ config_path, _include_internal 
     blockedStages.push(blocked('parameter_set_validation', 'Candidate Input Schema is unavailable.'));
   }
 
-  const hasConnectionFailure = errors.some((error) => (
-    String(error.code || '').startsWith('CDP_')
-    || /CDP|ECONNREFUSED|not running/i.test(error.message || '')
-  ));
-  const valid = errors.length === 0;
+  const normalizedErrors = strategyDiagnostics(errors, { phase: 'strategy_run_preflight' });
+  const hasConnectionFailure = normalizedErrors.some((error) => error.kind === 'cdp');
+  const valid = normalizedErrors.length === 0;
   const response = {
     success: valid,
     valid,
@@ -296,7 +293,7 @@ export async function dryRunStrategyAutomation({ config_path, _include_internal 
     parameter_sets: parameterPlan.parameter_sets,
     blocked: blockedStages,
     warnings,
-    errors,
+    errors: normalizedErrors,
   };
   if (!_include_internal) return response;
   return {

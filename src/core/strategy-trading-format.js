@@ -35,7 +35,11 @@ export const TRADING_DATA_CSV_COLUMNS = Object.freeze([
 ]);
 
 function formatError(message, code = 'OUTPUT_FORMAT_UNSUPPORTED') {
-  return new CoreOperationError(message, { code, phase: 'output_validation' });
+  return new CoreOperationError(message, {
+    code,
+    kind: 'validation',
+    phase: 'output_validation',
+  });
 }
 
 /** Resolve an explicit format or infer it from a recognized output extension. */

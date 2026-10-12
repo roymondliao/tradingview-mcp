@@ -269,7 +269,7 @@ describe('Strategy Symbol retry executor', () => {
     runtime.callbacks.signal = controller.signal;
     await assert.rejects(
       executeStrategySymbolWithRetry(runtime.callbacks),
-      (error) => error.code === 'RUN_INTERRUPTED',
+      (error) => error.code === 'CORE_UNCLASSIFIED_ERROR' && error.kind === 'internal',
     );
     assert.deepEqual(runtime.calls.cleanup, []);
     assert.deepEqual(runtime.calls.transitions, []);
@@ -307,7 +307,10 @@ describe('Strategy Symbol retry executor', () => {
     const execution = executeStrategySymbolWithRetry(runtime.callbacks);
     assert.equal(await scheduled, 1000);
     controller.abort(new Error('cancel default delay'));
-    await assert.rejects(execution, (error) => error.code === 'RUN_INTERRUPTED');
+    await assert.rejects(
+      execution,
+      (error) => error.code === 'CORE_UNCLASSIFIED_ERROR' && error.kind === 'internal',
+    );
     assert.equal(cleared, 1);
     assert.equal(runtime.current().symbols[0].status, 'retry_wait');
   });

@@ -1,10 +1,11 @@
 /** Fixed Strategy Symbol retry policy and manifest-driven attempt execution. */
-import { CoreOperationError } from './errors.js';
+import { CoreOperationError, isNormalizedCoreError } from './errors.js';
 import {
   sanitizeStrategyRunError,
   transitionSymbolState,
   validateExperimentManifest,
 } from './strategy-run-state.js';
+import { createStrategyErrorBoundary } from './strategy-error-policy.js';
 
 export const STRATEGY_SYMBOL_MAX_ATTEMPTS = 3;
 export const STRATEGY_SYMBOL_RETRY_DELAYS_MS = Object.freeze([1000, 2000]);
@@ -27,10 +28,17 @@ const FAIL_SYMBOL_CODES = new Set([
 
 function interruptedError(signal) {
   const reason = signal?.reason;
-  return new CoreOperationError(
-    `Strategy Symbol execution was interrupted${reason ? `: ${reason.message || String(reason)}` : '.'}`,
-    { code: 'RUN_INTERRUPTED', phase: 'signal', cause: reason instanceof Error ? reason : undefined },
-  );
+  if (isNormalizedCoreError(reason)) return reason;
+  if (reason) {
+    return createStrategyErrorBoundary({ phase: 'strategy_run_execution' }).error(reason, { signal });
+  }
+  return new CoreOperationError('Strategy Symbol execution was aborted without a classified reason.', {
+    code: 'CORE_UNCLASSIFIED_ERROR',
+    kind: 'internal',
+    phase: 'strategy_run_execution',
+    stage: 'abort',
+    cause: reason instanceof Error ? reason : undefined,
+  });
 }
 
 function assertNotAborted(signal) {
@@ -67,7 +75,7 @@ export function classifyStrategySymbolError(error) {
 export function strategySymbolSuccessDetails(result) {
   if (!result || typeof result !== 'object') {
     throw new CoreOperationError('Strategy Symbol attempt returned no result.', {
-      code: 'STRATEGY_RUN_FAILED', phase: 'symbol_attempt_result',
+      code: 'STRATEGY_RUN_FAILED', kind: 'internal', phase: 'symbol_attempt_result',
     });
   }
   const artifacts = Object.fromEntries(
@@ -91,6 +99,7 @@ function transitionPersistenceError(error) {
     `Failed to persist Strategy Symbol state: ${error?.message || String(error)}`,
     {
       code: error?.code || 'OUTPUT_WRITE_FAILED',
+      kind: 'filesystem',
       phase: error?.phase || 'manifest_transition',
       cause: error,
     },

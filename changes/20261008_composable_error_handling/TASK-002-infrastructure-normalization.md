@@ -1,7 +1,7 @@
 ---
 id: TASK-002
-title: Infrastructure Boundary Normalization
-status: todo
+title: Source Boundary and Abort Normalization
+status: done
 phase: composable-error-handling
 depends_on:
   - TASK-001
@@ -10,12 +10,13 @@ blocks:
 scope: source-boundary-normalization
 ---
 
-# TASK-002: Infrastructure Boundary Normalization
+# TASK-002: Source Boundary and Abort Normalization
 
 ## Goal
 
-讓CDP discovery/connect/command與owned filesystem boundaries在source處產生完整Core contract，並消除
-`core/tab.js` production raw fetch，使所有Layout／Tab／status callers共用同一target discovery authority。
+讓CDP discovery/connect/command、owned deadlines與filesystem/artifact operations在擁有operation semantics的
+source處產生完整Core contract，並消除`core/tab.js` production raw fetch，使所有Layout／Tab／status callers
+共用同一target discovery authority。
 
 ## Expected ownership
 
@@ -23,29 +24,35 @@ scope: source-boundary-normalization
 - `src/core/tab.js`
 - `src/core/artifacts.js`
 - `src/core/strategy-run-artifacts.js`
+- `src/cli/commands/strategy.js`
 - Connection／Tab／artifact tests
 
 ## Requirements
 
 - Export bounded `discoverCdpTargets()` from connection layer。
 - Normalize fetch、timeout、HTTP及invalid target-list errors to `kind: cdp`。
-- Make `CdpOperationError` satisfy Core contract without losing stage／timeout metadata。
+- Make `CdpOperationError` extend the Core carrier with fixed `kind: cdp`，without losing stage／timeout metadata。
+- Treat AbortSignal as a carrier：typed reason、owner deadline、caller cancel and cascade cancellation remain distinct。
+- Ensure SIGINT／SIGTERM reasons carry interrupt kind、current workflow phase、`process_signal` stage and 130／143。
 - Replace `core/tab.js` direct global fetch with injected discovery dependency。
-- Assign filesystem／artifact kinds at owned artifact boundaries。
+- Classify required artifact failure、immutable collision and generic filesystem failure by owned operation semantics。
 - Preserve existing stable codes and existing test injection seams。
-- No message-based classification above source adapters。
+- No raw errno、AbortError、prefix or message-based classification above source adapters。
 
 ## Tests
 
 - TradingView unavailable／ECONNREFUSED／generic fetch failure。
-- Discovery timeout、HTTP non-2xx、non-array JSON。
+- Discovery owned timeout、external typed cancellation、HTTP non-2xx、non-array JSON。
 - Status、Tab list and Layout resolution error parity。
 - Target metadata failure remains separate from target-list discovery failure。
-- Artifact ENOENT／EEXIST／symlink／write failure kinds。
+- Required artifact ENOENT、immutable output EEXIST、generic filesystem write and symlink failure kinds。
+- SIGINT／SIGTERM、caller cancellation、cascade cancellation、lease loss and ownerless AbortError matrix。
 
 ## Acceptance criteria
 
-- [ ] No production target-list caller directly uses global `fetch`。
-- [ ] CDP failures always carry kind/code/stage before entering domain code。
-- [ ] `tv status` and `tv tab list` expose equivalent discovery semantics。
-- [ ] Targeted connection／tab／artifact tests pass。
+- [x] No production target-list caller directly uses global `fetch`。
+- [x] CDP failures always carry kind/code/stage before entering domain code。
+- [x] Owned timeout cannot be misclassified as interrupt；cascade preserves primary reason。
+- [x] Raw filesystem errno is classified by operation owner, not a global errno mapper。
+- [x] `tv status` and `tv tab list` expose equivalent discovery semantics。
+- [x] Targeted connection／tab／artifact tests pass。
