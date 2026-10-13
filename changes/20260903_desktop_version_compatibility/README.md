@@ -6,7 +6,7 @@ Status: `planned`
 
 - [System Design](./SYSTEM_DESIGN.md)：launcher-first 入口、home 狀態、執行與依賴規則、report schema、結果判定與 flag 更新。
 - [LLD](./LLD.md)：module/API、version parser、state/report schemas、CLI contracts、檢測與恢復流程、實作順序。
-- [TASK-001](./TASK-001-desktop-version-compatibility-gate.md)：implementation 與驗收追蹤。
+- [Tasks](#tasks)：TASK-001～013 的實作、依賴與驗收追蹤。
 
 本 README 是檢測範圍、核心元件、功能依賴與逐項通過條件的 source of truth；report schema 與結果判定集中於 System Design。
 
@@ -18,7 +18,7 @@ Status: `planned`
 
 若必要 contract 不再支援，Gate 必須先區分環境問題與 Desktop runtime breaking change，再以 bounded、去識別的方式調查新版替代能力，完成 Core adapter、deterministic regression tests、文件與 Live revalidation 後，才能宣告新版本受支援。
 
-本 Change 由單一 [`TASK-001`](./TASK-001-desktop-version-compatibility-gate.md) 建立完整 Gate；後續若特定 Desktop 版本發生 breaking change，應另開 implementation task 或 follow-up Change，不在 Gate 中直接以未審核 workaround 掩蓋失敗。
+本 Change 依 [Tasks](#tasks) 拆為 13 個可驗收任務，先建立入口／共用框架，再交付 Desktop checks 與整合驗收；後續若特定 Desktop 版本發生 breaking change，應另開 implementation task 或 follow-up Change，不在 Gate 中直接以未審核 workaround 掩蓋失敗。
 
 ## Compatibility check scope
 
@@ -261,9 +261,43 @@ Report 欄位、逐項 evidence、coverage/impact、restore/cleanup、promotion 
 
 ## Tasks
 
-| ID | Task | Status | Depends on |
-| --- | --- | --- | --- |
-| [TASK-001](./TASK-001-desktop-version-compatibility-gate.md) | Desktop version compatibility Gate | `todo` | — |
+原單一 Gate task 已拆為下列 13 項；TASK-001 改為 foundation，不再代表整個 Change。所有任務目前為 todo。
+
+| ID | Task | Check ownership | Status | Depends on |
+| --- | --- | --- | --- | --- |
+| [TASK-001](./TASK-001-version-identity-home-state.md) | Version identity and home state foundation | — | `todo` | — |
+| [TASK-002](./TASK-002-launch-version-observation.md) | Shared launch version observation | — | `todo` | TASK-001 |
+| [TASK-003](./TASK-003-cli-local-advisory-status.md) | Local-only CLI advisory and compatibility status | — | `todo` | TASK-001 |
+| [TASK-004](./TASK-004-checker-registry-report-cli.md) | Checker registry, report pipeline and read-only CLI | ENV-001 | `todo` | TASK-001、TASK-003 |
+| [TASK-005](./TASK-005-controlled-fixture-restore-promotion.md) | Controlled fixture, restore and state promotion coordinator | — | `todo` | TASK-001、TASK-004 |
+| [TASK-006](./TASK-006-cdp-target-context-checks.md) | CDP, Target, Layout and Pane checks | CDP-001、TARGET-001、CONTEXT-001 | `todo` | TASK-004、TASK-005 |
+| [TASK-007](./TASK-007-chart-data-history-checks.md) | Chart, Main Series and history checks | CHART-001、DATA-001、HISTORY-001 | `todo` | TASK-005、TASK-006 |
+| [TASK-008](./TASK-008-study-strategy-checks.md) | Study Inputs and Strategy lifecycle checks | STUDY-001、STRATEGY-001 | `todo` | TASK-005、TASK-006、TASK-007 |
+| [TASK-009](./TASK-009-account-service-checks.md) | Account Pine, Watchlist and Alert checks | PINE-ACCOUNT-001、WATCHLIST-001、ALERT-001 | `todo` | TASK-005、TASK-006 |
+| [TASK-010](./TASK-010-editor-ui-checks.md) | Pine Editor and UI provider checks | PINE-001、UI-001 | `todo` | TASK-005、TASK-006 |
+| [TASK-011](./TASK-011-graphics-drawing-checks.md) | Pine graphics and Drawing checks | GRAPHICS-001、DRAWING-001 | `todo` | TASK-005、TASK-006、TASK-008 |
+| [TASK-012](./TASK-012-replay-checks.md) | Opt-in Replay lifecycle checks | REPLAY-001 | `todo` | TASK-005、TASK-006、TASK-007 |
+| [TASK-013](./TASK-013-integration-live-validation-delivery.md) | Integration, Live validation and delivery evidence | — | `todo` | TASK-002、TASK-003、TASK-006、TASK-007、TASK-008、TASK-009、TASK-010、TASK-011、TASK-012 |
+
+### Recommended implementation order
+
+1. TASK-001：版本／identity／home state／共用鎖。
+2. TASK-002、003：launch observer 與 local-only advisory/status；兩者不互相依賴。
+3. TASK-004 → TASK-005：registry/report/read-only CLI，再接 controlled fixture/restore/promotion。
+4. TASK-006 → TASK-007 → TASK-008：連線定位 → Chart/Data → Study/Strategy 六核心。
+5. TASK-009、010 在 TASK-006 後可交付；TASK-011 在 TASK-008 後、TASK-012 在 TASK-007 後交付。
+6. TASK-013：等所有入口與 check owners 完成後做完整整合、Live Gate 與交付證據。
+
+### Task delivery contract
+
+- 所有任務沿用已確認流程：launch 查版本、普通 command local-only warning、手動檢測更新 home；沒有 TTL、背景檢測或 MCP 專屬 Desktop Gate。
+- 每項實作連同有意義的 tests、必要 fixture、registry/CLI wiring 與文件交付；不把 component tests 全部延至 TASK-013。
+- Desktop checks 由上表唯一 owner 負責全部適用 read/controlled assertions；fixture/restore/report infrastructure 由 TASK-004/005 提供，各 owner 不複製另一套框架。
+- TASK-004 起 registry 即宣告完整 17 IDs。未交付的 required handler 明確 not_run 且不能產生完整 passed；coverage tests 分辨已宣告與已實作，TASK-013 要求全部落地。不可刪除 registry 項目或加永久 skip 讓測試假通過。
+- State/report publication correctness、wrapper/schema、surface inventory、repo regression 是實作品質測試，不列入 user Desktop report，也不是 user 執行 check 的前置條件。
+- Genuine version breaking change 另開 follow-up adapter task；本輪保留 expected/observed、已排除原因、版本 tuple、known-good 或 unknown baseline、bounded reproduction evidence，不自動猜 workaround。
+- Component Live evidence 與全環境 certification 分開：局部完成不表示完整 compatible。缺環境/fixture/entitlement 時如實記錄，TASK-013 不得以未測取代通過。
+- 完成任務時更新該 Task status、commands/results、變更檔案、Live環境與限制（適用時）以及 README index；純文件拆分保持 todo。
 
 ## Exit criteria
 
@@ -280,4 +314,6 @@ Report 欄位、逐項 evidence、coverage/impact、restore/cleanup、promotion 
 
 ## Completion record
 
-2026-10-13：檢測清單整合於本 README；assertion result、report schema 與 flag 更新規則整合於 System Design，LLD 與任務引用同步更新。Wrapper、Automation／Resume／Stream orchestration、output 與 regression 屬專案測試。Launch/home/manual-check 流程不變；尚未執行真實 mutation、寫入 home flag 或認證 Desktop 3.4.1；TASK-001 維持 todo。
+2026-10-13：檢測清單整合於本 README；assertion result、report schema 與 flag 更新規則整合於 System Design，LLD 與任務引用同步更新。Wrapper、Automation／Resume／Stream orchestration、output 與 regression 屬專案測試。Launch/home/manual-check 流程不變；尚未執行真實 mutation、寫入 home flag 或認證 Desktop 3.4.1；TASK-001～013 均維持 todo。
+
+Task decomposition：原單一 Gate 任務拆為 foundation、launch/advisory、checker/restore、七組 check owners 與整合驗收；不改既定檢測範圍與 report contract。

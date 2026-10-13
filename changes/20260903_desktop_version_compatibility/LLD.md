@@ -328,17 +328,19 @@ Expected/observed shape failure 在排除 auth、fixture、loading 後才標 inc
 
 ## 11. Verification and implementation sequence
 
-| Phase | Deliverable | Required verification |
+具體工作、前置依賴與唯一 check ownership 以 [README Tasks](./README.md#tasks) 與各 Task 文件為準。
+
+| Phase | Tasks | Deliverable / verification |
 | --- | --- | --- |
-| 1 | Version parser、identity、home store/state machine | exact version、missing/conflict、atomic write、corrupt/missing state、endpoint isolation、revision invalidation |
-| 2 | Shared launch observer + 全 launch 入口 | 同版保留、異版 unchecked、CDP timeout、Node missing、write failure、pending crash、MCP response |
-| 3 | Router metadata + local advisory | help/local exemptions、dry-run coverage、stderr-only、handler still executes、原 exit code、無任何 network/process/write |
-| 4 | Registry + read-only check/status/report | 全 leaf coverage、bounded probes、無 UI mutation、diagnostics_passed 不 promote、sanitization |
-| 5 | Controlled fixtures + restore + report classification | success/failure/interruption、stale report rejection、source mismatch、cleanup、publish-before-state、concurrency |
-| 6 | Live validation + runbook/support evidence | 指定環境 tuple、全部適用 Desktop assertions、獨立 Replay opt-in、Account/UI/Graphics、old/new adapters |
+| 1 | TASK-001 | version/identity/home store/locks；exact version、atomic state、endpoint isolation、fencing |
+| 2 | TASK-002、003 | 全 launch 入口；local-only warning/status，不影響原 handler |
+| 3 | TASK-004、005 | 完整 registry declarations、report/read-only CLI、controlled fixture/restore/promotion framework |
+| 4 | TASK-006、007、008 | CDP/Target/Context、Chart/Data/History、Study/Strategy；所有 read/controlled assertions |
+| 5 | TASK-009～012 | Account、Editor/UI、Graphics/Drawing、Replay 的獨立 provider contracts |
+| 6 | TASK-013 | 17 checks 完整 wiring、整合 regression、Live Gate、runbook/support evidence |
 
-新增 tests 建議按 version/store/launch/advisory/check/registry/report 分檔。測試 seam 應驗證 observable behavior，例如 advisory 的 network dependency 若被呼叫即 fail、warning 後原 handler success/error 保持不變、state write 失敗不留有效 passed。
+TASK-004 提供完整 registry inventory 與 partial implementation 的 not_run 語意；TASK-005 提供唯一 controlled/restore coordinator。Component owners 同時完成 read/controlled handlers、tests 與 wiring；未落地的 required assertion 不能宣稱通過。TASK-013 驗證整合，不延後各任務自身的 tests。
 
-必要負向案例：只跑 status 即宣稱 compatible、read-only 冒充 controlled、未測能力被當成通過、沒有 Strategy fixture、snapshot 中途變化、restore failed、run 不屬於該 Pane、同版較新 failure 被 launch 消除、兩個 writers 遺失其他 endpoint、舊 check 覆蓋新 generation。
+必要負向案例：只跑 status 即宣稱 compatible、read-only 冒充 controlled、未測能力被當成通過、沒有 Strategy fixture、snapshot 中途變化、restore failed、資源不屬於該 Pane、同版較新 failure 被 launch 消除、兩個 writers 遺失其他 endpoint、舊 check 覆蓋新 generation。
 
-本次文件交付只執行 Markdown links/schema examples／diff consistency 檢查；不將文件完成標成 TASK-001 implementation 或 Live certification 完成。
+本次僅拆分任務與文件依賴，不將任務規劃標成 implementation 或 Live certification 完成。共用交付規則見 [Task delivery contract](./README.md#task-delivery-contract)。
