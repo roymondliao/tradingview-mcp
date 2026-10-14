@@ -2,6 +2,7 @@ import { register } from '../router.js';
 import * as core from '../../core/drawing.js';
 
 register('draw', {
+  desktop_dependency: 'required',
   description: 'Drawing tools (shape, list, get, remove, clear)',
   subcommands: new Map([
     ['shape', {

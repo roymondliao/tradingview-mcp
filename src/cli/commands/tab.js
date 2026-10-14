@@ -2,6 +2,7 @@ import { register } from '../router.js';
 import * as core from '../../core/tab.js';
 
 register('tab', {
+  desktop_dependency: 'required',
   description: 'Tab management (list, new, close, switch)',
   subcommands: new Map([
     ['list', {

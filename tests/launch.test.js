@@ -32,6 +32,7 @@ function mockChild({ failWith } = {}) {
 function msixDeps({ spawnFailures = [], cdpBindsFor = [], copyExists = false } = {}) {
   const state = { spawned: [], copies: [], removed: [], killed: 0, cdpUp: false };
   const deps = {
+    withLaunchObservation: async (_options, operation) => operation(),
     existsSync: (p) => {
       if (p === MSIX_EXE) return true;
       if (p.includes('tradingview-mcp')) return copyExists || state.copies.length > 0;
@@ -121,6 +122,7 @@ describe('launch() — classic install path', { skip: !onWindows }, () => {
     const classicExe = `${process.env.LOCALAPPDATA}\\TradingView\\TradingView.exe`;
     const state = { spawned: [], cdpUp: false };
     const deps = {
+    withLaunchObservation: async (_options, operation) => operation(),
       existsSync: (p) => p === classicExe,
       execSync: (cmd) => { if (cmd.includes('taskkill')) return ''; throw new Error(`unexpected: ${cmd}`); },
       spawn: (exe) => { state.spawned.push(exe); state.cdpUp = true; return mockChild(); },
@@ -139,6 +141,7 @@ describe('launch() — classic install path', { skip: !onWindows }, () => {
 
   it('throws a helpful error when TradingView is not found', async () => {
     const deps = {
+    withLaunchObservation: async (_options, operation) => operation(),
       existsSync: () => false,
       execSync: () => { throw new Error('not found'); },
       spawn: () => { throw new Error('should not spawn'); },

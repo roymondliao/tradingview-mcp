@@ -29,6 +29,7 @@ async function confirmDelete(scriptId, yes) {
 }
 
 register('pine', {
+  desktop_dependency: 'required',
   description: 'Pine Script tools',
   subcommands: new Map([
     ['get', {
@@ -104,6 +105,7 @@ register('pine', {
       handler: () => core.compile(),
     }],
     ['analyze', {
+      desktop_dependency: 'none',
       description: 'Offline static analysis (no TradingView needed)',
       options: {
         file: { type: 'string', short: 'f', description: 'Read source from file' },
@@ -120,6 +122,7 @@ register('pine', {
       },
     }],
     ['check', {
+      desktop_dependency: 'none',
       description: 'Server-side compile check with sanitized Candidate Input Schema (no chart needed)',
       options: {
         file: { type: 'string', short: 'f', description: 'Read source from file' },

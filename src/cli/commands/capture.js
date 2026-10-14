@@ -2,6 +2,7 @@ import { register } from '../router.js';
 import * as core from '../../core/capture.js';
 
 register('screenshot', {
+  desktop_dependency: 'required',
   description: 'Take a screenshot of the chart',
   options: {
     region: { type: 'string', short: 'r', description: 'Region: full, chart, strategy_tester' },

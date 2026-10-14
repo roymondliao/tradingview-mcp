@@ -3,6 +3,7 @@ import * as chartCore from '../../core/chart.js';
 import * as studyCore from '../../core/studies.js';
 
 register('indicator', {
+  desktop_dependency: 'required',
   description: 'Indicator tools (add, remove, toggle, set, get)',
   subcommands: new Map([
     ['add', {

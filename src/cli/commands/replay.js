@@ -2,6 +2,7 @@ import { register } from '../router.js';
 import * as core from '../../core/replay.js';
 
 register('replay', {
+  desktop_dependency: 'required',
   description: 'Replay mode controls',
   subcommands: new Map([
     ['start', {

@@ -1,8 +1,24 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import CDP from 'chrome-remote-interface';
 import {
   CoreOperationError,
   isNormalizedCoreError,
 } from './core/errors.js';
+
+const evaluationContext = new AsyncLocalStorage();
+/** Cancellation remains attached to an operation's async continuations. */
+export function withCdpSignal(signal, operation) {
+  return evaluationContext.run(signal, operation);
+}
+function assertEvaluationActive() {
+  const signal = evaluationContext.getStore();
+  if (signal?.aborted) {
+    if (isNormalizedCoreError(signal.reason)) throw signal.reason;
+    throw new CoreOperationError('CDP operation was cancelled.', {
+      code: 'CDP_OPERATION_CANCELLED', kind: 'interrupt', phase: 'runtime_evaluate',
+    });
+  }
+}
 
 let client = null;
 let targetInfo = null;
@@ -297,6 +313,7 @@ export function requireFinite(value, name) {
 }
 
 export async function getClient() {
+  assertEvaluationActive();
   if (client) {
     try {
       // Quick liveness check
@@ -399,6 +416,7 @@ export async function evaluate(expression, opts = {}) {
   const c = await getClient();
   const timeoutMs = opts.timeout_ms || CDP_TIMEOUTS.command;
   const { timeout_ms: _ignored, ...cdpOpts } = opts;
+  assertEvaluationActive();
   const result = await withTimeout(c.Runtime.evaluate({
     expression,
     returnByValue: true,
@@ -444,6 +462,7 @@ export async function callPageFunction(fn, args = []) {
   if (!objectId) throw new Error('CDP did not return a page global object ID');
 
   try {
+    assertEvaluationActive();
     const result = await withTimeout(c.Runtime.callFunctionOn({
       objectId,
       functionDeclaration: fn.toString(),

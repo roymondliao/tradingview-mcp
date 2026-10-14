@@ -2,6 +2,7 @@ import { register } from '../router.js';
 import * as core from '../../core/ui.js';
 
 register('layout', {
+  desktop_dependency: 'required',
   description: 'Layout tools (list, switch)',
   subcommands: new Map([
     ['list', {

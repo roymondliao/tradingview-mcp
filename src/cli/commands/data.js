@@ -24,11 +24,13 @@ export function writeHistoryOutput(result, output, {
 }
 
 register('quote', {
+  desktop_dependency: 'required',
   description: 'Get real-time price quote',
   handler: (opts, positionals) => core.getQuote({ symbol: positionals[0] }),
 });
 
 register('ohlcv', {
+  desktop_dependency: 'required',
   description: 'Get OHLCV bar data',
   options: {
     ...PANE_CONTEXT_OPTIONS,
@@ -42,6 +44,7 @@ register('ohlcv', {
 });
 
 register('history', {
+  desktop_dependency: 'required',
   description: 'Fetch all OHLCV history available from the TradingView chart',
   options: {
     ...PANE_CONTEXT_OPTIONS,
@@ -81,11 +84,13 @@ register('history', {
 });
 
 register('values', {
+  desktop_dependency: 'required',
   description: 'Get current indicator values from data window',
   handler: () => core.getStudyValues(),
 });
 
 register('data', {
+  desktop_dependency: 'required',
   description: 'Advanced data tools (lines, labels, tables, boxes, strategy, trades, equity, depth)',
   subcommands: new Map([
     ['lines', {

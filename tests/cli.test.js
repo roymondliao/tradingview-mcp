@@ -40,7 +40,10 @@ function run(args, opts = {}) {
   } catch (err) {
     return {
       stdout: err.stdout || '',
-      stderr: err.stderr || '',
+      stderr: (err.stderr || '').split('\n').filter(line => {
+        try { return JSON.parse(line).code !== 'COMPATIBILITY_CHECK_RECOMMENDED'; } catch { return true; }
+      }).join('\n'),
+      rawStderr: err.stderr || '',
       exitCode: err.status,
     };
   }

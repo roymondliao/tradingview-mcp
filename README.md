@@ -151,6 +151,16 @@ node src/cli/index.js <command>
 
 ### Quick Examples
 
+Desktop launchers record version observations in `~/.tradingview-mcp/compatibility/`.
+Desktop-dependent commands read that local record and warn on stderr until compatibility is verified; they still execute normally.
+Use `tv compatibility status` to read the local status and `tv compatibility check` to verify read-only Core contracts.
+All applicable read-only contracts passing can update the home compatibility flag; operation E2E tests are separate. See the [compatibility runbook](changes/20260903_desktop_version_compatibility/RUNBOOK.md).
+Check targets are configured in [config/compatibility/fixture.json](config/compatibility/fixture.json):
+
+```bash
+tv compatibility check --profile read-only --fixture config/compatibility/fixture.json
+```
+
 ```bash
 tv status                          # check connection
 tv quote                           # current price
@@ -191,6 +201,7 @@ For snapshot-complete Strategy workflows, use `strategy trading-report`. The exi
 
 ```
 tv status / launch / state / symbol / timeframe / type / info / search
+tv compatibility status/check
 tv quote / ohlcv / history / values
 tv data lines/labels/tables/boxes/strategy/trades/equity/depth/indicator
 tv pine get/set/compile/analyze/check/save/new/open/list/errors/console

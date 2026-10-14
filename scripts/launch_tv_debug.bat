@@ -2,6 +2,16 @@
 REM Launch TradingView Desktop on Windows with Chrome DevTools Protocol enabled
 REM Usage: scripts\launch_tv_debug.bat [port]
 
+if "%TV_COMPATIBILITY_CHILD%"=="1" goto compatibility_child
+where node >nul 2>&1
+if errorlevel 1 (
+    echo Error: Node.js ^>=22 is required for launch version tracking. 1>&2
+    exit /b 1
+)
+node "%~dp0compatibility-launch.js" "%~f0" %1
+exit /b %errorlevel%
+:compatibility_child
+
 set PORT=%1
 if "%PORT%"=="" set PORT=9222
 
@@ -53,7 +63,7 @@ REM Use 127.0.0.1 rather than localhost: on some machines localhost resolves to
 REM IPv6 ::1, which Electron's debug server does not listen on.
 set TRIES=0
 :check
-curl -s http://127.0.0.1:%PORT%/json/version >nul 2>&1
+curl --fail --silent --max-time 2 http://127.0.0.1:%PORT%/json/version -o "%TV_COMPATIBILITY_RESPONSE_FILE%" >nul 2>&1
 if %errorlevel% equ 0 goto ready
 set /a TRIES+=1
 if %TRIES% geq 30 (
@@ -70,5 +80,4 @@ goto check
 :ready
 echo.
 echo CDP ready at http://127.0.0.1:%PORT%
-curl -s http://127.0.0.1:%PORT%/json/version
 echo.

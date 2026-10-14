@@ -2,6 +2,7 @@ import { register } from '../router.js';
 import * as core from '../../core/watchlist.js';
 
 register('watchlist', {
+  desktop_dependency: 'required',
   description: 'Watchlist tools (list, get, snapshot, add, add-bulk, remove)',
   subcommands: new Map([
     ['list', {

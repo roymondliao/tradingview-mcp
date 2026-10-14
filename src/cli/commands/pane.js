@@ -3,6 +3,7 @@ import * as core from '../../core/pane.js';
 import { PANE_CONTEXT_OPTIONS, withPaneContext } from '../pane-context.js';
 
 register('pane', {
+  desktop_dependency: 'required',
   description: 'Chart pane/layout tools (list, layout, focus, symbol)',
   subcommands: new Map([
     ['list', {

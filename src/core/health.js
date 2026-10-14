@@ -1,3 +1,4 @@
+import { withLaunchObservation } from './compatibility/launch.js';
 /**
  * Core health/discovery/launch logic.
  */
@@ -283,7 +284,13 @@ function _copyMsixPackageLocal(tvPath, { cpSync, rmSync, readdirSync, existsSync
   return dstExe;
 }
 
-export async function launch({ port, kill_existing, _deps } = {}) {
+export async function launch(options = {}) {
+  const { port, _deps } = options;
+  const observer = _deps?.withLaunchObservation || withLaunchObservation;
+  return observer({ endpoint: { host: CDP_HOST, port: port || CDP_PORT }, ...(_deps?.compatibilityRoot && { root: _deps.compatibilityRoot }) }, () => launchDesktop(options));
+}
+
+async function launchDesktop({ port, kill_existing, _deps } = {}) {
   const deps = _resolveLaunchDeps(_deps);
   const cdpPort = port || CDP_PORT;
   const killFirst = kill_existing !== false;
@@ -352,7 +359,7 @@ export async function launch({ port, kill_existing, _deps } = {}) {
   const killExisting = async () => {
     try {
       if (platform === 'win32') deps.execSync('taskkill /F /IM TradingView.exe', { timeout: 5000 });
-      else deps.execSync('pkill -f TradingView', { timeout: 5000 });
+      else deps.execSync('pkill -x TradingView', { timeout: 5000 });
       await deps.delay(1500);
     } catch { /* may not be running */ }
   };
@@ -388,7 +395,7 @@ export async function launch({ port, kill_existing, _deps } = {}) {
     return {
       success: true, platform, binary: tvPath, pid: child.pid,
       cdp_port: cdpPort, cdp_url: `http://${CDP_HOST}:${cdpPort}`,
-      browser: info.Browser, user_agent: info['User-Agent'],
+      version_response: info, browser: info.Browser, user_agent: info['User-Agent'],
       ...(usedLocalCopy && { msix_local_copy: true }),
     };
   }

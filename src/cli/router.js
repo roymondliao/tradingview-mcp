@@ -1,3 +1,4 @@
+import { emitCompatibilityAdvisory } from '../core/compatibility/advisory.js';
 /**
  * CLI command router using node:util parseArgs.
  * Zero dependencies — uses only Node.js built-ins.
@@ -15,6 +16,12 @@ const ANSI_STYLE_RESET = '\u001b[0m';
 
 export function register(name, config) {
   commands.set(name, config);
+}
+
+export function commandInventory() {
+  return [...commands].flatMap(([name, config]) => config.subcommands
+    ? [...config.subcommands].map(([sub, leaf]) => ({ name: `${name} ${sub}`, desktop_dependency: leaf.desktop_dependency || config.desktop_dependency }))
+    : [{ name, desktop_dependency: config.desktop_dependency }]);
 }
 
 export function resultExitCode(result) {
@@ -148,7 +155,7 @@ export async function run(argv) {
         }
         process.exit(0);
       }
-      await execute(handler, values, positionals);
+      await execute(handler, values, positionals, sub.desktop_dependency || cmd.desktop_dependency);
     } catch (err) {
       handleError(err);
     }
@@ -166,15 +173,16 @@ export async function run(argv) {
         printCommandHelp(cmdName, cmd);
         process.exit(0);
       }
-      await execute(handler, values, positionals);
+      await execute(handler, values, positionals, cmd.desktop_dependency);
     } catch (err) {
       handleError(err);
     }
   }
 }
 
-async function execute(handler, values, positionals) {
+async function execute(handler, values, positionals, dependency) {
   try {
+    await emitCompatibilityAdvisory({ dependency });
     const result = await handler(values, positionals);
     const serialized = JSON.stringify(result, null, 2);
     const exitCode = resultExitCode(result);

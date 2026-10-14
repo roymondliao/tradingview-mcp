@@ -3,6 +3,7 @@ import * as core from '../../core/studies.js';
 import { PANE_CONTEXT_OPTIONS, withPaneContext } from '../pane-context.js';
 
 register('study', {
+  desktop_dependency: 'required',
   description: 'Study tools — search and inspect indicators/strategies on the active pane',
   subcommands: new Map([
     ['search', {

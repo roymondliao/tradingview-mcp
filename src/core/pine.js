@@ -841,6 +841,7 @@ export async function createSavedScript({ name, type, source, _deps } = {}) {
   if (raw?.error) throw new Error(raw.error);
   const saved = normalizeSaveResult(raw);
   if (!saved.script_id) throw new Error('TradingView saveNew returned no script_id.');
+  if (_deps?.onCreated) await _deps.onCreated({ script_id: saved.script_id });
   const metadata = await pollSavedScript({ script_id: saved.script_id, expectPresent: true, _deps });
   const readback = await pollSavedSource({ script_id: saved.script_id, source, _deps });
   return {
