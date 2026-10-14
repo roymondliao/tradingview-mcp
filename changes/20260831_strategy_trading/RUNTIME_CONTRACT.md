@@ -211,11 +211,11 @@ Trade identity 使用 report index、Entry／Exit-or-mark timestamps、bar index
 
 ## Deterministic fixtures
 
-- [`compact-report.json`](../../tests/fixtures/strategy-trading/compact-report.json)：sanitized Desktop compact shape、Closed + trailing Open、freshness evidence。
-- [`verbose-report.json`](../../tests/fixtures/strategy-trading/verbose-report.json)：supported verbose-key compatibility shape。
-- [`unsupported-report.json`](../../tests/fixtures/strategy-trading/unsupported-report.json)：required keys無法辨識。
-- [`desktop-paired-report-trades.json`](../../tests/fixtures/strategy-trading/desktop-paired-report-trades.json)：sanitized same-pane Trading Report／Trading Data reconciliation evidence，保留 CSV display precision tolerance case。
-- [`calculation-mode-variants.json`](../../tests/fixtures/strategy-trading/calculation-mode-variants.json)：Regular／Deep explicit metadata與unavailable policy variants。
+- [`compact-report.json`](../../tests/strategy/trading/support/fixtures/compact-report.json)：sanitized Desktop compact shape、Closed + trailing Open、freshness evidence。
+- [`verbose-report.json`](../../tests/strategy/trading/support/fixtures/verbose-report.json)：supported verbose-key compatibility shape。
+- [`unsupported-report.json`](../../tests/strategy/trading/support/fixtures/unsupported-report.json)：required keys無法辨識。
+- [`desktop-paired-report-trades.json`](../../tests/strategy/trading/support/fixtures/desktop-paired-report-trades.json)：sanitized same-pane Trading Report／Trading Data reconciliation evidence，保留 CSV display precision tolerance case。
+- [`calculation-mode-variants.json`](../../tests/strategy/trading/support/fixtures/calculation-mode-variants.json)：Regular／Deep explicit metadata與unavailable policy variants。
 
 Fixtures 不代表完整 TradingView objects，只保存後續 deterministic adapter tests 所需的最小 contract。
 

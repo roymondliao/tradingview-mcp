@@ -67,7 +67,7 @@ Canonical report在 `~/.tradingview-mcp/compatibility/reports/`；state在同層
 
 CLI／MCP wrapper/schema、serializer、atomic publication、lease/fencing、取消處理屬checker與Core的本地測試。操作生命週期／還原、history載入、Tab/Pane切換、Study/Account mutations、Strategy重新計算／分頁案例、UI互動、Replay交易屬E2E／回歸。它們都不是Desktop report assertions或home passed prerequisites。
 
-原操作測試helpers移到tests/helpers/desktop-operation-checks.js、desktop-operation-restore.js；設定範本移到tests/fixtures/desktop-operations.example.json。保留fake-driver回歸測試，不新增相容性CLI的操作入口；本次沒有執行live mutation E2E。
+原操作測試helpers移到tests/compatibility/support/desktop-operations.js、restore.js；設定範本移到tests/desktop/support/fixtures/operations.example.json。保留fake-driver回歸測試，不新增相容性CLI的操作入口；本次沒有執行live mutation E2E。
 
 ## Tasks
 

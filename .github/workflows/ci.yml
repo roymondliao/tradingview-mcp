@@ -35,9 +35,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      - name: Unit tests
-        # Network-backed Pine compilation and live Desktop E2E tests are excluded by default.
-        run: npm run test:unit
+      - name: Local tests (unit and integration)
+        # Network-backed compilation is opt-in; live Desktop E2E is not selected.
+        run: npm test
 
       - name: Verify package contents
         run: npm pack --dry-run

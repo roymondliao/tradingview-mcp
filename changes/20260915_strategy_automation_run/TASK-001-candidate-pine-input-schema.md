@@ -91,7 +91,7 @@ Completed on 2026-09-16.
 - Extended`pine check`Core／CLI／MCP shared response，保留compile errors／warnings並新增`input_metadata_available`、bounded`input_variables`與`input_schema`；raw compiler payload、private source與opaque fields不會進入response。
 - Candidate Schema unavailable不改變既有compile success／failure語意；missing compiler metadata、compile failure、missing／dynamic／duplicate title、unsupported legacy`input()`、type mismatch、unresolved constraints與missing declaration均回傳stable bounded schema errors。
 - Exported`pineInputSchema`Core namespace與normalized source helpers；Account Saved Script source readback重用相同newline normalization。
-- Added`tests/pine_input_schema.test.js`並納入`test:unit`／`test:all`，涵蓋supported types、multiline／nested calls、comments／strings、literal／expression defaults、fingerprints、sanitization與`data/obv-v3.pine`golden case。
+- Added`tests/pine/unit/input-schema.test.js`並納入`test:unit`／`test:all`，涵蓋supported types、multiline／nested calls、comments／strings、literal／expression defaults、fingerprints、sanitization與`data/obv-v3.pine`golden case。
 - Live TradingView Guest compiler：`data/obv-v3.pine`compiled with 0 errors／0 warnings；Compiler Input Variables 16、Candidate Inputs 16、unique static titles 16，schema fingerprint`320dfa20e7861ffd7b0da7cb6072150f7695ce22cd0d186e84e33590a9dc4122`。
 - `fnm exec --using=22 npm run lint`：0 errors，3 pre-existing warnings。
 - `fnm exec --using=22 npm run test:unit`：414 passed，0 failed。

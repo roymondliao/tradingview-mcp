@@ -392,11 +392,14 @@ The key flag: `--remote-debugging-port=9222`
 ## Testing
 
 ```bash
-# Requires TradingView running with --remote-debugging-port=9222
+# Local unit + integration; no live Desktop required
 npm test
+npm run test:module -- compatibility
+npm run test:module -- strategy/run
+npm run test:unit -- --module chart
 ```
 
-29 tests covering: Pine Script static analysis, server-side compilation, and CLI routing.
+Tests are grouped by module, then by `unit`, `integration`, or `e2e`. New test files are discovered automatically. Live Desktop E2E uses `npm run test:e2e`. See the [testing guide](tests/README.md) for module selectors, fixtures and network/Replay opt-ins.
 
 ## Architecture
 

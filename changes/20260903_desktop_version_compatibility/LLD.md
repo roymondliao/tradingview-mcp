@@ -15,7 +15,7 @@ Latest scope: 2026-10-14, read-only Desktop contracts. See [System Design](./SYS
 | report.js / baseline.js / surfaces.js | Schema3、aggregation、歷史格式比較、CLI/MCP影響映射 |
 | environment.js | Explicit check才讀取repo/source metadata |
 
-`runtime-controlled.js`與`restore.js`不再是production Gate模組；操作helpers移到tests/helpers/desktop-operation-checks.js與desktop-operation-restore.js。Production runtime只export read handlers。
+`runtime-controlled.js`與`restore.js`不再是production Gate模組；操作helpers移到tests/compatibility/support/desktop-operations.js與restore.js。Production runtime只export read handlers。
 
 ## Revisions and identity
 
@@ -29,7 +29,7 @@ Observer bounded2s/64KiB，讀取失敗為environment blocked。普通CLI不呼�
 
 exclude_checks限PINE-001／GRAPHICS-001／DRAWING-001，拒絕unknown/core/duplicate IDs。Validate在network／state writes之前執行。初始化整組assertions為not_applicable／USER_SCOPE_EXCLUDED，dependency loop直接跳過，不能執行handler後再隱藏結果。
 
-第二個Tab/Pane、symbols/timeframes mutation、input_mutation、strategy_cases、alert write、editor compile及replay_target設定屬操作測試，不是compatibility configuration。操作範本位於tests/fixtures/desktop-operations.example.json。
+第二個Tab/Pane、symbols/timeframes mutation、input_mutation、strategy_cases、alert write、editor compile及replay_target設定屬操作測試，不是compatibility configuration。操作範本位於tests/desktop/support/fixtures/operations.example.json。
 
 ## CLI contract
 
@@ -75,4 +75,4 @@ Lease保存token/PID/process-start estimate/heartbeat。Only proven-dead owner�
 
 ## Verification
 
-Run test:compatibility、test:unit、test:errors、lint與diff checks。Gate測試必須證明pure-read完整結果可promote、missing/drift/publish失敗不可promote、controlled/options拒絕且不連Desktop。Shared Core操作helpers保留獨立回歸，不納入Desktop report與passed條件。
+Run test:compatibility、npm test、test:errors、lint與diff checks。Gate測試必須證明pure-read完整結果可promote、missing/drift/publish失敗不可promote、controlled/options拒絕且不連Desktop。Shared Core操作helpers保留獨立回歸，不納入Desktop report與passed條件。

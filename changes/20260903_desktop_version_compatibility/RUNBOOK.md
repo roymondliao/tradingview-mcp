@@ -48,14 +48,14 @@ Endpoint lease避免launch/manual checks互相打斷；短state lock保護read-m
 
 ```bash
 fnm exec --using=22 npm run test:compatibility
-fnm exec --using=22 npm run test:unit
+fnm exec --using=22 npm test
 fnm exec --using=22 npm run test:errors
 fnm exec --using=22 npm run lint
 git diff --check
 bash -n scripts/launch_tv_debug_mac.sh scripts/launch_tv_debug_linux.sh
 ```
 
-本地tests不列入Desktop report，也不是user check前置。既有test:unit包含compatibility suite，不需重跑重複test:all。Operation/restore helpers保留於tests/helpers，test fixture template位於tests/fixtures/desktop-operations.example.json；本次未執行live mutation E2E。
+本地tests不列入Desktop report，也不是user check前置。npm test／test:all會自動搜尋所有本地unit＋integration；test:unit僅unit，完整compatibility suite可用test:compatibility。Operation/restore helpers保留於tests/compatibility/support，test fixture template位於tests/desktop/support/fixtures/operations.example.json；本次未執行live mutation E2E。
 
 契約異常時保存完整version/environment/source tuple、report reference、failed assertion expected/observed、前提已排除原因、baseline或unknown，以及受影響surfaces。修正Core adapter後另外完成必要repo regression／E2E；不得以局部成功替代缺失的contract evidence。
 

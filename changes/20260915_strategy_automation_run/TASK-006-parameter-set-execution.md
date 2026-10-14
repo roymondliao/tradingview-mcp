@@ -99,7 +99,7 @@ Implemented:
 
 Deterministic validation:
 
-- 新增`tests/strategy_parameter_execution.test.js`並納入`test:unit`／`test:all`，涵蓋declared ordering、Base isolation、reordered IDs、invalid names、deterministic identity、same-value no-op、changed mutation、same metrics fresh Report、external Input interference、callback／timeout restore、restore mismatch與fixed identity change。
+- 新增`tests/strategy/parameters/unit/execution.test.js`並納入`test:unit`／`test:all`，涵蓋declared ordering、Base isolation、reordered IDs、invalid names、deterministic identity、same-value no-op、changed mutation、same metrics fresh Report、external Input interference、callback／timeout restore、restore mismatch與fixed identity change。
 - 既有Strategy Runtime tests新增Study／Runtime fingerprint canonicalization contract。
 - `fnm exec --using=22 npm run test:unit`：518 passed。
 - `fnm exec --using=22 npm run test:cli`：31 passed。

@@ -28,8 +28,8 @@ scope: application-integration
 - `src/core/strategy-resume.js`
 - `src/cli/commands/strategy.js`
 - `src/cli/router.js`
-- `tests/strategy_run.test.js`
-- `tests/cli.test.js`
+- `tests/strategy/run/integration/run.test.js`
+- `tests/cli/integration/router.test.js`
 - `package.json`
 
 ### May modify through established seams

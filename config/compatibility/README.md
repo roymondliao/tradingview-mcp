@@ -28,6 +28,6 @@ Editor, graphics and Drawing handlers are not called. Reports record `not_applic
 
 The full registry contains 37 read-only assertions; 30 apply to the current configuration. All applicable assertions passing, final environment/source stability and successful report/state publication produce passed for scope `read_only_desktop_contracts`. Status exposes verified_excluded_checks. A different configuration/scope cannot be compared as the same baseline.
 
-Operation lifecycle/restore checks belong to project regression/E2E. Their test-only template is [desktop-operations.example.json](../../tests/fixtures/desktop-operations.example.json), not a compatibility input. Runtime observations, reports and locks remain under ~/.tradingview-mcp/compatibility/.
+Operation lifecycle/restore checks belong to project regression/E2E. Their test-only template is [desktop-operations.example.json](../../tests/desktop/support/fixtures/operations.example.json), not a compatibility input. Runtime observations, reports and locks remain under ~/.tradingview-mcp/compatibility/.
 
 See the [runbook](../../changes/20260903_desktop_version_compatibility/RUNBOOK.md) for results, storage and troubleshooting.

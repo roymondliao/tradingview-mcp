@@ -23,8 +23,8 @@ scope: core-state-and-filesystem
 
 - `src/core/strategy-run-state.js`
 - `src/core/strategy-run-artifacts.js`
-- `tests/strategy_run_state.test.js`
-- `tests/strategy_run_artifacts.test.js`
+- `tests/strategy/run/unit/state.test.js`
+- `tests/strategy/run/unit/artifacts.test.js`
 
 ### Modify
 
@@ -94,7 +94,7 @@ symbols/.<safe-symbol>.attempt-<attempt-count>.staging
 - Attempt write、flush、commit、abort and existing destination behavior。
 - Crash fixtures forstaging-only and rename-before-manifest-callback windows。
 - Succeeded manifest with missing artifacts returns`RUN_RESUME_ARTIFACT_INVALID`。
-- Existing `tests/artifacts.test.js` remains green without expectation changes except shared helpers if required。
+- Existing `tests/artifacts/unit/artifacts.test.js` remains green without expectation changes except shared helpers if required。
 
 ## Acceptance criteria
 

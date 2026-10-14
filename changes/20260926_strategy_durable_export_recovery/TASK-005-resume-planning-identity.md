@@ -23,8 +23,8 @@ scope: resume-core
 ### Add
 
 - `src/core/strategy-resume.js`
-- `tests/strategy_resume.test.js`
-- `tests/strategy_resume_identity.test.js`
+- `tests/strategy/run/integration/resume.test.js`
+- `tests/strategy/run/unit/resume-identity.test.js`
 
 ### Modify
 

@@ -23,7 +23,7 @@ scope: experiment-execution
 ### Add
 
 - `src/core/strategy-durable-experiment.js`
-- `tests/strategy_durable_experiment.test.js`
+- `tests/strategy/run/integration/experiment.test.js`
 
 ### Modify
 

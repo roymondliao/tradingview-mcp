@@ -19,7 +19,7 @@ scope: core-schema-validation
 ## Primary ownership
 
 - `src/core/strategy-run-state.js`
-- `tests/strategy_run_state.test.js`
+- `tests/strategy/run/unit/state.test.js`
 - Shared test fixture builders directly owned by state validation tests
 
 ## Requirements
