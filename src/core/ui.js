@@ -4,7 +4,7 @@
 import { evaluate, evaluateAsync, getClient } from '../connection.js';
 import { unixSecondsToIso } from './time.js';
 
-const RIGHT_PANEL_LOCATORS = {
+export const RIGHT_PANEL_LOCATORS = {
   'watchlist': { dataNames: ['base', 'base-watchlist-widget-button'], ariaLabels: ['Watchlist, details, and news', 'Watchlist'] },
   'alerts': { dataNames: ['alerts-button', 'alerts'], ariaLabels: ['Alerts'] },
   'trading': { dataNames: ['trading-button'], ariaLabels: ['Trading Panel'] },

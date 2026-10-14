@@ -21,8 +21,8 @@ scope: symbol-execution
 ### Add
 
 - `src/core/strategy-run-retry.js`
-- `tests/strategy_run_retry.test.js`
-- `tests/strategy_symbol_attempt.test.js`
+- `tests/strategy/run/unit/retry.test.js`
+- `tests/strategy/run/integration/symbol-attempt.test.js`
 
 ### Modify
 

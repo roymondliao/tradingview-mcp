@@ -42,3 +42,5 @@ export * as artifacts from './artifacts.js';
 export * as time from './time.js';
 export * as ui from './ui.js';
 export * as errors from './errors.js';
+
+export * as compatibility from './compatibility/index.js';

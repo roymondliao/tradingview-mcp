@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "target": {
+    "layout_name": "dev",
+    "pane_index": 0
+  },
+  "watchlist": {
+    "name": "dev-testing-list"
+  },
+  "indicator": {
+    "name": "dev-test-indicator",
+    "entity_id": "QxAC31",
+    "script_id": "USER;da125b920f8644f490e690f668acfb46",
+    "version": "1.0"
+  },
+  "strategy": {
+    "name": "dev-test-strategy",
+    "entity_id": "uAQmrd",
+    "script_id": "USER;a5fede76af7943a194e06f9d5e63525e",
+    "version": "1.0"
+  },
+  "exclude_checks": [
+    "PINE-001",
+    "GRAPHICS-001",
+    "DRAWING-001"
+  ]
+}

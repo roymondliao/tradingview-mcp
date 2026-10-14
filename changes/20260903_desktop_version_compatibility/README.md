@@ -1,160 +1,102 @@
 # TradingView Desktop Version Compatibility Gate
 
-Status: `planned`
+Status: implemented; current configured Live validation tracked in [Delivery evidence](./DELIVERY_EVIDENCE.md).
 
 ## Objective
 
-建立一套在 TradingView Desktop 升版後可重複執行的相容性驗證流程，確認本 repo 所有 Desktop-dependent CLI surfaces 依賴的必要 CDP、Runtime、resource identity、data、mutation／restore 與 output contracts 仍可運作。
+檢查 TradingView Desktop 升版後，CLI／MCP shared Core依賴的版本識別、CDP、必要Runtime APIs/providers、資源定位及資料契約是否仍成立。兩個入口共用同一組checks。
 
-若必要 contract 不再支援，Gate 必須先區分環境問題與 Desktop runtime breaking change，再以 bounded、去識別的方式調查新版替代能力，完成 Core adapter、deterministic regression tests、文件與 Live revalidation 後，才能宣告新版本受支援。
+2026-10-14修訂：相容性Gate只做唯讀契約檢查。先前controlled的切換、增刪、Inputs修改、重新計算、restore／cleanup與Replay交易屬於專案E2E驗證；不列入report、不阻塞home passed，也不要求使用者跑E2E。
 
-本 Change 由單一 [`TASK-001`](./TASK-001-desktop-version-compatibility-gate.md) 建立完整 Gate；後續若特定 Desktop 版本發生 breaking change，應另開 implementation task 或 follow-up Change，不在 Gate 中直接以未審核 workaround 掩蓋失敗。
+## Design documents
 
-## Trigger
+- [System Design](./SYSTEM_DESIGN.md)：入口、狀態、判定、精簡report與promotion。
+- [LLD](./LLD.md)：模組、schema、runner、併發與CLI契約。
+- [Runbook](./RUNBOOK.md)：實際設定與執行方式。
+- [Delivery evidence](./DELIVERY_EVIDENCE.md)：版本tuple、測試證據、歷史scope變更與限制。
 
-以下任一條件成立時必須執行 Gate：
+## Entry points and trigger
 
-- TradingView Desktop 的 major、minor 或 patch version 改變。
-- Electron／Chromium／CDP version 改變，且 Desktop version 無法可靠取得。
-- 既有必要 Runtime API、DOM locator、response shape 或 lifecycle signal 開始失敗。
-- 新增一個依賴 TradingView internal runtime 的公開 CLI capability。
+- 四個平台launch scripts與shared Core launch於CDP ready後重用/json/version response，觀察版本並更新home。
+- 普通Desktop-dependent CLI command只讀本地state；未通過時stderr warning，仍執行原command，保留stdout／exit code。
+- 使用者明確執行 `tv compatibility check` 才開始Gate；沒有TTL、背景檢測或每次command的live version query。
+- 明確接受繞過launcher時可能使用舊observation；manual check會重新觀察live version。
+- Gate所有適用唯讀assertions通過、前後版本/context/source穩定、report成功出版後，才更新passed。E2E成功不是前置條件。
 
-每次結果必須綁定 Desktop version、OS／architecture、CDP Browser／Protocol version、Node.js version 與 repo commit；只寫「最新版可用」不算可重現的相容性證據。
+## Fixture configuration
 
-## Definition of required information
+[config/compatibility/fixture.json](../../config/compatibility/fixture.json)指定實際測試資源：dev Layout／Pane0、dev-testing-list、dev-test-indicator、dev-test-strategy。名稱作辨識metadata，Study讀取使用已確認的entity IDs；移除／重新加入Study後需更新ID。
 
-「必要資訊」是目前受支援 CLI use case 為了定位資源、驗證 ownership、判斷完成狀態或產生正確資料而直接依賴的 observable contract。必要資訊不是要求 internal object 的所有 private fields 永遠相同。
-
-- 驗證應優先檢查公開 CLI／Core response 與必要 capability，而不是硬比對完整 private object。
-- Internal path 可以作為 capability provider evidence，但 implementation 應優先使用 capability detection。
-- Nullable field 必須明確區分「合法 unavailable」與「必要資料遺失」。例如非帳號擁有的 Layout 可以沒有 `saved_layout_id`，但 Chart Tab 必須能解析 runtime `layout_id`。
-- Localized label、使用者命名、CDP target ordering 與固定等待時間不可當成穩定 contract。
-- Probe 不可輸出 cookies、tokens、完整 private Pine source、完整 unrestricted runtime object 或非必要帳號資料。
-
-## Required test fixture
-
-完整 Live Gate 應使用可識別且可恢復的測試環境：
-
-- 至少一個帳號擁有的 Saved Layout，可由 runtime `layout_id` 映射到 `saved_layout_id`。
-- 至少一個 Chart Pane，具有已知 Symbol、Timeframe 與 Pane identity。
-- Pane 內至少一個 Indicator 與一個具有可讀 Report／Trades 的 Account Strategy。
-- 一個至少包含兩個完整 `exchange:symbol` identity 的 Watchlist。
-- 需要 mutation validation 時使用 disposable Pine Script／Study，並在 readback 後清理；不得修改或刪除使用者既有資產。
-- 執行前記錄原 Tab、Layout、Pane、Symbol、Timeframe 與 Study state；任何受控 mutation 都必須 restore 並驗證 readback。
-
-若 fixture 不符合條件，結果應標記為 `fixture_blocked`，不可誤判為 Desktop 不相容。
-
-## Validation workflow
-
-```text
-Detect Desktop version change
-  -> Record environment and known-good baseline
-  -> Run read-only preflight and required capability checks
-  -> Run controlled mutation / restore checks
-  -> Run deterministic repository regression
-      -> all required checks pass: certify supported version
-      -> required check fails:
-           -> classify environment / auth / fixture / runtime failure
-           -> capture bounded sanitized evidence
-           -> investigate replacement capability in the new version
-           -> update shared Core adapter + old/new regression fixtures
-           -> rerun the complete Gate
+```bash
+tv compatibility check --fixture config/compatibility/fixture.json
+# --profile read-only 為可保留的明確寫法；沒有controlled profile。
 ```
 
-局部 command 再次成功不足以解除 failure；完成修正後必須重新執行完整 Gate，避免新版替代方式破壞其他 vertical slices。
+`--fixture`接受其他JSON路徑，不自動載入／合併設定。Root欄位限schema_version、target、indicator、strategy、watchlist、graphics、drawing、exclude_checks。不含第二個Tab／Pane、mutation、Replay target或Editor source等E2E設定。
+
+目前exclude_checks明確排除PINE-001、GRAPHICS-001、DRAWING-001。它們標記not_applicable／USER_SCOPE_EXCLUDED，不呼叫handler、不算passed；移除ID即可重新納入。六核心不能透過此欄位排除。
 
 ## Required validation matrix
 
-| Check | 必要資訊／行為 | 最低通過條件 |
+Registry revision2：17 checks、37個唯讀assertions。目前排除7個assertions，適用30個。
+
+| Component | Checks | 必要唯讀契約 |
 | --- | --- | --- |
-| `ENV-001` | Desktop、OS、architecture、Node、repo commit、CDP Browser／Protocol identity | Report 中存在可重現的 environment tuple；Desktop exact version 必須存在並記錄來源，自動偵測不可用時由明確 CLI input 補入，不可猜測。 |
-| `SURFACE-001` | 所有依賴 Desktop 的公開 CLI commands 與 Core adapters inventory | 每個公開 surface 都映射至至少一個 required／entitlement-conditional check；未覆蓋項目會使認證失敗。 |
-| `CDP-001` | `/json/version`、`/json/list`、WebSocket connect、Runtime evaluate、bounded timeout | CDP 可連線；timeout／disconnect 回傳結構化錯誤且 process 不永久等待。 |
-| `TARGET-001` | Desktop shell、Chart targets、Active Tab resolution、reconnect | 多 Tab 不依賴 target list ordering；Active Chart 可唯一定位，切換後不沿用 stale client。 |
-| `CONTEXT-001` | `target_id`、`url_chart_id`、runtime `layout_id`、optional `saved_layout_id`、`pane_index`、`pane_id` | `tab list` 與 Pane context 可解析相同 ownership；帳號 fixture 的 `getSavedCharts().url -> id` 映射成立。 |
-| `CHART-001` | Symbol、resolved Symbol、Timeframe、chart-ready signal、mutation readback／restore | State 可讀；受控 Symbol／Timeframe 切換完成後可驗證並恢復，錯誤 identity 不可回報成功。 |
-| `DATA-001` | Quote、OHLCV、indicator values、timestamp／numeric validity | 已知 fixture 可讀且 schema、ordering、Unix／ISO time contract 正確；無 `NaN`／Infinity 偽成功。 |
-| `STUDY-001` | Study `entity_id`、type、source、visibility、inputs 與 active Strategy identity | Indicator／Strategy 可正確分類；精確 Entity read／mutation 不會落到其他 Pane 或 Entity。 |
-| `STRATEGY-001` | Strategy status lifecycle、`reportData()`、metrics、Trades shape／counts／ordering、snapshot fields | Active Strategy、fresh Report 與 Trading Data 可取得；closed／open counts、oldest-first ordering與 snapshot consistency 通過。 |
-| `HISTORY-001` | OHLCV fields、Unix timestamps／ISO companions、older-data request、dedupe／ordering／completion | 已知 Symbol 可取得有效 bars；向前載入有 progress／stop signal，結果不重複且時間遞增。 |
-| `WATCHLIST-001` | Watchlist inventory、active Watchlist、完整 Symbol identity | List／Get 可讀且保留 `exchange:symbol`，不以 localized DOM text 作唯一判斷。 |
-| `PINE-001` | Account Saved Pine inventory／source capability、editor state、compile／error readback | Read-only inventory 可用；受控 disposable script 可編譯並確認結果，且 cleanup 不影響既有 Scripts。 |
-| `DRAWING-001` | Drawing inventory、stable selector、受控 create／get／remove readback | Disposable Drawing lifecycle 可完成並清理；不依賴 localized label 或不穩定 ordinal。 |
-| `ALERT-001` | Alert service、inventory 與受控 create／delete readback | Test Alert lifecycle 可驗證並清理；使用者既有 Alerts 不被修改。 |
-| `REPLAY-001` | Replay capability、state、受控 start／step／stop 與 restore | 獨立opt-in fixture以有效loaded bars的10% bounded point啟動；驗證symbol／resolution／bars、Desktop-version stop ordering與restore readback。禁止`selectFirstAvailableDate()`；Replay Trading另行opt-in並在stop前清除、驗證test-owned executions。 |
-| `UI-001` | Shell tabs、必要 panels、Pine editor 與 screenshot locators | Repo 使用的必要 locator 可唯一解析；不得以語言限定文字作唯一定位方式。 |
-| `STREAM-001` | Quote／chart event subscription、bounded sample 與 unsubscribe | 可收到 bounded event sample，結束後完成 unsubscribe 且 process 正常退出。 |
-| `OUTPUT-001` | JSON contract、bounded stdout、JSON／JSONL／CSV、atomic artifact publish | Live result 可被 serializer 處理；失敗不發布 partial final artifact，成功輸出可重新解析。 |
-| `REGRESSION-001` | Unit、CLI、full regression、lint、diff check | 所有 required deterministic tests 通過；lint 無 error；沒有以永久 skip 取代必要 contract。 |
+| Environment | ENV-001 | live Desktop版本與環境identity，前後穩定 |
+| Core1：CDP／Runtime | CDP-001 | evaluate、awaitPromise、callFunctionOn JSON往返 |
+| Core2：Target／Layout／Pane | TARGET-001、CONTEXT-001 | active target唯一、Saved Layout mapping、Pane ownership |
+| Core3：Chart | CHART-001 | symbol／resolution／type／range及resolved symbol一致性 |
+| Core4：Data／History provider | DATA-001、HISTORY-001 | OHLCV tuple、時間／finite／ordering、quote／Study values、history必要API |
+| Core5：Study／Inputs | STUDY-001 | Entity/source mapping、Indicator／Strategy分類、Input IDs／types／values |
+| Core6：Strategy | STRATEGY-001 | active source、完成狀態、Report／Trades／Equity必要shape及內部一致性 |
+| Account | PINE-ACCOUNT-001、WATCHLIST-001、ALERT-001 | 已登入下inventory、指定Saved Pine source與完整Watchlist讀取；合法空inventory可接受 |
+| Editor／UI | PINE-001、UI-001 | 已開Editor的Monaco model、canvas／CDP screenshot；Editor目前排除 |
+| Feature providers | GRAPHICS-001、DRAWING-001、REPLAY-001 | 既有graphics primitives／Drawing properties及Replay必要methods/state；前兩組目前排除 |
 
-## Result states
+檢測必要contract與可觀察資料，不比較完整private objects、不要求精確價格／盈虧固定。讀取使用目前active Pane／Strategy，不開面板、不切換選擇、不建立或刪除資產。
 
-- `compatible`：所有 required checks 通過，新 Desktop version 可加入 support matrix。
-- `incompatible`：已排除環境、登入、fixture 與 entitlement 問題，至少一個 required runtime contract 確認缺失或改變。
-- `environment_blocked`：Desktop exact version 無法確認、CDP 未啟動、未登入、網路／權限或 Desktop process 不可用。
-- `fixture_blocked`：缺少測試 Layout、Strategy、Watchlist、歷史資料或 mutation fixture。
-- `investigating`：已確認 version-related failure，正在尋找與驗證替代 capability；此狀態不可宣告支援。
+## Scope and report
 
-Optional／deferred capability 失敗應記錄為 `unsupported_optional`，但不可用 optional 標籤降低現有公開 CLI contract 的必要性。
+成功代表目前設定範圍的必要唯讀契約相容，不保證所有操作／交易流程E2E成功，也不推論排除功能已通過。缺fixture與環境問題為blocked，必要contract可重現失敗才為incompatible；無舊版可比證據不歸因於Desktop升版。
 
-## Unsupported-contract investigation policy
+Report schema3以版本／結果、issues、各check單一status與coverage counts呈現；不再有controlled／restore／next_check。成功只留status，異常保留reason／action，真正failure保留provider／expected／observed及影響入口。設定排除按check分組。詳細契約見[System Design](./SYSTEM_DESIGN.md#report-contract)。
 
-當 required check 失敗時，依序執行：
+Canonical report在 `~/.tradingview-mcp/compatibility/reports/`；state在同層state.json。--output是額外副本，覆寫須--force且不得寫入狀態目錄。舊report不改寫；舊registry與新scope不同時baseline標不可比。
 
-1. 使用相同 repo commit 重跑一次，排除 transient calculation、stale target 或未完成載入。
-2. 確認 environment、登入、entitlement 與 fixture prerequisites，分類是否真的為 version incompatibility。
-3. 記錄失敗的 observable contract、最後已知可用 Desktop version、第一個失敗版本、error code／stage 與 bounded sanitized evidence。
-4. 在新版只 probe 與失敗 contract 有關的 object paths、method availability、return types、必要 keys 與 lifecycle；禁止 unrestricted recursive dump。
-5. 找出替代 provider 後至少驗證正常、缺失／錯誤與重複執行三種情境。
-6. 優先在 shared Core adapter 加 capability detection 與 backward-compatible fallback；只有無可靠 capability discriminator 時才使用明確 Desktop version branch。
-7. 新增舊版與新版 sanitized fixtures／tests，並更新 Terminology、runtime contract、support matrix 與 Change completion evidence。
-8. 重新執行全部 required checks；不能只驗證原本失敗的單一 command。
+## Project testing boundary
 
-若沒有可信替代能力，應保留 structured unsupported error 並將該 Desktop version 標記為 `incompatible`；不可用 UI timing、localized text、猜測第一個 Tab／Pane／Strategy 或舊資料 fallback 偽裝成功。
+CLI／MCP wrapper/schema、serializer、atomic publication、lease/fencing、取消處理屬checker與Core的本地測試。操作生命週期／還原、history載入、Tab/Pane切換、Study/Account mutations、Strategy重新計算／分頁案例、UI互動、Replay交易屬E2E／回歸。它們都不是Desktop report assertions或home passed prerequisites。
 
-## Target report contract
-
-預計提供 CLI-first 的 machine-readable Gate：
-
-```bash
-npm run tv -- compatibility check --profile read-only --output compatibility.json
-npm run tv -- compatibility check --profile read-only --desktop-version 3.4.0 --output compatibility.json
-npm run tv -- compatibility check --profile controlled --output compatibility.json
-```
-
-Report 至少包含：
-
-```text
-schema_version
-started_at / completed_at
-environment
-desktop_version_source
-profile
-overall_status
-checks[].id / required / status / duration_ms
-checks[].observed_contract / error
-restore
-sanitization
-```
-
-`read-only` 用於升版後第一輪安全診斷；正式支援認證必須在專用 fixture 上完成 `controlled` profile 與完整 regression。`--output` 不得覆寫既有檔案，除非明確指定 `--force`。
+原操作測試helpers移到tests/compatibility/support/desktop-operations.js、restore.js；設定範本移到tests/desktop/support/fixtures/operations.example.json。保留fake-driver回歸測試，不新增相容性CLI的操作入口；本次沒有執行live mutation E2E。
 
 ## Tasks
 
-| ID | Task | Status | Depends on |
+任務順序維持foundation→launch/advisory→registry/promotion→六核心／feature providers→整合。TASK-005與各component需求已依2026-10-14唯讀scope修訂。
+
+| ID | Task | Checks | Depends on |
 | --- | --- | --- | --- |
-| [TASK-001](./TASK-001-desktop-version-compatibility-gate.md) | Desktop version compatibility Gate | `todo` | — |
+| [TASK-001](./TASK-001-version-identity-home-state.md) | Version identity and home state foundation | — | — |
+| [TASK-002](./TASK-002-launch-version-observation.md) | Shared launch version observation | — | TASK-001 |
+| [TASK-003](./TASK-003-cli-local-advisory-status.md) | Local-only CLI advisory and compatibility status | — | TASK-001 |
+| [TASK-004](./TASK-004-checker-registry-report-cli.md) | Checker registry, report pipeline and read-only CLI | ENV-001 | TASK-001、TASK-003 |
+| [TASK-005](./TASK-005-scope-and-verification-promotion.md) | Read-only scope and verification promotion | — | TASK-001、TASK-004 |
+| [TASK-006](./TASK-006-cdp-target-context-checks.md) | CDP, Target, Layout and Pane checks | CDP-001 / TARGET-001 / CONTEXT-001 | TASK-004、TASK-005 |
+| [TASK-007](./TASK-007-chart-data-history-checks.md) | Chart, Main Series and history checks | CHART-001 / DATA-001 / HISTORY-001 | TASK-005、TASK-006 |
+| [TASK-008](./TASK-008-study-strategy-checks.md) | Study Inputs and Strategy lifecycle checks | STUDY-001 / STRATEGY-001 | TASK-005、TASK-006、TASK-007 |
+| [TASK-009](./TASK-009-account-service-checks.md) | Account Pine, Watchlist and Alert checks | PINE-ACCOUNT-001 / WATCHLIST-001 / ALERT-001 | TASK-005、TASK-006 |
+| [TASK-010](./TASK-010-editor-ui-checks.md) | Pine Editor and UI provider checks | PINE-001 / UI-001 | TASK-005、TASK-006 |
+| [TASK-011](./TASK-011-graphics-drawing-checks.md) | Pine graphics and Drawing checks | GRAPHICS-001 / DRAWING-001 | TASK-005、TASK-006、TASK-008 |
+| [TASK-012](./TASK-012-replay-checks.md) | Opt-in Replay lifecycle checks | REPLAY-001 | TASK-005、TASK-006、TASK-007 |
+| [TASK-013](./TASK-013-integration-live-validation-delivery.md) | Integration, Live validation and delivery evidence | — | TASK-002、TASK-003、TASK-006、TASK-007、TASK-008、TASK-009、TASK-010、TASK-011、TASK-012 |
 
 ## Exit criteria
 
-- Required validation matrix 已轉換成 versioned、machine-readable assertions。
-- 所有依賴 Desktop runtime 的公開 CLI surfaces 都映射至 required 或有明確前置條件的 checks。
-- Gate 能區分 `incompatible`、environment／fixture blocked 與 optional unsupported。
-- Read-only profile 不改變 Desktop state；controlled profile 對所有 mutation 完成 restore readback。
-- 任一 required check 失敗時不會輸出 `compatible`，並產生足以開始 bounded investigation 的安全 evidence。
-- 新版 adapter 必須同時具有舊版與新版 regression coverage，且完整 Gate 重跑通過後才能加入 support matrix。
-- 文件列出最後已驗證的 Desktop、Electron／Chromium／CDP 與 repo version tuple，不使用浮動的「latest」。
+- Launch觀察版本；普通command local-only；manual Gate保持唯讀。
+- 全部適用唯讀contract成立才compatible／passed，blocked或partial不冒充成功。
+- Exclusions可追溯；source/version/context/generation fencing與atomic publication通過。
+- CLI/MCP shared-provider coverage完整；本地測試與Desktop evidence分開。
+- 精確平台／版本／來源tuple可重現；不把排除或未測平台視為認證。
 
 ## Completion record
 
-Not started.
+2026-10-14：完成readonly scope修訂；原controlled操作移出registry／production Gate。Live30個適用assertions全部通過，home passed；7個explicit feature exclusions保留，沒有操作E2E前置。788 unit與13 error tests通過，lint0 errors。完整tuple/report/source與跨平台限制見Delivery evidence；本輪實作與驗收紀錄一併提交。

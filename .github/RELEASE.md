@@ -24,16 +24,18 @@ The CI workflow runs for pull requests targeting `fork-main` and pushes to
 ```bash
 npm ci
 npm run lint
-npm run test:unit
+npm test
 npm pack --dry-run
 npm run release:check-version
 ```
+
+Tests are grouped by module and type. CI runs local unit and integration tests through the shared discovery runner; live Desktop E2E is explicit. See [the testing guide](../tests/README.md).
 
 Network-backed Pine compilation tests are disabled by default. Run them
 explicitly when network access is available:
 
 ```bash
-TV_RUN_NETWORK_TESTS=1 npm run test:unit
+TV_RUN_NETWORK_TESTS=1 npm test
 ```
 
 ## Version source
@@ -77,7 +79,7 @@ Validate the release locally:
 ```bash
 npm run release:check-version
 npm run lint
-npm run test:unit
+npm test
 npm pack --dry-run
 ```
 

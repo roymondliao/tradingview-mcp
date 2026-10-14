@@ -22,7 +22,7 @@ scope: process-ownership
 ### Add
 
 - `src/core/strategy-run-lease.js`
-- `tests/strategy_run_lease.test.js`
+- `tests/strategy/run/unit/lease.test.js`
 
 ### Modify
 

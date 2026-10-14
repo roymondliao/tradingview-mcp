@@ -16,11 +16,13 @@ const CONDITION_TYPE_MAP = {
   less_than: 'less', less: 'less', below: 'less', '<': 'less',
 };
 
-export async function create({ condition, price, message }) {
+export async function create({ condition, price, message, notifications = true, _deps } = {}) {
+  if (typeof notifications !== 'boolean') throw new Error('notifications must be a boolean');
+  const runEvaluate = _deps?.evaluate || evaluate;
   const p = requireFinite(price, 'price');
   const condType = CONDITION_TYPE_MAP[String(condition || 'crossing').trim().toLowerCase()] || 'cross';
 
-  return evaluate(`
+  return runEvaluate(`
     (function() {
       try {
         var ms = window.TradingViewApi._activeChartWidgetWV.value()._chartWidget.model().mainSeries();
@@ -40,8 +42,8 @@ export async function create({ condition, price, message }) {
           resolution: '1',
           message: msg,
           sound_file: 'alert/fired', sound_duration: 0,
-          popup: true, auto_deactivate: true,
-          email: false, sms_over_email: false, mobile_push: true,
+          popup: ${notifications}, auto_deactivate: true,
+          email: false, sms_over_email: false, mobile_push: ${notifications},
           web_hook: null, name: null,
           expiration: new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString(),
           active: true, ignore_warnings: true

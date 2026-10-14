@@ -135,6 +135,7 @@ export async function withStrategyAutomationSignals(operation, {
 }
 
 register('strategy', {
+  desktop_dependency: 'required',
   description: 'Strategy Tester tools for explicit Strategy Instances',
   subcommands: new Map([
     ['run', {

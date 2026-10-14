@@ -100,7 +100,7 @@ Implemented:
 
 Deterministic validation:
 
-- `tests/strategy_sync.test.js`共30 tests，涵蓋create／reuse／update、CRLF normalization、stale plan、Account與Pane identity/version mismatch、完整Runtime Input reorder/add/remove/incompatible migration、concurrent ownership change，以及add/schema/inputs/activation/report/old-remove各phase failure與cleanup failure。
+- `tests/strategy/runtime/unit/sync.test.js`共30 tests，涵蓋create／reuse／update、CRLF normalization、stale plan、Account與Pane identity/version mismatch、完整Runtime Input reorder/add/remove/incompatible migration、concurrent ownership change，以及add/schema/inputs/activation/report/old-remove各phase failure與cleanup failure。
 - `fnm exec --using=22 npm run lint`：0 errors；3個既有warnings不在本Task範圍。
 - `fnm exec --using=22 npm run test:unit`：506 passed；其中targeted Strategy Sync suite為30 passed。
 - `fnm exec --using=22 npm run test:cli`：31 passed。

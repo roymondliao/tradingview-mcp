@@ -4,12 +4,14 @@ import * as healthCore from '../../core/health.js';
 import { PANE_CONTEXT_OPTIONS, withPaneContext } from '../pane-context.js';
 
 register('state', {
+  desktop_dependency: 'required',
   description: 'Get current chart state (symbol, TF, studies)',
   options: PANE_CONTEXT_OPTIONS,
   handler: (opts) => withPaneContext(opts, () => core.getState()),
 });
 
 register('symbol', {
+  desktop_dependency: 'required',
   description: 'Get or set the chart symbol',
   handler: async (opts, positionals) => {
     const sym = positionals[0];
@@ -20,6 +22,7 @@ register('symbol', {
 });
 
 register('timeframe', {
+  desktop_dependency: 'required',
   description: 'Get or set the chart timeframe',
   handler: async (opts, positionals) => {
     const tf = positionals[0];
@@ -30,6 +33,7 @@ register('timeframe', {
 });
 
 register('type', {
+  desktop_dependency: 'required',
   description: 'Get or set the chart type (Candles, Line, etc.)',
   handler: async (opts, positionals) => {
     const ct = positionals[0];
@@ -41,11 +45,13 @@ register('type', {
 });
 
 register('info', {
+  desktop_dependency: 'required',
   description: 'Get detailed symbol metadata',
   handler: () => core.symbolInfo(),
 });
 
 register('search', {
+  desktop_dependency: 'none',
   description: 'Search for symbols by name or keyword',
   handler: (opts, positionals) => {
     if (!positionals[0]) throw new Error('Query required. Usage: tv search AAPL');
@@ -54,6 +60,7 @@ register('search', {
 });
 
 register('range', {
+  desktop_dependency: 'required',
   description: 'Get or set the visible chart range',
   options: {
     from: { type: 'string', description: 'Start timestamp (unix seconds)' },
@@ -66,6 +73,7 @@ register('range', {
 });
 
 register('scroll', {
+  desktop_dependency: 'required',
   description: 'Scroll the chart to a specific date',
   handler: (opts, positionals) => {
     if (!positionals[0]) throw new Error('Date required. Usage: tv scroll 2025-01-15');
@@ -74,11 +82,13 @@ register('scroll', {
 });
 
 register('discover', {
+  desktop_dependency: 'required',
   description: 'Report which TradingView API paths are available',
   handler: () => healthCore.discover(),
 });
 
 register('ui-state', {
+  desktop_dependency: 'required',
   description: 'Get current UI state (panels, buttons)',
   handler: () => healthCore.uiState(),
 });

@@ -132,7 +132,7 @@ on_status({ stage: 'validating_watchlist' })
 - `src/core/strategy-resume.js`：建立invocation selection totals並轉送original Experiment identity。
 - `src/core/strategy-run.js`：formal Run轉送progress callback；dry-run不建立renderer。
 - `src/cli/commands/strategy.js`：只為formal Run／Resume建立TTY renderer並確保finalize newline。
-- `tests/strategy_durable_experiment.test.js`、`tests/strategy_run.test.js`、`tests/cli.test.js`及TASK completion records。
+- `tests/strategy/run/integration/experiment.test.js`、`tests/strategy/run/integration/run.test.js`、`tests/cli/integration/router.test.js`及TASK completion records。
 - `docs/strategy_automation_run_manual_test.md`：加入TTY與redirect smoke checks。
 
 ## Requirements

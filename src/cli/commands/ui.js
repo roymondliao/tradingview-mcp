@@ -2,6 +2,7 @@ import { register } from '../router.js';
 import * as core from '../../core/ui.js';
 
 register('ui', {
+  desktop_dependency: 'required',
   description: 'UI automation tools (click, keyboard, hover, scroll, find, eval, type, panel, fullscreen, mouse)',
   subcommands: new Map([
     ['click', {

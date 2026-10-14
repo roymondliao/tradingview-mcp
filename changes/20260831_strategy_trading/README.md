@@ -374,7 +374,7 @@ Report 與 Strategy Trading Data 的正確性只以以下五項作為 reconcilia
 }
 ```
 
-Total net profit 差值為 `0.00455 TWD`，來自 Desktop CSV 顯示精度，落在 `0.01 TWD` tolerance 內。Sanitized paired fixture 位於 `tests/fixtures/strategy-trading/desktop-paired-report-trades.json`；此 evidence 不代表所有 Strategy、locale、currency 或 TradingView version 都具有相同 raw shape。
+Total net profit 差值為 `0.00455 TWD`，來自 Desktop CSV 顯示精度，落在 `0.01 TWD` tolerance 內。Sanitized paired fixture 位於 `tests/strategy/trading/support/fixtures/desktop-paired-report-trades.json`；此 evidence 不代表所有 Strategy、locale、currency 或 TradingView version 都具有相同 raw shape。
 
 ## Output contract
 

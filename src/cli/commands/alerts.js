@@ -2,6 +2,7 @@ import { register } from '../router.js';
 import * as core from '../../core/alerts.js';
 
 register('alert', {
+  desktop_dependency: 'required',
   description: 'Alert tools (list, create, delete)',
   subcommands: new Map([
     ['list', {

@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "target": {
+    "layout_name": "compatibility-main",
+    "pane_index": 0
+  },
+  "second_target": {
+    "layout_name": "compatibility-secondary",
+    "pane_index": 0
+  },
+  "other_pane_index": 1,
+  "symbols": [
+    "NASDAQ:AAPL",
+    "NASDAQ:MSFT"
+  ],
+  "timeframes": [
+    "D",
+    "60"
+  ],
+  "indicator": {
+    "entity_id": "REPLACE_INDICATOR_ENTITY",
+    "study_id": "REPLACE_BUILT_IN_STUDY_ID"
+  },
+  "strategy": {
+    "entity_id": "REPLACE_STRATEGY_ENTITY",
+    "script_id": "USER;REPLACE_SAVED_SCRIPT_ID",
+    "version": "1"
+  },
+  "input_mutation": {
+    "name": "Length",
+    "value": 20
+  },
+  "strategy_cases": [
+    {
+      "entity_id": "REPLACE_OPEN_TRADE_STRATEGY_ENTITY",
+      "kind": "open"
+    },
+    {
+      "entity_id": "REPLACE_EMPTY_TRADE_STRATEGY_ENTITY",
+      "kind": "empty"
+    }
+  ],
+  "watchlist": {
+    "name": "dev-testing-list",
+    "mutable": true,
+    "test_symbol": "NASDAQ:GOOGL"
+  },
+  "editor": {
+    "disposable": true,
+    "script_name": "compatibility-editor",
+    "script_id": "USER;REPLACE_EDITOR_SCRIPT_ID"
+  },
+  "ui": {
+    "indicator_query": "Volume"
+  },
+  "graphics": {
+    "study_name": "compatibility-graphics"
+  },
+  "drawing": {
+    "entity_id": "REPLACE_EXISTING_DRAWING_ENTITY"
+  },
+  "alert": {
+    "price": 1000000000
+  },
+  "entitlements": {
+    "depth": {
+      "applicable": false,
+      "evidence": "REPLACE_WITH_VERIFIED_ACCOUNT_ENTITLEMENT_EVIDENCE"
+    }
+  },
+  "replay_target": {
+    "layout_name": "compatibility-replay",
+    "pane_index": 0
+  },
+  "exclude_checks": []
+}

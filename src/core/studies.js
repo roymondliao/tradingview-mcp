@@ -815,12 +815,13 @@ export async function addActivePaneStudy({ script_id, study_id, query, source, t
   }
 
   const runEvaluate = _deps?.evaluate || _evaluate;
-  await runEvaluate(`
+  const createdId = await runEvaluate(`
     (function() {
       var chart = ${CHART_API};
       return chart.createStudy(${JSON.stringify(createDescriptor)}, false, false, []);
     })()
   `);
+  if (_deps?.onCreated && (typeof createdId === 'string' || typeof createdId === 'number')) await _deps.onCreated({ entity_id: String(createdId) });
   const delay = _deps?.delay || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   await delay(1500);
   const after = await getState({ _deps });
@@ -830,6 +831,7 @@ export async function addActivePaneStudy({ script_id, study_id, query, source, t
     throw new Error(`Study add readback expected one new Entity, found ${added.length}.`);
   }
   const instance = added[0];
+  if (_deps?.onCreated) await _deps.onCreated({ entity_id: instance.entity_id });
   let inputResult;
   if (inputs) {
     const setInputs = _deps?.setStudyInputs || setStudyInputs;

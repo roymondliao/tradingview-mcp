@@ -231,12 +231,12 @@ V2 serializer輸出原有shape；v3 serializer輸出新shape。Domain transition
 
 ### Tests and fixtures
 
-- `tests/strategy_run_state.test.js`
-- `tests/strategy_run_artifacts.test.js`
-- `tests/strategy_run.test.js`
-- `tests/strategy_resume.test.js`
-- `tests/strategy_durable_fault_matrix.test.js`
-- `tests/helpers/strategy_resume_fixture.js`
+- `tests/strategy/run/unit/state.test.js`
+- `tests/strategy/run/unit/artifacts.test.js`
+- `tests/strategy/run/integration/run.test.js`
+- `tests/strategy/run/integration/resume.test.js`
+- `tests/strategy/run/integration/fault-matrix.test.js`
+- `tests/strategy/run/support/resume-fixture.js`
 - Scripts或benchmarks內直接建立formal artifact的fixtures。
 
 Exact impact以implementation前`rg`結果為準；不得只更新production writer而遺漏benchmark／fault fixtures。
