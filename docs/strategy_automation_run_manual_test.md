@@ -508,3 +508,36 @@ Final acceptance：
 保留必要證據後，逐一刪除明確記錄的測試Run Directory。執行cleanup前先輸出並人工核對exact path；不要對output root使用recursive wildcard、未解析variable或寬泛路徑。
 
 2026-10-01 capacity evidence：Run `obv-v3-20261001T045854Z-3d8bb50a`、Snapshot `sha256:593585ff743cd66726facfbffde19772d06641cf50bcebdff3eeb4240e385942`、ordered fingerprint `sha256:1698d59ec9c515a51d2333315522d0b5b1b038571b3096383f8a1bcb47e47052`；648/648 validation及single-baseline execution成功，1,944 artifacts與648 reconciliation success audit皆為0 errors。TASK-007與Feature已標記`done`。
+
+
+## Strategy Update：刷新既有實驗
+
+```bash
+npm run tv -- strategy update --run-directory ./output/<source-run-id> --dry-run
+npm run tv -- strategy update --run-directory ./output/<source-run-id>
+npm run tv -- strategy resume --run-directory ./output/<new-update-run-id>
+```
+
+前置條件：來源 Run 必須 succeeded，並保留完整 artifacts；若是 Extension，需保留該次
+完整 ancestor chain。原 Config 不必存在，但原 Pine 檔案需在保存路徑且 hash 不變，
+Saved Strategy 與 Layout／Pane 必須仍可解析且符合既有 identity。
+
+驗證項目：
+
+- Dry-run 不建立目錄、不執行實驗；列出新的 run_id、預計 output directory、實驗數與 Symbol 數。
+  Formal command 會重新產生 ID，與前次 dry-run 的預覽不同。
+- 無需輸入日期或等待指定時間；即使當日再次呼叫，也建立新 Run 並完整重跑。
+- 來源有 A、B，Extension 新增 C 時，Update 該 Extension 應完整執行 A、B、C × frozen Symbols。
+- Update 不採用目前 watchlist 新增或移除的 Symbols，也不採用當前 Config 的變更。
+- 新目錄位於來源的 output root，來源所有檔案保持不變。新 run.json 使用 artifact schema v5、
+  run_kind=update，update metadata 保存 source_run_id、來源 fingerprints 與完整實驗數。
+- 每個 Symbol 產生新的 report、trades、reconciliation；不得複用來源已成功的 artifacts。
+- 查看 report.json 的 calculation.range.backtest；截止日取決於實際資料與策略日期過濾，
+  不保證等於系統時間。範圍未變時仍可成功完成完整重跑。
+- 中斷後，對新的 Update Run 執行 resume，只補未成功項目；即使移走來源目錄也可恢復。
+- 成功 Update 可再次 update，實驗數不增加；也可 extend 新實驗，child 使用 v5。
+  Update root 的 provenance 不會被當成繼承實驗再累加。
+- 來源未完成、損壞、缺少成功 artifacts 或 source／inputs identity 改變時拒絕，且不建立新 Run。
+
+自動化測試：`npm run test:durable` 與 `npm run test:cli`。測試使用真實暫存 artifacts、
+共用 durable lifecycle、lineage 與 resume，只替換 TradingView runtime／匯出邊界。

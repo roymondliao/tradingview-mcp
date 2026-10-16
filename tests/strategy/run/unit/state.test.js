@@ -2,7 +2,6 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   STRATEGY_RUN_ARTIFACT_VERSION,
-  STRATEGY_RUN_PREVIOUS_ARTIFACT_VERSION,
   STRATEGY_RUN_LEGACY_ARTIFACT_VERSION,
   buildResumePlan,
   deriveManifestSummary,
@@ -49,8 +48,8 @@ function versionFields(family) {
   if (family === 'v2') return { schema_version: STRATEGY_RUN_LEGACY_ARTIFACT_VERSION };
   return {
     artifact_schema_version: family === 'v3'
-      ? STRATEGY_RUN_PREVIOUS_ARTIFACT_VERSION
-      : STRATEGY_RUN_ARTIFACT_VERSION,
+      ? 3
+      : 4,
   };
 }
 

@@ -282,6 +282,13 @@ describe('Strategy Run lineage', () => {
       }),
       (error) => error.code === 'RUN_EXTENSION_LINEAGE_LIMIT_EXCEEDED',
     );
+    const updateSource = await loadStrategyRunLineage({
+      run_directory: join(outputRoot, 'run-64'),
+      require_extension_capacity: false,
+      _deps: loaderDeps(paths),
+    });
+    assert.equal(updateSource.lineage_depth, 64);
+    assert.equal(updateSource.parameter_sets.length, 65);
   });
 
   it('rejects cumulative lineage JSON bytes above 64 MiB', async () => {

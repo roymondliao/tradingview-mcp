@@ -816,7 +816,9 @@ describe('Formal Strategy Run integration', () => {
     ), 'utf8'));
     assert.equal('symbol' in reboundRun.resolved.target, false);
     assert.equal('resolution' in reboundRun.resolved.target, false);
-    assert.equal(reboundRun.resolved.strategy.entity_id, 'new-entity');
+    assert.equal(resumed.strategy.entity_id, 'new-entity');
+    assert.equal(reboundRun.resolved.strategy.entity_id, 'entity-1');
+    assert.deepEqual(reboundRun.planned_experiments, local.artifacts.run.planned_experiments);
     assert.equal('symbol' in persistedExperiment.target, false);
     assert.equal('resolution' in persistedExperiment.target, false);
     assert.equal(persistedExperiment.strategy.entity_id, 'entity-1');
