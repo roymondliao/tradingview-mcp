@@ -183,6 +183,8 @@ tv strategy run --config ./run.json --dry-run
 tv strategy run --config ./run.json
 tv strategy extend --run-directory ./output/<parent-run-id> --config ./run.json --dry-run
 tv strategy extend --run-directory ./output/<parent-run-id> --config ./run.json
+tv strategy update --run-directory ./output/<source-run-id> --dry-run
+tv strategy update --run-directory ./output/<source-run-id>
 tv strategy resume --run-directory ./output/<run-id>
 tv screenshot -r chart             # capture chart
 tv pine compile                    # compile Pine Script
@@ -196,6 +198,14 @@ For snapshot-complete Strategy workflows, use `strategy trading-report`. The exi
 `strategy trading-data` writes JSON by default and can infer JSON, JSONL, or CSV from a recognized output extension. File output is staged beside the destination and atomically published; an existing file requires `--force`. Its stdout remains a bounded JSON summary without the `trades` array. CSV uses stable English columns independent of the TradingView UI language and represents each paired Trade as exit/mark then entry rows.
 
 `strategy trading-export` creates one run directory containing `manifest.json` plus each successful Symbol's `report.json`, complete `trades.json|jsonl|csv`, and `reconciliation.json`. Use exactly one of `--symbol` or `--watchlist active`. Watchlist mode captures the Active Watchlist once, processes it sequentially, continues after Symbol failures by default, and restores the original Chart once at the end; `--fail-fast` marks all remaining items skipped. Duplicate Symbols keep their first occurrence and later entries are recorded as skipped. A partial run is published with bounded failure details and exits `1` (`2` for CDP connection failures).
+
+`strategy update --run-directory <source-run>` refreshes every experiment and frozen Symbol from a succeeded Run using TradingView's currently available backtest data. It requires no date, interval, or original Config file. When the source is an Extension, the entire experiment collection through that ancestor chain is rerun. Strategy source, effective inputs, timeframe, and the saved Watchlist remain fixed; changes to the current Watchlist are not imported.
+
+Each Update creates a new sibling output directory and preserves previous results. Update artifacts use schema v5 with `run_kind: "update"` and source provenance; they contain the full experiment collection and can independently be resumed, updated again, or extended. Use `strategy resume --run-directory <new-update-run>` after interruption. Existing v2/v3/v4 artifacts remain readable; ordinary Run and Extension output stays v4, while Extensions descending from an Update use v5. The original Pine source file must still be available at its persisted path and match its saved hash.
+
+An Update captures complete reports and trades, including recalculated historical results; it does not append only recent trades. Actual backtest coverage is recorded in each `report.json` at `calculation.range.backtest`. A fixed date filter or TradingView history availability can leave the end date unchanged or shift the start date. Update does not alter date inputs or promise a common market-data cutoff across sequential Symbol exports. `--dry-run` validates the same source and runtime requirements without creating output or running experiments.
+
+Feature request、設計與驗證紀錄見 [Strategy Run Update](changes/20261016_strategy_run_update/README.md)。
 
 ### All Commands
 

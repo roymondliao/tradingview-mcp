@@ -378,6 +378,20 @@ export function summarizeStrategyResume({ artifacts, plan } = {}) {
   });
 }
 
+/** Validate frozen inputs, symbols, and persisted experiment identities without runtime access. */
+export function validateStrategyRunEvidence(artifacts) {
+  const setupComplete = assertPlanIdentity(artifacts.run);
+  const symbols = assertFrozenWatchlist(artifacts);
+  if (setupComplete) assertExperimentArtifacts(artifacts);
+  const expected = artifacts.run.resolved.watchlist;
+  if (symbols.length !== expected.symbol_count
+    || artifacts.watchlist.snapshot.snapshot_id !== expected.snapshot_id
+    || artifacts.watchlist.snapshot.ordered_symbol_fingerprint !== expected.ordered_symbol_fingerprint) {
+    throw resumeError('Frozen Watchlist does not match run.json.');
+  }
+  return { setupComplete, symbols };
+}
+
 /** Read and fully audit local durable evidence without any TradingView call. */
 export async function loadStrategyResume({ run_directory, _deps = {} } = {}) {
   const absoluteRunDirectory = typeof run_directory === 'string'
@@ -406,9 +420,7 @@ export async function loadStrategyResume({ run_directory, _deps = {} } = {}) {
   if (basename(artifacts.store.run_path) !== artifacts.run.run_id) {
     throw resumeError('Run ID does not match the resolved Run Directory.');
   }
-  const setupComplete = assertPlanIdentity(artifacts.run);
-  const symbols = assertFrozenWatchlist(artifacts);
-  if (setupComplete) assertExperimentArtifacts(artifacts);
+  const { symbols } = validateStrategyRunEvidence(artifacts);
   const auditInventory = _deps.auditExperimentInventory || auditExperimentDirectoryInventory;
   await auditInventory(artifacts, _deps.fs);
   await auditSucceededArtifacts(artifacts);
@@ -1032,7 +1044,13 @@ export async function durableStrategyRunResponse({
   const runtimeError = finalized.run.error
     ? rehydrateStrategyRunError(finalized.run.error)
     : null;
-  const extensionFields = finalized.run.run_kind === 'extension'
+  const extensionFields = finalized.run.run_kind === 'update'
+    ? {
+      run_kind: 'update',
+      source_run_id: finalized.run.update.source_run_id,
+      experiments_updated: finalized.run.update.experiment_count,
+    }
+    : finalized.run.run_kind === 'extension'
     ? Object.freeze({
       run_kind: 'extension',
       parent_run_id: finalized.run.extension.parent_run_id,
@@ -1254,7 +1272,9 @@ export async function resumeStrategyAutomation({
               resolved: {
                 ...run.resolved,
                 target: durableStrategyTargetContext(context),
-                strategy: { ...run.resolved.strategy, ...strategy },
+                // Experiment IDs include the original entity_id. Keep that
+                // persisted planning identity while execution uses the rebound strategy.
+                strategy: run.resolved.strategy,
               },
             },
           });

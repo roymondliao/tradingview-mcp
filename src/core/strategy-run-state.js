@@ -1,13 +1,13 @@
 /** Pure Strategy Run artifact validation, transitions, summaries, and resume planning. */
 import { isAbsolute } from 'node:path';
 import { CoreOperationError } from './errors.js';
-import { stableJsonStringify } from './stable-json.js';
+import { sha256Hex, stableJsonStringify } from './stable-json.js';
 import { unixMillisecondsToIso } from './time.js';
 
-export const STRATEGY_RUN_ARTIFACT_VERSION = 4;
-export const STRATEGY_RUN_PREVIOUS_ARTIFACT_VERSION = 3;
+export const STRATEGY_RUN_ARTIFACT_VERSION = 5;
+export const STRATEGY_RUN_PREVIOUS_ARTIFACT_VERSION = 4;
 export const STRATEGY_RUN_LEGACY_ARTIFACT_VERSION = 2;
-export const STRATEGY_RUN_ARTIFACT_FAMILIES = Object.freeze(['v2', 'v3', 'v4']);
+export const STRATEGY_RUN_ARTIFACT_FAMILIES = Object.freeze(['v2', 'v3', 'v4', 'v5']);
 export const STRATEGY_RUN_STATUSES = Object.freeze(['running', 'succeeded', 'failed']);
 export const STRATEGY_SYMBOL_STATUSES = Object.freeze([
   'running',
@@ -187,7 +187,7 @@ function hasOwn(value, field) {
 
 function assertExpectedFamily(family, label = 'Artifact family') {
   if (family != null && !STRATEGY_RUN_ARTIFACT_FAMILIES.includes(family)) {
-    throw new TypeError(`${label} must be v2, v3, or v4.`);
+    throw new TypeError(`${label} must be v2, v3, v4, or v5.`);
   }
 }
 
@@ -214,25 +214,25 @@ export function strategyRunArtifactFamily(value, label = 'artifact') {
     }
     return 'v2';
   }
-  if (value.artifact_schema_version === STRATEGY_RUN_PREVIOUS_ARTIFACT_VERSION) return 'v3';
+  if (value.artifact_schema_version === 3) return 'v3';
+  if (value.artifact_schema_version === 4) return 'v4';
   if (value.artifact_schema_version !== STRATEGY_RUN_ARTIFACT_VERSION) {
     throw artifactError(
       `${label} artifact_schema_version ${String(value.artifact_schema_version)} is not resumable; expected ${STRATEGY_RUN_ARTIFACT_VERSION}.`,
       { code: 'RUN_RESUME_VERSION_UNSUPPORTED' },
     );
   }
-  return 'v4';
+  return 'v5';
 }
 
+/** Preserve v4 for ordinary Runs; Update and its Extensions explicitly opt into v5. */
 export function strategyRunArtifactVersionFields(family = 'v4') {
   assertExpectedFamily(family);
   if (family === 'v2') {
     return Object.freeze({ schema_version: STRATEGY_RUN_LEGACY_ARTIFACT_VERSION });
   }
   return Object.freeze({
-    artifact_schema_version: family === 'v3'
-      ? STRATEGY_RUN_PREVIOUS_ARTIFACT_VERSION
-      : STRATEGY_RUN_ARTIFACT_VERSION,
+    artifact_schema_version: Number(family.slice(1)),
   });
 }
 
@@ -240,6 +240,7 @@ function artifactFields(fields, family, { run = false } = {}) {
   const versioned = family === 'v2'
     ? ['schema_version', ...fields]
     : ['artifact_schema_version', ...fields];
+  if (run && family === 'v5') return [...versioned, 'run_kind', 'extension', 'update'];
   return run && family === 'v4' ? [...versioned, 'run_kind', 'extension'] : versioned;
 }
 
@@ -406,8 +407,8 @@ function assertExtensionMetadata(value, run) {
   if (value.parent_run_id === run.run_id) {
     throw artifactError('run.json Extension Parent must differ from run_id.');
   }
-  if (![2, 3, 4].includes(value.parent_artifact_schema_version)) {
-    throw artifactError('run.json.extension.parent_artifact_schema_version must be 2, 3, or 4.');
+  if (!(run.artifact_schema_version === 5 ? [2, 3, 4, 5] : [2, 3, 4]).includes(value.parent_artifact_schema_version)) {
+    throw artifactError('run.json.extension.parent_artifact_schema_version is unsupported.');
   }
   for (const field of [
     'parent_run_fingerprint',
@@ -462,6 +463,32 @@ function assertExtensionMetadata(value, run) {
       throw artifactError(`${label} does not match the child-local Run plan.`);
     }
   });
+}
+
+function assertUpdateMetadata(value, run) {
+  assertAllowedFields(value, [
+    'fingerprint_schema_version', 'source_run_id', 'source_artifact_schema_version',
+    'source_run_fingerprint', 'source_lineage_fingerprint',
+    'parameter_sets_fingerprint', 'experiment_count',
+  ], 'run.json.update');
+  if (value.fingerprint_schema_version !== 1) throw artifactError('Unsupported Update fingerprint version.');
+  assertRunId(value.source_run_id, 'run.json.update.source_run_id');
+  if (value.source_run_id === run.run_id) throw artifactError('Update source must differ from run_id.');
+  if (![2, 3, 4, 5].includes(value.source_artifact_schema_version)) {
+    throw artifactError('Unsupported Update source artifact version.');
+  }
+  assertSha256Identity(value.source_run_fingerprint, 'run.json.update.source_run_fingerprint');
+  if (value.source_lineage_fingerprint !== null) {
+    assertSha256Identity(value.source_lineage_fingerprint, 'run.json.update.source_lineage_fingerprint');
+  }
+  assertSha256Identity(value.parameter_sets_fingerprint, 'run.json.update.parameter_sets_fingerprint');
+  assertNonNegativeInteger(value.experiment_count, 'run.json.update.experiment_count', { positive: true });
+  const sets = run.requested.experiments?.parameter_sets;
+  if (!Array.isArray(sets) || sets.length !== value.experiment_count
+    || run.planned_experiments?.length !== value.experiment_count
+    || value.parameter_sets_fingerprint !== `sha256:${sha256Hex(sets.map(({ name, inputs }) => ({ name, inputs: inputs || {} })))}`) {
+    throw artifactError('Update must persist the complete requested Experiment set and fingerprint.');
+  }
 }
 
 export function validateRunArtifact(value, { expected_family } = {}) {
@@ -549,17 +576,20 @@ export function validateRunArtifact(value, { expected_family } = {}) {
       names.add(identity.name);
     });
   }
-  if (family === 'v4') {
-    if (!['standalone', 'extension'].includes(value.run_kind)) {
-      throw artifactError('run.json.run_kind must be standalone or extension for artifact v4.');
+  if (family === 'v4' || family === 'v5') {
+    const kinds = family === 'v5' ? ['standalone', 'extension', 'update'] : ['standalone', 'extension'];
+    if (!kinds.includes(value.run_kind)) {
+      throw artifactError(`run.json.run_kind must be ${kinds.join(', ')} for artifact ${family}.`);
     }
-    if (value.run_kind === 'standalone') {
+    if (value.run_kind !== 'extension') {
       if (value.extension != null) {
-        throw artifactError('A standalone v4 run.json must not contain extension metadata.');
+        throw artifactError('Only an Extension Run may contain extension metadata.');
       }
     } else {
       assertExtensionMetadata(value.extension, value);
     }
+    if (value.run_kind === 'update') assertUpdateMetadata(value.update, value);
+    else if (value.update != null) throw artifactError('Only an Update Run may contain update metadata.');
   }
   if (!Array.isArray(value.experiments)) {
     throw artifactError('run.json.experiments must be an array.');
@@ -582,6 +612,10 @@ export function validateRunArtifactV3(value) {
 
 export function validateRunArtifactV4(value) {
   return validateRunArtifact(value, { expected_family: 'v4' });
+}
+
+export function validateRunArtifactV5(value) {
+  return validateRunArtifact(value, { expected_family: 'v5' });
 }
 
 export function validateExperimentArtifact(value, { expected_family } = {}) {
@@ -611,6 +645,10 @@ export function validateExperimentArtifactV3(value) {
 
 export function validateExperimentArtifactV4(value) {
   return validateExperimentArtifact(value, { expected_family: 'v4' });
+}
+
+export function validateExperimentArtifactV5(value) {
+  return validateExperimentArtifact(value, { expected_family: 'v5' });
 }
 
 function validateManifestSymbol(symbol, manifest, position) {
@@ -777,6 +815,10 @@ export function validateExperimentManifestV3(value) {
 
 export function validateExperimentManifestV4(value) {
   return validateExperimentManifest(value, { expected_family: 'v4' });
+}
+
+export function validateExperimentManifestV5(value) {
+  return validateExperimentManifest(value, { expected_family: 'v5' });
 }
 
 function transitionTime(current, updatedAt, label) {

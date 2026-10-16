@@ -7,6 +7,7 @@ import {
   dryRunStrategyExtension,
   extendStrategyAutomation,
 } from '../../core/strategy-extend.js';
+import { dryRunStrategyUpdate, updateStrategyAutomation } from '../../core/strategy-update.js';
 import { resumeStrategyAutomation } from '../../core/strategy-resume.js';
 import { prepareContext } from '../../core/pane.js';
 import { CoreOperationError } from '../../core/errors.js';
@@ -81,7 +82,7 @@ function requireTradingDataPagination(offset, limit, snapshotId) {
 const SIGNAL_EXIT_CODES = Object.freeze({ SIGINT: 130, SIGTERM: 143 });
 export const STRATEGY_SIGNAL_COALESCE_WINDOW_MS = 250;
 
-/** Install graceful handlers only for one formal Run/Extend/Resume invocation. */
+/** Install graceful handlers only for one formal Run/Extend/Update/Resume invocation. */
 export async function withStrategyAutomationSignals(operation, {
   process_facade = process,
   AbortControllerClass = AbortController,
@@ -193,6 +194,30 @@ register('strategy', {
           on_progress: onProgress,
           on_status: onStatus,
         }), { operation_phase: 'strategy_resume_execution' });
+      },
+    }],
+    ['update', {
+      description: 'Refresh all existing Experiments into a new independent Strategy Run',
+      options: {
+        'run-directory': { type: 'string', description: 'Required succeeded source Run Directory' },
+        'dry-run': { type: 'boolean', description: 'Validate source and runtime without writes' },
+      },
+      handler: async (opts) => {
+        if (!opts['run-directory']) {
+          throw new CoreOperationError('--run-directory is required for strategy update.', {
+            code: 'RUN_UPDATE_SOURCE_NOT_FOUND', kind: 'validation', phase: 'request_validation',
+          });
+        }
+        const unknown = Object.keys(opts).filter((key) => !['run-directory', 'dry-run'].includes(key));
+        if (unknown.length) {
+          throw new CoreOperationError(`Unsupported strategy update option: --${unknown[0]}.`, {
+            code: 'RUN_UPDATE_OPTION_INVALID', kind: 'validation', phase: 'request_validation',
+          });
+        }
+        if (opts['dry-run']) return dryRunStrategyUpdate({ run_directory: opts['run-directory'] });
+        return withStrategyAutomationSignals((signal, onProgress, onStatus) => updateStrategyAutomation({
+          run_directory: opts['run-directory'], signal, on_progress: onProgress, on_status: onStatus,
+        }), { operation_phase: 'strategy_update_execution' });
       },
     }],
     ['extend', {

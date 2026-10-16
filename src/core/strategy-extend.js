@@ -231,7 +231,7 @@ function initialExtensionRun({ internal, started_at }) {
   });
   const parentWatchlist = lineage.parent.run.resolved.watchlist;
   return Object.freeze({
-    ...strategyRunArtifactVersionFields('v4'),
+    ...strategyRunArtifactVersionFields(lineage.parent.run.artifact_schema_version === 5 ? 'v5' : 'v4'),
     run_kind: 'extension',
     run_id: requested.run.run_id,
     status: 'running',

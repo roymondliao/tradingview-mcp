@@ -19,6 +19,7 @@ export * as indicators from './indicators.js';
 export * as studies from './studies.js';
 export * as strategy from './strategy.js';
 export * as strategyRun from './strategy-run.js';
+export * as strategyUpdate from './strategy-update.js';
 export * as strategyExtend from './strategy-extend.js';
 export * as strategyExtensionConfig from './strategy-extension-config.js';
 export * as strategyRunLineage from './strategy-run-lineage.js';

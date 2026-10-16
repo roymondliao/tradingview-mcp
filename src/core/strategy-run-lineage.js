@@ -77,6 +77,7 @@ export function strategyRunFingerprintProjection(run) {
     run_id: run.run_id,
     artifact_schema_version: artifactSchemaVersion(run),
     run_kind: run.run_kind || 'standalone',
+    ...(run.run_kind === 'update' && { update: run.update }),
     status: 'succeeded',
     source_sha256: run.source_sha256,
     candidate_schema_fingerprint: run.candidate_schema_fingerprint,
@@ -188,8 +189,8 @@ function validateExtensionChain(chain) {
     const entry = chain[index];
     const { run } = entry.artifacts;
     const runKind = run.run_kind || 'standalone';
-    if (index === 0 && runKind !== 'standalone') {
-      throw lineageError('Strategy Run lineage must terminate at a standalone root.');
+    if (index === 0 && !['standalone', 'update'].includes(runKind)) {
+      throw lineageError('Strategy Run lineage must terminate at a standalone or Update root.');
     }
     if (index > 0 && runKind !== 'extension') {
       throw lineageError('Only the lineage root may be a standalone Run.');
@@ -235,7 +236,7 @@ function validateExtensionChain(chain) {
 }
 
 /** Load root→direct Parent and validate every immutable lineage edge. */
-export async function loadStrategyRunLineage({ run_directory, _deps = {} } = {}) {
+export async function loadStrategyRunLineage({ run_directory, require_extension_capacity = true, _deps = {} } = {}) {
   if (typeof run_directory !== 'string' || !run_directory.trim()) {
     throw lineageError('Parent Run Directory is required.', {
       code: 'RUN_EXTENSION_PARENT_NOT_FOUND',
@@ -332,7 +333,7 @@ export async function loadStrategyRunLineage({ run_directory, _deps = {} } = {})
       });
     }
     reversed.push(Object.freeze({ path: currentPath, artifacts }));
-    if ((artifacts.run.run_kind || 'standalone') === 'standalone') break;
+    if ((artifacts.run.run_kind || 'standalone') !== 'extension') break;
     const parentRunId = assertSafeRunId(artifacts.run.extension?.parent_run_id);
     currentPath = join(outputRoot, parentRunId);
   }
@@ -341,7 +342,7 @@ export async function loadStrategyRunLineage({ run_directory, _deps = {} } = {})
   const parameterSets = validateExtensionChain(chain);
   const parent = chain.at(-1);
   const lineageDepth = chain.length - 1;
-  if (lineageDepth >= STRATEGY_RUN_LINEAGE_MAX_DEPTH) {
+  if (require_extension_capacity && lineageDepth >= STRATEGY_RUN_LINEAGE_MAX_DEPTH) {
     throw lineageError('The next Extension would exceed the maximum lineage depth.', {
       code: 'RUN_EXTENSION_LINEAGE_LIMIT_EXCEEDED',
     });

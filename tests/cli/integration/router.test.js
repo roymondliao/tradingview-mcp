@@ -307,6 +307,25 @@ describe('CLI — help and routing', () => {
     assert.equal(JSON.parse(unsupported.stderr).phase, 'request_validation');
   });
 
+  it('strategy update accepts only a source Run Directory and dry-run', () => {
+    const help = run(['strategy', 'update', '--help']);
+    assert.equal(help.exitCode, 0);
+    assert.match(help.stdout, /--run-directory/);
+    assert.match(help.stdout, /--dry-run/);
+    assert.doesNotMatch(help.stdout, /--config|--date/);
+    const missing = run(['strategy', 'update']);
+    assert.equal(missing.exitCode, 1);
+    assert.equal(JSON.parse(missing.stderr).code, 'RUN_UPDATE_SOURCE_NOT_FOUND');
+    for (const args of [[], ['--dry-run']]) {
+      const absent = run(['strategy', 'update', '--run-directory', './missing-update-run', ...args]);
+      assert.equal(absent.exitCode, 1);
+      assert.equal(JSON.parse(absent.stderr).errors[0].code, 'RUN_UPDATE_SOURCE_NOT_FOUND');
+    }
+    const unsupported = run(['strategy', 'update', '--run-directory', './source', '--config', './run.json']);
+    assert.equal(unsupported.exitCode, 1);
+    assert.equal(JSON.parse(unsupported.stderr).phase, 'request_validation');
+  });
+
   it('strategy extend requires Parent, Config, and exposes dry-run', () => {
     const help = run(['strategy', 'extend', '--help']);
     assert.equal(help.exitCode, 0);
