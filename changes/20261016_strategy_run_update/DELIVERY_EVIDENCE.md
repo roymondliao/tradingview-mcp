@@ -7,18 +7,22 @@ Status: implementation and local validation complete; no live Desktop validation
 
 - Feature branch: `codex/strategy-run-update`。
 - Branch base: `fork-main` at `e621874771f1f24ac10b83530d401e33fafb41d6`。
-- 實作先完成，後依使用者要求補建分支與本 Change；review 後將程式、測試與文件納入同一 feature commit，未推送。
-- Review 修正 Resume runtime rebinding 問題；以下 full-suite 結果來自修正後重新執行，其餘檢查亦記錄實際結果。
+- 實作先完成，後依使用者要求補建分支與本 Change；review 後將程式、測試與文件納入 feature commit `48a6edb`；後續版本提交設定為 `1.6.0`，PR 目標為 `fork-main`。
+- Review 修正 Resume runtime rebinding 問題；以下記錄修正及版本更新的實際驗證結果。
 
 ## Automated validation
 
 | Command | Observed result |
 | --- | --- |
 | `npm run test:all` | 813 tests passed, 0 failed, 0 skipped; 132 suites（review 修正後重跑）。 |
+| `npm test`（版本更新為 `1.6.0` 後） | 813 tests passed, 0 failed, 0 skipped。 |
 | `npm run test:cli` | 44 tests passed, 0 failed。 |
 | `node --test tests/strategy/run/integration/update.test.js tests/strategy/run/unit/lineage.test.js` | 18 tests passed，涵蓋 14 個 Update 與 4 個 lineage tests。 |
 | `npm run lint` | 0 errors；3 個既有 warnings，位於 `src/core/data.js` 與 `src/tools/watchlist.js`。 |
 | `git diff --check` | Passed。 |
+| `npm run release:check-version` | `1.6.0` 在 package 與 lockfile 同步。 |
+| `npm run --silent release:print-tag` / `npm run --silent tv -- --version` | `v1.6.0` / `1.6.0`。 |
+| `npm pack --dry-run --cache /private/tmp/tv-update-npm-cache` | Passed；352 files，版本 `1.6.0`。 |
 | `node src/cli/index.js strategy update --help` | 顯示 `--run-directory` 與 `--dry-run`。 |
 
 補登時讀取的 Node 版本：`v26.5.1`。未宣稱 Node 22／24 matrix 已執行。
@@ -52,6 +56,7 @@ Review finding、重現與修正見 [REVIEW.md](./REVIEW.md)。Lineage 測試另
 ## Not executed
 
 - 真實 TradingView Desktop Update／interrupt／Resume 測試。
-- 跨 Node 版本 matrix、package/release gate、發佈或 remote push。
+- 本機跨 Node 版本 matrix；Node 22／24 由 PR CI 執行。
+- 正式 tag／GitHub Release 發佈；依既有 workflow 在 PR 合併後執行。
 
 Live 驗證流程已補到 [manual test](../../docs/strategy_automation_run_manual_test.md)。

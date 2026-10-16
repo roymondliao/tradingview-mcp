@@ -1,6 +1,6 @@
 # Strategy Run Update — Release Notes
 
-Unreleased。
+Target release: `1.6.0`（待 PR 合併及 release workflow 發佈）。
 
 - 新增 `tv strategy update --run-directory <source> [--dry-run]`，不必提供日期或原 Config。
 - 完整重跑來源實驗集合與 frozen Symbols，在獨立目錄保存結果，保留歷史分析依據。
