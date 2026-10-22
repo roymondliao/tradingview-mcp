@@ -51,9 +51,11 @@ See [RESEARCH.md](RESEARCH.md) for open questions, findings, and related work.
 ## Prerequisites
 
 - **TradingView Desktop app** (paid subscription required for real-time data)
-- **Node.js 18+**
+- **Node.js 22.23.4+, 24.22.1+, or 26.12.1+** within the corresponding major version (Node.js 24 LTS recommended)
 - **Claude Code** with MCP support (for MCP tools) or any terminal (for CLI)
 - **macOS, Windows, or Linux**
+
+These minimum versions include the [October 2026 Node.js security fixes](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases). Keep your selected major version on its latest security release. The repository's `.nvmrc` selects Node.js 24.22.1 for development; use `fnm install && fnm use` or `nvm install && nvm use` from the repository root. `npm install` and `npm ci` enforce the supported version range through `.npmrc`, but do not upgrade Node.js. Ensure your MCP client's `node` command also resolves to a supported version, then restart the MCP server after upgrading.
 
 ## What It Does
 

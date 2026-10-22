@@ -21,7 +21,7 @@ tests/
 
 ## Feature testing
 
-Run from the repository root with Node >=22; prefix commands with `fnm exec --using=22` when needed.
+Run from the repository root with a [supported Node.js security release](../README.md#prerequisites). `.nvmrc` selects Node.js 24.22.1; prefix commands with `fnm exec --using=24.22.1` when needed. CI also covers the supported Node.js 22 and 26 branches.
 
 ```bash
 npm test                                           # All local unit + integration
