@@ -4,6 +4,8 @@ This file is a step-by-step guide for Claude Code (or any LLM agent) to install 
 
 ## Step 1: Clone and Install
 
+Install a supported Node.js security release first: 22.23.4+, 24.22.1+, or 26.12.1+ within that major version. Node.js 24 LTS is recommended. After cloning, `.nvmrc` can select the development version with `fnm install && fnm use` or `nvm install && nvm use`. npm enforces this requirement during installation but does not upgrade Node.js itself.
+
 ```bash
 git clone https://github.com/tradesdontlie/tradingview-mcp.git ~/tradingview-mcp
 cd ~/tradingview-mcp
@@ -28,6 +30,8 @@ Add the server to the user's Claude Code MCP configuration. The config file is a
 ```
 
 Replace `<INSTALL_PATH>` with the actual path where the repo was cloned (e.g., `/Users/username/tradingview-mcp`).
+
+Ensure `node` in the MCP client's environment resolves to a supported version; use its absolute executable path as `command` if the client uses a different PATH from your terminal. Restart the MCP server after changing Node.js.
 
 If the config file already exists and has other servers, merge the `tradingview` entry into the existing `mcpServers` object. Do not overwrite other servers.
 

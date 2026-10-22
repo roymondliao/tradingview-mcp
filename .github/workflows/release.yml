@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 env:
-  node-version: "22"
+  node-version: "^24.22.1"
 
 jobs:
   release:
@@ -33,6 +33,7 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: ${{ env.node-version }}
+          check-latest: true
           cache: npm
 
       - name: Install dependencies

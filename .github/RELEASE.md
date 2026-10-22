@@ -19,7 +19,7 @@ upstream/main -> main -> fork-main
 ## Continuous integration
 
 The CI workflow runs for pull requests targeting `fork-main` and pushes to
-`fork-main`. It verifies the project on Node.js 22 and 24 by running:
+`fork-main`. It verifies the project on supported security releases of Node.js 22, 24, and 26 by running:
 
 ```bash
 npm ci
@@ -27,9 +27,12 @@ npm run lint
 npm test
 npm pack --dry-run
 npm run release:check-version
+npm audit --audit-level=high
 ```
 
 Tests are grouped by module and type. CI runs local unit and integration tests through the shared discovery runner; live Desktop E2E is explicit. See [the testing guide](../tests/README.md).
+
+CI and release setup select the latest available version within their declared patched ranges. High and critical dependency audit findings, including development dependencies, fail CI. Release automation uses Node.js 24 LTS.
 
 Network-backed Pine compilation tests are disabled by default. Run them
 explicitly when network access is available:
