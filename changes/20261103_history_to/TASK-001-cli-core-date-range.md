@@ -80,4 +80,4 @@ MCP schema、共用 Pane wrapper、時間轉換 helper 及 runtime dependencies 
 
 必要回歸測試與 lint 已通過，詳見 [驗證紀錄](./DELIVERY_EVIDENCE.md)。
 MCP schema 未修改；無 `to` 的資料路徑由既有 core 測試驗證，尚未執行 Desktop live 測試。
-後續由 [TASK-002](./TASK-002-tests-documentation.md) 補齊其餘測試矩陣與使用文件。
+[TASK-002](./TASK-002-tests-documentation.md) 已補齊其餘測試矩陣與使用文件。

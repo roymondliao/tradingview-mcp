@@ -1,6 +1,6 @@
 # History To System Design
 
-Status: `in_progress`，TASK-001 已實作，TASK-002 待完成。
+Status: `done`，實作、規劃的本機自動化驗證與使用文件已完成；未執行 Desktop live 驗證。
 本設計依據 [需求規格](./README.md)，實作細節見 [Low level design](./LLD.md)。
 
 ## Purpose and behavior

@@ -1,7 +1,7 @@
 # History To Low Level Design
 
-Status: `in_progress`。TASK-001 已依本設計完成實作與必要回歸測試，
-TASK-002 的其餘測試及使用文件待完成；結果見 [驗證紀錄](./DELIVERY_EVIDENCE.md)。
+Status: `done`。TASK-001 與 TASK-002 已依本設計完成實作、規劃的本機自動化驗證
+及使用文件；結果見 [驗證紀錄](./DELIVERY_EVIDENCE.md)。
 元件與資料流程見 [System design](./SYSTEM_DESIGN.md)。
 
 ## File changes

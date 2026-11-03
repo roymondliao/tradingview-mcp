@@ -526,6 +526,9 @@ describe('CLI — help and routing', () => {
   it('history validates its date range before CDP discovery', () => {
     for (const [args, message] of [
       [['--to', '2026-06-30'], /--to requires --from/],
+      [['--from', '', '--to', '2026-06-30'], /--to requires --from/],
+      [['--from', '   ', '--to', '2026-06-30'], /--to requires --from/],
+      [['--from', '2026-01-01', '--to', ''], /Invalid to date/],
       [['--from', 'invalid', '--to', '2026-06-30'], /Invalid from date/],
       [['--from', '2026-01-01', '--to', 'invalid'], /Invalid to date/],
       [['--from', '2026-06-30', '--to', '2026-01-01'], /from must be less than or equal to to/],

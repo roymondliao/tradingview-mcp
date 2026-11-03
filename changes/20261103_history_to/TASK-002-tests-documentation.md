@@ -1,7 +1,7 @@
 ---
 id: TASK-002
 title: History To Tests and Documentation
-status: todo
+status: done
 phase: history-to
 depends_on:
   - TASK-001
@@ -17,8 +17,8 @@ scope: history-verification-documentation
 
 TASK-001 已加入日期驗證、主要分頁與筆數邊界、CLI 接線及還原後寫檔的必要回歸測試，
 並通過本機檢查，見 [驗證紀錄](./DELIVERY_EVIDENCE.md)。
-本任務仍為 `todo`：後續應先對照已有 coverage，補齊指定 `to` 時的讀取失敗、
-無進展、request limit、runtime exception 與 no-restore 等剩餘案例，並完成使用文件。
+本任務已補齊指定 `to` 時的讀取失敗、無進展、request limit、runtime exception、
+no-restore 與實際檔案寫入案例，並完成使用文件。
 
 ## Test coverage
 
@@ -63,12 +63,12 @@ TASK-001 已加入日期驗證、主要分頁與筆數邊界、CLI 接線及還�
 
 ## Documentation and checks
 
-- [ ] 更新 repo `README.md`，加入 `--from --to` 及僅 `--from` 的範例。
-- [ ] 說明 `to` 必須搭配 `from`、純日期為 UTC 零時，以及包含整日須傳明確日末時間與時區。
-- [ ] 說明 requested range 與實際 `period` 的差異、假日結果及既有安全上限。
-- [ ] 通過 core、CLI helper 與 CLI subprocess 的上述案例及既有回歸測試。
-- [ ] 執行以下檢查，將實際結果記錄於本 change 的 `DELIVERY_EVIDENCE.md`。
-- [ ] 完成後更新需求與 task 狀態，僅勾選有驗證證據的驗收項目。
+- [x] 更新 repo `README.md`，加入 `--from --to` 及僅 `--from` 的範例。
+- [x] 說明 `to` 必須搭配 `from`、純日期為 UTC 零時，以及包含整日須傳明確日末時間與時區。
+- [x] 說明 requested range 與實際 `period` 的差異、假日結果及既有安全上限。
+- [x] 通過 core、CLI helper 與 CLI subprocess 的上述案例及既有回歸測試。
+- [x] 執行以下檢查，將實際結果記錄於本 change 的 `DELIVERY_EVIDENCE.md`。
+- [x] 完成後更新需求與 task 狀態，僅勾選有驗證證據的驗收項目。
 
 ```bash
 node --test tests/data/unit/history.test.js tests/cli/integration/router.test.js
@@ -76,6 +76,6 @@ npm run lint
 git diff --check
 ```
 
-`DELIVERY_EVIDENCE.md` 在正式驗證後建立，記錄命令、結果與必要限制。
-若額外執行 Desktop live 驗證，記錄 symbol、timeframe、requested range、actual period
-及停止原因；未執行者不得標示為已通過。
+驗證結果：67 tests 通過、0 failures，含 27 個 history 測試；lint 為 0 errors、
+3 個既有 warnings；diff whitespace 檢查通過。詳細案例見 [驗證紀錄](./DELIVERY_EVIDENCE.md)。
+未執行 Desktop live 驗證。

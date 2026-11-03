@@ -1,7 +1,7 @@
 ---
 id: FEATURE-20261103-HISTORY-TO
 title: History To Date
-status: in_progress
+status: done
 created: 2026-11-03
 scope:
   - history-cli-to-option
@@ -11,7 +11,7 @@ scope:
 
 # History To Date
 
-Status: `in_progress`，TASK-001 的 CLI 與 core 實作完成；TASK-002 的完整驗證與使用文件待完成。
+Status: `done`，CLI／core 實作、規劃的本機自動化驗證與使用文件已完成；未執行 Desktop live 驗證。
 
 Feature branch：`codex/history-to`，由 `fork-main` 的
 `1b32b83` 建立。
@@ -94,27 +94,27 @@ tv history --from 1767225600 --to 1782863999 --include-bars
 
 ## Acceptance criteria
 
-- [ ] `tv history --help` 顯示 `--to` 的用途、可接受格式及必須搭配 `--from`。
-- [ ] 支援同傳 `--from --to`、僅傳 `--from`，以及兩者皆不傳。
-- [ ] 僅傳 `--from` 時取得起始時間至圖表當前可用的最新行情，維持原有篩選邏輯。
-- [ ] 單獨傳入 `--to` 或搭配空值 `--from`，在圖表操作前報錯並提示必要參數。
-- [ ] ISO、帶時區時間、Unix 秒／毫秒與純日期遵循上述規則。
-- [ ] 邊界相等時包含該 bar；無效日期及反向區間在圖表操作前拒絕。
-- [ ] 較新的區間外 bars 不阻擋向過去載入，亦不占用 `max_bars`。
-- [ ] Metadata、bars 與輸出檔案的範圍、筆數一致，且新增 requested-to 欄位。
-- [ ] 無符合資料、資料耗盡及各種安全上限情境有明確結果。
-- [ ] 未指定 `--to` 的既有行為、圖表還原及檔案覆寫規則通過回歸驗證。
-- [ ] 相關單元測試、CLI 測試、lint 與 diff whitespace 檢查通過。
+- [x] `tv history --help` 顯示 `--to` 的用途、可接受格式及必須搭配 `--from`。
+- [x] 支援同傳 `--from --to`、僅傳 `--from`，以及兩者皆不傳。
+- [x] 僅傳 `--from` 時取得起始時間至圖表當前可用的最新行情，維持原有篩選邏輯。
+- [x] 單獨傳入 `--to` 或搭配空值 `--from`，在圖表操作前報錯並提示必要參數。
+- [x] ISO、帶時區時間、Unix 秒／毫秒與純日期遵循上述規則。
+- [x] 邊界相等時包含該 bar；無效日期及反向區間在圖表操作前拒絕。
+- [x] 較新的區間外 bars 不阻擋向過去載入，亦不占用 `max_bars`。
+- [x] Metadata、bars 與輸出檔案的範圍、筆數一致，且新增 requested-to 欄位。
+- [x] 無符合資料、資料耗盡及各種安全上限情境有明確結果。
+- [x] 未指定 `--to` 的既有行為、圖表還原及檔案覆寫規則通過回歸驗證。
+- [x] 相關單元測試、CLI 測試、lint 與 diff whitespace 檢查通過。
 
 ## Tasks
 
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [TASK-001: CLI and core date range](./TASK-001-cli-core-date-range.md) | `done` | 本需求規格 |
-| [TASK-002: Tests and documentation](./TASK-002-tests-documentation.md) | `todo` | TASK-001 |
+| [TASK-002: Tests and documentation](./TASK-002-tests-documentation.md) | `done` | TASK-001 |
 
 ## Design references
 
 - [System design](./SYSTEM_DESIGN.md)：元件責任、資料流程、日期語意與相容性。
 - [Low level design](./LLD.md)：函式介面、驗證邊界、分頁演算法、輸出與測試設計。
-- [Delivery evidence](./DELIVERY_EVIDENCE.md)：TASK-001 實作與本機檢查結果。
+- [Delivery evidence](./DELIVERY_EVIDENCE.md)：兩項 task 的實作及本機檢查結果。

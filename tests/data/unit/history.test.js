@@ -1,5 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { getHistory, normalizeHistoryRange } from '../../../src/core/data.js';
 import { runHistoryCommand, writeHistoryOutput } from '../../../src/cli/commands/data.js';
 
@@ -48,7 +51,10 @@ describe('history date range validation', () => {
       [{ from: '  ', to: 400 }, /--to requires --from/],
       [{ from: 200, to: '' }, /Invalid to date/],
       [{ from: 200, to: 'invalid' }, /Invalid to date/],
+      [{ from: 200, to: '   ' }, /Invalid to date/],
+      [{ from: 200, to: Infinity }, /Invalid to value/],
       [{ from: 'invalid', to: 400 }, /Invalid from date/],
+      [{ from: NaN, to: 400 }, /Invalid from value/],
       [{ from: 400, to: 200 }, /from must be less than or equal to to/],
     ]) {
       await assert.rejects(getHistory({
@@ -181,6 +187,161 @@ describe('getHistory() — batched TradingView history', () => {
     }
   });
 
+  it('treats a date-only upper bound as UTC midnight rather than the whole day', async () => {
+    const times = ['2026-06-29T12:00:00Z', '2026-06-30T00:00:00Z', '2026-06-30T12:00:00Z']
+      .map(value => Date.parse(value) / 1000);
+    const { deps } = historyDeps([{ first_time: times[0], more: false, bars: times.map(bar) }]);
+    const result = await getHistory({ from: '2026-06-29', to: '2026-06-30', include_bars: true, _deps: deps });
+    assert.deepEqual(result.bars.map(item => item.time), times.slice(0, 2));
+    assert.equal(result.period.to_iso, '2026-06-30T00:00:00.000Z');
+  });
+
+  it('reports source exhaustion even when available history does not reach from', async () => {
+    const { deps } = historyDeps([
+      { first_time: 500, more: true, bars: [bar(500), bar(600)] },
+      { first_time: 300, more: false, bars: [bar(300), bar(400)] },
+    ]);
+    const result = await getHistory({ from: 100, to: 400, include_bars: true, _deps: deps });
+    assert.deepEqual(result.bars.map(item => item.time), [300, 400]);
+    assert.equal(result.period.from, 300);
+    assert.equal(result.requested_from, 100);
+    assert.equal(result.stop_reason, 'no_more_data');
+    assert.equal(result.complete, true);
+  });
+
+  it('enforces the request limit both before and after finding matching bars', async () => {
+    for (const nextTime of [300, 500]) {
+      const { deps } = historyDeps([
+        { first_time: 700, more: true, bars: [bar(700), bar(800)] },
+        { first_time: nextTime, more: true, bars: [bar(nextTime), bar(nextTime + 100)] },
+        { first_time: 100, more: false, bars: [bar(100), bar(200)] },
+      ]);
+      let requests = 0;
+      const pending = getHistory({ from: 100, to: 400, max_requests: 1, include_bars: true, _deps: {
+        ...deps, requestMore: async count => { requests += 1; await deps.requestMore(count); },
+      } });
+      if (nextTime === 300) {
+        const result = await pending;
+        assert.equal(result.stop_reason, 'max_requests');
+        assert.equal(result.complete, false);
+        assert.equal(result.requests_made, 1);
+        assert.deepEqual(result.bars.map(item => item.time), [300, 400]);
+      } else {
+        await assert.rejects(pending, /No historical bars matched the requested date range/);
+      }
+      assert.equal(requests, 1);
+    }
+  });
+
+  it('stops at the exact matching bar limit when from has not been reached', async () => {
+    const { deps } = historyDeps([{ first_time: 300, more: true, bars: [300, 400, 500, 600].map(bar) }]);
+    const result = await getHistory({ from: 100, to: 400, max_bars: 2, include_bars: true, _deps: {
+      ...deps, requestMore: async () => assert.fail('Bar limit must stop before another request'),
+    } });
+    assert.equal(result.stop_reason, 'max_bars');
+    assert.equal(result.complete, false);
+    assert.equal(result.requests_made, 0);
+    assert.deepEqual(result.bars.map(item => item.time), [300, 400]);
+  });
+
+  it('returns only matching partial bars when a later snapshot is unreadable', async () => {
+    for (const unreadable of [null, { more: true, bars: [] }]) {
+      const { deps, setChartCalls } = historyDeps([
+        { first_time: 300, more: true, bars: [bar(300), bar(400), bar(500)] },
+        unreadable,
+      ]);
+      const result = await getHistory({ symbol: 'NYSE:IBM', from: 100, to: 400, include_bars: true, _deps: deps });
+      assert.equal(result.stop_reason, 'read_failed');
+      assert.equal(result.complete, false);
+      assert.equal(result.requests_made, 1);
+      assert.deepEqual(result.bars.map(item => item.time), [300, 400]);
+      assert.equal(setChartCalls.at(-1).symbol, 'NASDAQ:AAPL');
+    }
+  });
+
+  it('reports no progress for a stalled source even if all its bars are filtered out', async () => {
+    for (const hasMatches of [true, false]) {
+      const initialTime = hasMatches ? 300 : 500;
+      const { deps } = historyDeps([
+        { first_time: initialTime, more: true, bars: [bar(initialTime), bar(600)] },
+        { first_time: initialTime, more: true, bars: [] },
+      ]);
+      let requests = 0;
+      const pending = getHistory({ from: 100, to: 400, max_requests: 3, include_bars: true, _deps: {
+        ...deps, requestMore: async count => { requests += 1; await deps.requestMore(count); },
+      } });
+      if (hasMatches) {
+        const result = await pending;
+        assert.equal(result.stop_reason, 'no_progress');
+        assert.equal(result.complete, false);
+        assert.deepEqual(result.bars.map(item => item.time), [300]);
+      } else {
+        await assert.rejects(pending, /No historical bars matched the requested date range/);
+      }
+      assert.equal(requests, 1);
+    }
+  });
+
+  it('rejects an unreadable initial source and restores the chart for a bounded request', async () => {
+    for (const initial of [null, { first_time: null, more: false, bars: [] }]) {
+      const { deps, setChartCalls } = historyDeps([initial]);
+      await assert.rejects(getHistory({ symbol: 'NYSE:IBM', from: 100, to: 400, _deps: deps }),
+        /Could not read historical bars/);
+      assert.equal(setChartCalls.at(-1).symbol, 'NASDAQ:AAPL');
+    }
+  });
+
+  it('propagates runtime exceptions and restores the chart without writing output', async () => {
+    for (const failureStage of ['initial_read', 'request', 'poll_read']) {
+      const failure = new Error(`Runtime failed during ${failureStage}`);
+      const { deps, setChartCalls } = historyDeps([
+        { first_time: 300, more: true, bars: [bar(300), bar(400), bar(500)] },
+      ]);
+      let reads = 0;
+      let writes = 0;
+      await assert.rejects(runHistoryCommand({
+        symbol: 'NYSE:IBM', timeframe: 'W', from: '100', to: '400', output: 'unused.json',
+      }, {
+        withContext: async (_opts, operation) => operation(),
+        getHistory: options => getHistory({ ...options, _deps: {
+          ...deps,
+          readSnapshot: async () => {
+            reads += 1;
+            if (failureStage === 'initial_read' || (failureStage === 'poll_read' && reads > 1)) throw failure;
+            return deps.readSnapshot();
+          },
+          requestMore: async () => { if (failureStage === 'request') throw failure; },
+        } }),
+        writeOutput: () => { writes += 1; },
+      }), error => error === failure);
+      assert.equal(writes, 0);
+      assert.deepEqual(setChartCalls, [
+        { symbol: 'NYSE:IBM', timeframe: 'W' },
+        { symbol: 'NASDAQ:AAPL', timeframe: 'D' },
+      ]);
+    }
+  });
+
+  it('leaves the requested chart in place with no-restore on success and failure', async () => {
+    for (const fails of [false, true]) {
+      const { deps, setChartCalls } = historyDeps([
+        { first_time: 100, more: false, bars: [bar(100), bar(200), bar(500)] },
+      ]);
+      const failure = new Error('Snapshot failed');
+      const pending = runHistoryCommand({
+        symbol: 'NYSE:IBM', timeframe: 'W', from: '100', to: '400', 'no-restore': true,
+      }, {
+        withContext: async (_opts, operation) => operation(),
+        getHistory: options => getHistory({ ...options, _deps: {
+          ...deps, readSnapshot: async () => { if (fails) throw failure; return deps.readSnapshot(); },
+        } }),
+      });
+      if (fails) await assert.rejects(pending, error => error === failure);
+      else assert.equal((await pending).period.to, 200);
+      assert.deepEqual(setChartCalls, [{ symbol: 'NYSE:IBM', timeframe: 'W' }]);
+    }
+  });
+
   it('does not claim completeness when the bar safety limit truncates data', async () => {
     const { deps } = historyDeps([
       { symbol: 'NASDAQ:AAPL', resolution: 'D', first_time: 100, more: false, bars: [bar(100), bar(200)] },
@@ -237,6 +398,38 @@ describe('getHistory() — batched TradingView history', () => {
 });
 
 describe('history CLI file output', () => {
+  it('writes actual bounded JSON and requires force to replace an existing file', async t => {
+    const directory = mkdtempSync(join(tmpdir(), 'tv-history-range-'));
+    t.after(() => rmSync(directory, { recursive: true, force: true }));
+    const output = join(directory, 'history.json');
+    const { deps, setChartCalls } = historyDeps([
+      { first_time: 100, more: false, bars: [100, 200, 300, 400, 500].map(bar) },
+    ]);
+    const options = { symbol: 'NYSE:IBM', from: '200', to: '400', 'include-bars': true, output };
+    const dependencies = {
+      withContext: async (_opts, operation) => ({ ...await operation(), context: { pane_id: 'file-pane' } }),
+      getHistory: args => getHistory({ ...args, _deps: deps }),
+    };
+    const summary = await runHistoryCommand(options, dependencies);
+    const original = readFileSync(output, 'utf8');
+    const saved = JSON.parse(original);
+    assert.deepEqual(saved.bars.map(item => item.time), [200, 300, 400]);
+    const { bars, ...metadata } = saved;
+    assert.deepEqual(summary, { ...metadata, output, output_includes_bars: true });
+    assert.equal(bars.length, saved.bar_count);
+    assert.equal(saved.period.to, saved.requested_to);
+    assert.equal(saved.context.pane_id, 'file-pane');
+
+    await assert.rejects(runHistoryCommand(options, dependencies), { code: 'EEXIST' });
+    assert.equal(readFileSync(output, 'utf8'), original);
+    const replacement = await runHistoryCommand({ ...options, to: '300', force: true }, dependencies);
+    assert.deepEqual(JSON.parse(readFileSync(output, 'utf8')).bars.map(item => item.time), [200, 300]);
+    assert.equal(replacement.bar_count, 2);
+    assert.equal(replacement.requested_to, 300);
+    assert.equal(setChartCalls.length, 6);
+    assert.equal(setChartCalls.at(-1).symbol, 'NASDAQ:AAPL');
+  });
+
   it('validates before preparing context and writes the bounded result after chart restoration', async () => {
     const events = [];
     const options = {

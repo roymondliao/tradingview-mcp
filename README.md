@@ -169,6 +169,8 @@ tv quote                           # current price
 tv symbol AAPL                     # change symbol
 tv ohlcv --summary                 # price summary
 tv history --symbol NASDAQ:AAPL -t D  # load all available daily history metadata
+tv history --symbol NASDAQ:AAPL -t D --from 2026-01-01  # start date through the latest available chart data
+tv history --symbol NASDAQ:AAPL -t D --from 2026-01-01T00:00:00Z --to 2026-06-30T23:59:59Z --include-bars --output history-h1.json
 tv history --symbol NASDAQ:AAPL -t D --bars-per-request 1000 --max-requests 20 --max-bars 10000 --include-bars --output history.json
 tv history --symbol NASDAQ:AAPL -t D --include-bars --output history.json --force  # explicitly overwrite an existing file
 tv tab list                        # resolve Tab, runtime/storage Layout IDs, and Pane IDs
@@ -194,6 +196,28 @@ tv pane layout 2x2                 # 4-chart grid
 tv pane symbol 1 ES1!              # set pane symbol
 tv stream quote | jq '.close'      # monitor price changes
 ```
+
+`history --to` requires `--from` and includes bars whose timestamps satisfy `from <= time <= to`.
+Without `--to`, `--from` continues through the chart's latest available data; without either date,
+history loads all available data within the safety limits. Dates use the existing parser: ISO dates/times
+and recognized Unix seconds or milliseconds. A date-only value such as `--to 2026-06-30` means
+**UTC midnight at the start of that date**, rather than the whole day. To include a full day, pass an
+explicit end-of-day time and timezone, such as `--to 2026-06-30T23:59:59+08:00`. Time comparisons
+use each bar's timestamp and do not split a bar spanning the boundary.
+
+`requested_from` / `requested_to` and their ISO companions record the requested bounds; an omitted
+bound is `null`. `period` and `bar_count` describe the actual returned data. On a holiday or with a
+delayed feed, the last bar can precede `to`. Metadata is returned by default; `--include-bars` adds
+OHLCV bars, and `--output` writes the JSON result to a file without including bars in the stdout summary.
+Existing files require `--force`.
+
+History remains limited by TradingView's available data and by `--bars-per-request` (default 1000,
+max 5000), `--max-requests` (default 100, max 500) and `--max-bars` (default 50000, max 200000).
+Only matching bars count toward `max_bars`; excess matches retain the latest N bars in time order.
+Reaching `from` or exhausting the source can set `complete: true`; a safety limit, failed read or stalled
+load sets `complete: false` when partial matching data is returned. Check `stop_reason` and `period`
+to assess coverage. No matching bars produces an error. `--to` is currently a CLI/core option;
+the MCP `data_get_history` schema continues to expose `from` only.
 
 For snapshot-complete Strategy workflows, use `strategy trading-report`. The existing `strategy select`, `strategy report`, and `strategy trades` commands remain deprecated compatibility surfaces and are not used by the new export workflow.
 
