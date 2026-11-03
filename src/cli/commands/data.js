@@ -23,6 +23,36 @@ export function writeHistoryOutput(result, output, {
   };
 }
 
+export async function runHistoryCommand(opts, {
+  normalizeRange = core.normalizeHistoryRange,
+  withContext = withPaneContext,
+  getHistory = core.getHistory,
+  writeOutput = writeHistoryOutput,
+} = {}) {
+  if (Object.prototype.hasOwnProperty.call(opts, 'page-size')) {
+    throw new Error('--page-size was renamed to --bars-per-request');
+  }
+  if (Object.prototype.hasOwnProperty.call(opts, 'max-pages')) {
+    throw new Error('--max-pages was renamed to --max-requests');
+  }
+  if (Object.prototype.hasOwnProperty.call(opts, 'bars')) {
+    throw new Error('--bars was renamed to --include-bars');
+  }
+  normalizeRange({ from: opts.from, to: opts.to });
+  const result = await withContext(opts, () => getHistory({
+    symbol: opts.symbol,
+    timeframe: opts.timeframe,
+    from: opts.from,
+    to: opts.to,
+    bars_per_request: opts['bars-per-request'] ? Number(opts['bars-per-request']) : undefined,
+    max_requests: opts['max-requests'] ? Number(opts['max-requests']) : undefined,
+    max_bars: opts['max-bars'] ? Number(opts['max-bars']) : undefined,
+    include_bars: opts['include-bars'],
+    restore_chart: !opts['no-restore'],
+  }));
+  return opts.output ? writeOutput(result, opts.output, { force: opts.force }) : result;
+}
+
 register('quote', {
   desktop_dependency: 'required',
   description: 'Get real-time price quote',
@@ -51,6 +81,7 @@ register('history', {
     symbol: { type: 'string', description: 'Symbol to load (default: current chart)' },
     timeframe: { type: 'string', short: 't', description: 'Resolution such as D, W, 60, or 15' },
     from: { type: 'string', short: 'f', description: 'Earliest ISO date or Unix timestamp' },
+    to: { type: 'string', description: 'Latest ISO date or Unix timestamp (requires --from)' },
     'bars-per-request': { type: 'string', description: 'Older bars requested per load (default 1000, max 5000)' },
     'max-requests': { type: 'string', description: 'Maximum backward data requests (default 100, max 500)' },
     'max-bars': { type: 'string', description: 'Maximum returned bars (default 50000, max 200000)' },
@@ -59,28 +90,7 @@ register('history', {
     force: { type: 'boolean', description: 'Overwrite an existing output file' },
     'no-restore': { type: 'boolean', description: 'Leave the requested symbol/timeframe on the chart' },
   },
-  handler: async (opts) => {
-    if (Object.prototype.hasOwnProperty.call(opts, 'page-size')) {
-      throw new Error('--page-size was renamed to --bars-per-request');
-    }
-    if (Object.prototype.hasOwnProperty.call(opts, 'max-pages')) {
-      throw new Error('--max-pages was renamed to --max-requests');
-    }
-    if (Object.prototype.hasOwnProperty.call(opts, 'bars')) {
-      throw new Error('--bars was renamed to --include-bars');
-    }
-    const result = await withPaneContext(opts, () => core.getHistory({
-      symbol: opts.symbol,
-      timeframe: opts.timeframe,
-      from: opts.from,
-      bars_per_request: opts['bars-per-request'] ? Number(opts['bars-per-request']) : undefined,
-      max_requests: opts['max-requests'] ? Number(opts['max-requests']) : undefined,
-      max_bars: opts['max-bars'] ? Number(opts['max-bars']) : undefined,
-      include_bars: opts['include-bars'],
-      restore_chart: !opts['no-restore'],
-    }));
-    return opts.output ? writeHistoryOutput(result, opts.output, { force: opts.force }) : result;
-  },
+  handler: opts => runHistoryCommand(opts),
 });
 
 register('values', {

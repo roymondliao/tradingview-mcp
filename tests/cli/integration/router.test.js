@@ -511,6 +511,8 @@ describe('CLI — help and routing', () => {
   it('history --help shows batch loading and output options', () => {
     const { stdout, exitCode } = run(['history', '--help']);
     assert.equal(exitCode, 0);
+    assert.ok(stdout.includes('--to'));
+    assert.ok(stdout.includes('requires --from'));
     assert.ok(stdout.includes('--bars-per-request'));
     assert.ok(stdout.includes('--max-requests'));
     assert.ok(stdout.includes('--include-bars'));
@@ -519,6 +521,26 @@ describe('CLI — help and routing', () => {
     assert.ok(stdout.includes('--layout-id'));
     assert.ok(stdout.includes('--saved-layout-id'));
     assert.ok(stdout.includes('--pane-index'));
+  });
+
+  it('history validates its date range before CDP discovery', () => {
+    for (const [args, message] of [
+      [['--to', '2026-06-30'], /--to requires --from/],
+      [['--from', 'invalid', '--to', '2026-06-30'], /Invalid from date/],
+      [['--from', '2026-01-01', '--to', 'invalid'], /Invalid to date/],
+      [['--from', '2026-06-30', '--to', '2026-01-01'], /from must be less than or equal to to/],
+    ]) {
+      const { stderr, exitCode } = run(['history', ...args], {
+        env: {
+          ...process.env,
+          TV_CDP_PORT: '9',
+          TV_CDP_DISCOVERY_TIMEOUT_MS: '25',
+          TV_CDP_TOTAL_TIMEOUT_MS: '100',
+        },
+      });
+      assert.equal(exitCode, 1);
+      assert.match(JSON.parse(stderr).error, message);
+    }
   });
 
   it('pane-scoped Study help exposes explicit Tab/Layout/Pane selectors', () => {

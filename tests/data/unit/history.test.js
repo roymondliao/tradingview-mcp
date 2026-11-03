@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { getHistory } from '../../../src/core/data.js';
-import { writeHistoryOutput } from '../../../src/cli/commands/data.js';
+import { getHistory, normalizeHistoryRange } from '../../../src/core/data.js';
+import { runHistoryCommand, writeHistoryOutput } from '../../../src/cli/commands/data.js';
 
 const bar = (time) => ({ time, open: time, high: time + 2, low: time - 1, close: time + 1, volume: time * 10 });
 
@@ -21,6 +21,49 @@ function historyDeps(states, { original = { symbol: 'NASDAQ:AAPL', timeframe: 'D
   };
 }
 
+describe('history date range validation', () => {
+  it('shares the existing date, timezone, and Unix timestamp rules for both endpoints', () => {
+    for (const [value, expected] of [
+      ['2026-06-30', 1782777600],
+      ['2026-06-30T23:59:59+08:00', 1782835199],
+      ['1782863999', 1782863999],
+      [1782863999000, 1782863999],
+      ['1782863999000', 1782863999],
+      [0, 0],
+    ]) {
+      assert.deepEqual(normalizeHistoryRange({ from: value, to: value }), {
+        fromTime: expected, toTime: expected,
+      });
+    }
+    assert.deepEqual(normalizeHistoryRange(), { fromTime: null, toTime: null });
+    assert.deepEqual(normalizeHistoryRange({ from: 250 }), { fromTime: 250, toTime: null });
+  });
+
+  it('rejects invalid ranges before core chart reads or CLI context preparation', async () => {
+    let calls = 0;
+    const unexpectedOperation = () => { calls += 1; throw new Error('Unexpected chart operation'); };
+    for (const [options, message] of [
+      [{ to: 400 }, /--to requires --from/],
+      [{ from: '', to: 400 }, /--to requires --from/],
+      [{ from: '  ', to: 400 }, /--to requires --from/],
+      [{ from: 200, to: '' }, /Invalid to date/],
+      [{ from: 200, to: 'invalid' }, /Invalid to date/],
+      [{ from: 'invalid', to: 400 }, /Invalid from date/],
+      [{ from: 400, to: 200 }, /from must be less than or equal to to/],
+    ]) {
+      await assert.rejects(getHistory({
+        ...options, _deps: { getChartState: unexpectedOperation },
+      }), message);
+      await assert.rejects(runHistoryCommand(options, {
+        withContext: unexpectedOperation,
+        getHistory: unexpectedOperation,
+        writeOutput: unexpectedOperation,
+      }), message);
+    }
+    assert.equal(calls, 0);
+  });
+});
+
 describe('getHistory() — batched TradingView history', () => {
   it('loads to the first available bar, deduplicates, and sorts OHLCV', async () => {
     const { deps } = historyDeps([
@@ -36,6 +79,8 @@ describe('getHistory() — batched TradingView history', () => {
     assert.equal(result.bar_count, 4);
     assert.deepEqual(result.bars.map(item => item.time), [100, 200, 300, 400]);
     assert.equal(result.bars[0].time_iso, '1970-01-01T00:01:40.000Z');
+    assert.equal(result.requested_to, null);
+    assert.equal(result.requested_to_iso, null);
     assert.deepEqual(result.period, {
       from: 100,
       to: 400,
@@ -71,6 +116,69 @@ describe('getHistory() — batched TradingView history', () => {
     assert.equal(result.stop_reason, 'max_requests');
     assert.equal(result.requests_made, 1);
     assert.equal(result.bars, undefined);
+  });
+
+  it('pages past newer batches without counting them toward the returned bar limit', async () => {
+    const { deps } = historyDeps([
+      { first_time: 700, more: true, bars: [bar(700), bar(800)] },
+      { first_time: 500, more: true, bars: [bar(500), bar(600)] },
+      { first_time: 200, more: true, bars: [bar(400), bar(300), bar(200), bar(300)] },
+    ]);
+    const result = await getHistory({ from: 250, to: 400, max_bars: 2, include_bars: true, _deps: deps });
+    assert.deepEqual(result.bars.map(item => item.time), [300, 400]);
+    assert.equal(result.requests_made, 2);
+    assert.equal(result.stop_reason, 'from_reached');
+    assert.equal(result.complete, true);
+    assert.equal(result.bar_count, 2);
+    assert.equal(result.requested_to, 400);
+    assert.equal(result.requested_to_iso, '1970-01-01T00:06:40.000Z');
+    assert.equal(result.period.from, 300);
+    assert.equal(result.period.to, 400);
+  });
+
+  it('includes both endpoints and keeps the latest matching bars when over the limit', async () => {
+    for (const maxBars of [2, 3]) {
+      const { deps } = historyDeps([
+        { first_time: 100, more: false, bars: [100, 200, 300, 400, 500].map(bar) },
+      ]);
+      const result = await getHistory({ from: 200, to: 400, max_bars: maxBars, include_bars: true, _deps: deps });
+      assert.deepEqual(result.bars.map(item => item.time), maxBars === 2 ? [300, 400] : [200, 300, 400]);
+      assert.equal(result.stop_reason, maxBars === 2 ? 'max_bars' : 'from_reached');
+      assert.equal(result.complete, maxBars === 3);
+      assert.equal(result.bar_count, maxBars);
+    }
+  });
+
+  it('accepts an equal range at Unix zero', async () => {
+    const { deps } = historyDeps([{ first_time: 0, more: false, bars: [bar(0), bar(1)] }]);
+    const result = await getHistory({ from: 0, to: 0, include_bars: true, _deps: deps });
+    assert.deepEqual(result.bars.map(item => item.time), [0]);
+    assert.equal(result.requested_to, 0);
+    assert.equal(result.complete, true);
+  });
+
+  it('keeps the actual last bar when the requested end has no trading data', async () => {
+    const { deps } = historyDeps([{ first_time: 100, more: false, bars: [bar(100), bar(200)] }]);
+    const result = await getHistory({ from: 100, to: 250, _deps: deps });
+    assert.equal(result.period.to, 200);
+    assert.equal(result.requested_to, 250);
+    assert.equal(result.bar_count, 2);
+    assert.equal(result.bars, undefined);
+    assert.equal(result.complete, true);
+  });
+
+  it('uses the range error only when an upper bound was requested', async () => {
+    for (const [options, message] of [
+      [{ from: 200, to: 250 }, /No historical bars matched the requested date range/],
+      [{ from: 600 }, /No historical bars matched the requested start time/],
+    ]) {
+      const { deps, setChartCalls } = historyDeps([{ first_time: 300, more: false, bars: [bar(300), bar(400)] }]);
+      await assert.rejects(getHistory({ ...options, symbol: 'NYSE:IBM', _deps: deps }), message);
+      assert.deepEqual(setChartCalls, [
+        { symbol: 'NYSE:IBM', timeframe: null },
+        { symbol: 'NASDAQ:AAPL', timeframe: null },
+      ]);
+    }
   });
 
   it('does not claim completeness when the bar safety limit truncates data', async () => {
@@ -129,6 +237,61 @@ describe('getHistory() — batched TradingView history', () => {
 });
 
 describe('history CLI file output', () => {
+  it('validates before preparing context and writes the bounded result after chart restoration', async () => {
+    const events = [];
+    const options = {
+      symbol: 'NYSE:IBM', timeframe: 'W', from: '200', to: '400',
+      'bars-per-request': '100', 'max-requests': '3', 'max-bars': '2',
+      'include-bars': true, output: 'history.json', force: true,
+    };
+    const { deps } = historyDeps([{ first_time: 100, more: false, bars: [100, 200, 300, 400, 500].map(bar) }]);
+    const result = await runHistoryCommand(options, {
+      normalizeRange: range => {
+        events.push('validate');
+        assert.deepEqual(range, { from: '200', to: '400' });
+        return normalizeHistoryRange(range);
+      },
+      withContext: async (opts, operation) => {
+        events.push('context');
+        assert.equal(opts, options);
+        return { ...await operation(), context: { pane_id: 'test-pane' } };
+      },
+      getHistory: async opts => {
+        events.push('history');
+        assert.deepEqual(opts, {
+          symbol: 'NYSE:IBM', timeframe: 'W', from: '200', to: '400',
+          bars_per_request: 100, max_requests: 3, max_bars: 2,
+          include_bars: true, restore_chart: true,
+        });
+        return getHistory({ ...opts, _deps: {
+          ...deps,
+          setChart: async change => { events.push(change.symbol === 'NASDAQ:AAPL' ? 'restore' : 'switch'); },
+        } });
+      },
+      writeOutput: (data, output, settings) => {
+        events.push('output');
+        assert.equal(output, 'history.json');
+        assert.deepEqual(settings, { force: true });
+        return writeHistoryOutput(data, output, {
+          ...settings, resolvePath: path => path,
+          writeFile: (_path, content) => {
+            const saved = JSON.parse(content);
+            assert.deepEqual(saved.bars.map(item => item.time), [300, 400]);
+            assert.equal(saved.period.to, 400);
+            assert.equal(saved.requested_to, 400);
+            assert.equal(saved.bar_count, 2);
+            assert.equal(saved.context.pane_id, 'test-pane');
+          },
+        });
+      },
+    });
+    assert.deepEqual(events, ['validate', 'context', 'history', 'switch', 'restore', 'output']);
+    assert.equal(result.requested_to, 400);
+    assert.equal(result.bar_count, 2);
+    assert.equal(result.output_includes_bars, true);
+    assert.equal('bars' in result, false);
+  });
+
   it('writes the complete JSON result and keeps bars out of the stdout summary', () => {
     let written = null;
     const result = {

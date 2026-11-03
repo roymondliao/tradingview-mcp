@@ -44,16 +44,31 @@ function requireIntegerInRange(value, fallback, min, max, name) {
   return parsed;
 }
 
-function parseHistoryFrom(value) {
+function parseHistoryDate(value, name) {
   if (value == null || value === '') return null;
   if (typeof value === 'number' || /^\d+$/.test(String(value))) {
     const numeric = Number(value);
-    if (!Number.isFinite(numeric)) throw new Error(`Invalid from value: ${value}`);
+    if (!Number.isFinite(numeric)) throw new Error(`Invalid ${name} value: ${value}`);
     return Math.floor(numeric > 1e12 ? numeric / 1000 : numeric);
   }
   const timestamp = Date.parse(String(value));
-  if (!Number.isFinite(timestamp)) throw new Error(`Invalid from date: ${value}`);
+  if (!Number.isFinite(timestamp)) throw new Error(`Invalid ${name} date: ${value}`);
   return Math.floor(timestamp / 1000);
+}
+
+/** Validate history dates without reading or changing the chart. */
+export function normalizeHistoryRange({ from, to } = {}) {
+  const hasTo = to != null;
+  if (hasTo && (from == null || String(from).trim() === '')) {
+    throw new Error('--to requires --from');
+  }
+  const fromTime = parseHistoryDate(from, 'from');
+  const toTime = parseHistoryDate(to, 'to');
+  if (hasTo && toTime == null) throw new Error(`Invalid to date: ${to}`);
+  if (fromTime != null && toTime != null && fromTime > toTime) {
+    throw new Error('from must be less than or equal to to');
+  }
+  return { fromTime, toTime };
 }
 
 function historyRuntime(deps) {
@@ -220,6 +235,7 @@ export async function getOhlcv({ count, summary } = {}) {
 
 /**
  * Load older OHLCV batches from the active TradingView chart.
+ * An optional `to` requires `from` and inclusively bounds the returned bars.
  * "Complete" means the requested start time was reached or TradingView
  * reported that no older data is available for the account/symbol/resolution.
  */
@@ -231,6 +247,7 @@ async function _getHistoryInternal({
   symbol,
   timeframe,
   from,
+  to,
   bars_per_request,
   max_requests,
   max_bars,
@@ -241,7 +258,7 @@ async function _getHistoryInternal({
   const barsPerRequest = requireIntegerInRange(bars_per_request, DEFAULT_HISTORY_BARS_PER_REQUEST, 100, MAX_HISTORY_BARS_PER_REQUEST, 'bars_per_request');
   const maxRequests = requireIntegerInRange(max_requests, DEFAULT_HISTORY_MAX_REQUESTS, 1, MAX_HISTORY_REQUESTS, 'max_requests');
   const maxBars = requireIntegerInRange(max_bars, DEFAULT_HISTORY_MAX_BARS, 1, MAX_HISTORY_BARS, 'max_bars');
-  const fromTime = parseHistoryFrom(from);
+  const { fromTime, toTime } = normalizeHistoryRange({ from, to });
   const runtime = historyRuntime(_deps);
   const original = await runtime.getChartState();
   const requestedSymbol = symbol ? String(symbol).trim() : null;
@@ -266,23 +283,21 @@ async function _getHistoryInternal({
       throw new Error('Could not read historical bars. The chart may still be loading.');
     }
 
+    const inRange = time => (fromTime == null || time >= fromTime)
+      && (toTime == null || time <= toTime);
     const addBars = (bars) => {
       for (const bar of bars || []) {
-        if (bar?.time != null) barsByTime.set(Number(bar.time), bar);
+        if (bar?.time == null) continue;
+        const time = Number(bar.time);
+        if (inRange(time)) barsByTime.set(time, bar);
       }
     };
     addBars(snapshot.bars);
-    const relevantBarCount = () => {
-      if (fromTime == null) return barsByTime.size;
-      let count = 0;
-      for (const time of barsByTime.keys()) if (time >= fromTime) count += 1;
-      return count;
-    };
 
     let requestsMade = 0;
     let stopReason = null;
     while (!stopReason) {
-      const relevantCount = relevantBarCount();
+      const relevantCount = barsByTime.size;
       if (relevantCount > maxBars) {
         stopReason = 'max_bars';
         break;
@@ -329,11 +344,14 @@ async function _getHistoryInternal({
       snapshot = next;
     }
 
-    let bars = [...barsByTime.values()].sort((a, b) => a.time - b.time);
-    if (fromTime != null) bars = bars.filter(bar => bar.time >= fromTime);
+    let bars = [...barsByTime.values()]
+      .sort((a, b) => a.time - b.time)
+      .filter(bar => inRange(Number(bar.time)));
     if (bars.length > maxBars) bars = bars.slice(-maxBars);
     if (bars.length === 0) {
-      throw new Error('No historical bars matched the requested start time.');
+      throw new Error(toTime == null
+        ? 'No historical bars matched the requested start time.'
+        : 'No historical bars matched the requested date range.');
     }
     bars = bars.map(bar => withUnixSecondsIso(bar, ['time']));
 
@@ -346,6 +364,8 @@ async function _getHistoryInternal({
       timeframe: snapshot.resolution || requestedTimeframe || original?.timeframe || null,
       requested_from: fromTime,
       requested_from_iso: unixSecondsToIso(fromTime),
+      requested_to: toTime,
+      requested_to_iso: unixSecondsToIso(toTime),
       period: withUnixSecondsIso({ from: bars[0].time, to: bars[bars.length - 1].time }, ['from', 'to']),
       bar_count: bars.length,
       requests_made: requestsMade,
