@@ -120,3 +120,4 @@ tv history --from 1767225600 --to 1782863999 --include-bars
 - [Low level design](./LLD.md)：函式介面、驗證邊界、分頁演算法、輸出與測試設計。
 - [Delivery evidence](./DELIVERY_EVIDENCE.md)：兩項 task 的實作及本機檢查結果。
 - [Live verification](./LIVE_VERIFICATION.md)：Desktop 的 11 項實測結果與圖表還原證據。
+- [Release notes](./RELEASE_NOTES.md)：v1.7.0 的功能、修正與相容性說明。

@@ -64,4 +64,24 @@ TASK-001 與 TASK-002 皆完成，分別提交為 `18c0a82` 與 `83aac77`。
 MCP schema 保持原樣，新增 core 回傳欄位為 additive metadata。
 Desktop live 驗證 11 項檢查通過，詳見 [Live verification](./LIVE_VERIFICATION.md)。
 目前圖表的 symbol、日線週期、chart type 及 study identities／visibility 已確認還原。
-未推送或發佈。
+功能、測試與 live 紀錄已推送；v1.7.0 release 準備經以下檢查，待 PR 合併後由 workflow 發佈。
+
+## Version 1 7 0 release checks
+
+Package 與 lockfile 已同步為 `1.7.0`。版本確認時初次 audit 發現 body-parser 與 Zod
+的兩項 high-severity 問題，已透過相容的 lockfile 更新排除，直接 dependency ranges 不變：
+body-parser 2.4.0、iconv-lite 0.7.3、Zod 4.6.7；既有 ESLint 工具鏈保持原樣。
+
+| Command | Result |
+| --- | --- |
+| `npm ci --ignore-scripts --cache /private/tmp/tv-history-release-npm-cache` | PASS，依最終 lockfile 安裝。 |
+| `npm test` | PASS，835 tests、0 failures、0 skipped，包含上述最終 dependencies。 |
+| `npm run lint` | PASS，0 errors、3 個既有 warnings。 |
+| `npm run release:check-version` | PASS，package 與 lockfile 的版本皆為 1.7.0。 |
+| `npm run --silent release:print-tag` / `node src/cli/index.js --version` | `v1.7.0` / `1.7.0`；MCP server 共用相同 VERSION。 |
+| `npm pack --dry-run --json --cache /private/tmp/tv-history-release-npm-cache` | PASS，362 files、版本 1.7.0；包含 release notes，不包含 temp live artifacts。 |
+| `npm audit --audit-level=high --cache /private/tmp/tv-history-release-npm-cache` | PASS，0 high／critical；保留 5 項 moderate 的 ESLint／minimatch 工具鏈問題。 |
+| `git diff --check` | PASS。 |
+
+完整測試在 lockfile 更新後重新執行。Desktop 的 11 項實測對應 `83aac77`，
+該次 live 執行未包含後續的版本／dependency 更新；實測範圍以 [Live verification](./LIVE_VERIFICATION.md) 為準。
