@@ -303,6 +303,21 @@ describe('Single-Symbol Strategy Trading export', () => {
     assert.equal(tradingData.complete, true);
   });
 
+  it('exports the native zero-trade shape with null trade range and undefined win rate', async () => {
+    const directory = temporaryDirectory();
+    const state = reportState([]);
+    state.report.settings.dateRange.trade = null;
+    state.report.performance.all.percentProfitable = null;
+    state.candidate.metrics.win_rate_percent = null;
+    const result = await runExport(directory, harness({ trades: [], state }), { format: 'csv' });
+    const report = JSON.parse(readFileSync(result.artifacts.report.path, 'utf8'));
+    assert.equal(result.total_trades, 0);
+    assert.equal(report.calculation.range.trade, null);
+    assert.equal(report.metrics.percent_profitable, null);
+    assert.equal(report.reconciliation_metrics.win_rate_percent, 0);
+    assert.equal(result.reconciliation.success, true);
+  });
+
   it('produces equivalent reconciliation for JSON, JSONL, and CSV', async () => {
     const metrics = [];
     for (const format of ['json', 'jsonl', 'csv']) {
