@@ -354,7 +354,8 @@ export function normalizeTradingReport(raw, context = {}) {
   const currency = report?.currency ?? context.currency ?? null;
   const reconciliationMetrics = {
     total_net_profit: metrics.net_profit,
-    win_rate_percent: metrics.percent_profitable,
+    // Keep the source undefined rate null; reconciliation already defines an empty rate as zero.
+    win_rate_percent: metrics.percent_profitable ?? (metrics.total_trades === 0 && metrics.open_trades === 0 ? 0 : null),
     total_trades: metrics.total_trades,
     winning_trades: metrics.winning_trades,
     losing_trades: metrics.losing_trades,
@@ -422,6 +423,9 @@ function snapshotFields(input) {
 }
 
 function missingSnapshotFields(fields) {
+  const empty = fields.trade_count === 0 && fields.closed_trades === 0 && fields.open_trades === 0
+    && fields.metrics?.total_trades === 0 && fields.metrics?.winning_trades === 0
+    && fields.metrics?.losing_trades === 0;
   const required = [
     ['context.target_id', fields.context.target_id],
     ['context.layout_id', fields.context.layout_id],
@@ -433,19 +437,23 @@ function missingSnapshotFields(fields) {
     ['inputs_fingerprint.value', fields.inputs_fingerprint?.available === true ? fields.inputs_fingerprint.value : null],
     ['date_range.backtest.from', fields.date_range?.backtest?.from],
     ['date_range.backtest.to', fields.date_range?.backtest?.to],
-    ['date_range.trade.from', fields.date_range?.trade?.from],
-    ['date_range.trade.to', fields.date_range?.trade?.to],
     ['currency', fields.currency],
     ['first_trade_index', fields.first_trade_index],
     ['trade_count', fields.trade_count],
     ['closed_trades', fields.closed_trades],
     ['open_trades', fields.open_trades],
     ['metrics.total_net_profit', fields.metrics?.total_net_profit],
-    ['metrics.win_rate_percent', fields.metrics?.win_rate_percent],
     ['metrics.total_trades', fields.metrics?.total_trades],
     ['metrics.winning_trades', fields.metrics?.winning_trades],
     ['metrics.losing_trades', fields.metrics?.losing_trades],
   ];
+  if (!empty) {
+    required.push(
+      ['date_range.trade.from', fields.date_range?.trade?.from],
+      ['date_range.trade.to', fields.date_range?.trade?.to],
+      ['metrics.win_rate_percent', fields.metrics?.win_rate_percent],
+    );
+  }
   if (fields.trade_count > 0) {
     required.push(['first_trade_identity', fields.first_trade_identity], ['last_trade_identity', fields.last_trade_identity]);
   }

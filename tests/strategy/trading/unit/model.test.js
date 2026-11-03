@@ -215,6 +215,22 @@ describe('canonical Trading Report and snapshot identity', () => {
     assert.equal(compareSnapshotIdentity(first.snapshot_id, first.snapshot_id).matched, true);
   });
 
+  it('accepts native empty reports without inventing trade dates or a win rate', () => {
+    const candidate = snapshotCandidate({
+      trade_count: 0, closed_trades: 0, open_trades: 0,
+      date_range: { backtest: { from: 1, to: 2 }, trade: null },
+      metrics: { total_net_profit: 0, win_rate_percent: null, total_trades: 0, winning_trades: 0, losing_trades: 0 },
+      first_trade_identity: null, last_trade_identity: null,
+    });
+    const snapshot = createSnapshotIdentity(candidate);
+    assert.equal(snapshot.available, true);
+    assert.equal(snapshot.fields.date_range.trade, null);
+    assert.equal(snapshot.fields.metrics.win_rate_percent, null);
+    assert.equal(createSnapshotIdentity({ ...candidate, trade_count: 1 }).available, false);
+    assert.equal(createSnapshotIdentity({ ...candidate, open_trades: 1 }).available, false);
+    assert.equal(createSnapshotIdentity({ ...candidate, date_range: null }).available, false);
+  });
+
   it('does not claim a snapshot when required identity fields are unavailable', () => {
     const identity = createSnapshotIdentity(snapshotCandidate({
       inputs_fingerprint: { available: false, value: null },
