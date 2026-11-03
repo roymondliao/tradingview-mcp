@@ -79,5 +79,5 @@ MCP schema、共用 Pane wrapper、時間轉換 helper 及 runtime dependencies 
 - [x] 原有請求上限、停止原因、圖表還原及 MCP 無 `to` 呼叫保持相容。
 
 必要回歸測試與 lint 已通過，詳見 [驗證紀錄](./DELIVERY_EVIDENCE.md)。
-MCP schema 未修改；無 `to` 的資料路徑由既有 core 測試驗證，尚未執行 Desktop live 測試。
+MCP schema 未修改；無 `to` 的資料路徑由既有 core 測試及 [Desktop live 測試](./LIVE_VERIFICATION.md) 驗證。
 [TASK-002](./TASK-002-tests-documentation.md) 已補齊其餘測試矩陣與使用文件。

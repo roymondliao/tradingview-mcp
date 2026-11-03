@@ -60,6 +60,8 @@ Repo `README.md` 已新增起訖範例及僅 `from` 的範例，說明必填依�
 
 ## Delivery status
 
-TASK-001 與 TASK-002 皆完成；TASK-002 的測試及文件變更尚未提交。
+TASK-001 與 TASK-002 皆完成，分別提交為 `18c0a82` 與 `83aac77`。
 MCP schema 保持原樣，新增 core 回傳欄位為 additive metadata。
-未執行 TradingView Desktop live 驗證、推送或發佈。
+Desktop live 驗證 11 項檢查通過，詳見 [Live verification](./LIVE_VERIFICATION.md)。
+目前圖表的 symbol、日線週期、chart type 及 study identities／visibility 已確認還原。
+未推送或發佈。

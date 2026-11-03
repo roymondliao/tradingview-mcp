@@ -1,6 +1,6 @@
 # History To System Design
 
-Status: `done`，實作、規劃的本機自動化驗證與使用文件已完成；未執行 Desktop live 驗證。
+Status: `done`，實作、本機自動化驗證、使用文件與 [Desktop live 驗證](./LIVE_VERIFICATION.md) 已完成。
 本設計依據 [需求規格](./README.md)，實作細節見 [Low level design](./LLD.md)。
 
 ## Purpose and behavior

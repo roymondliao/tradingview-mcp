@@ -11,7 +11,8 @@ scope:
 
 # History To Date
 
-Status: `done`，CLI／core 實作、規劃的本機自動化驗證與使用文件已完成；未執行 Desktop live 驗證。
+Status: `done`，CLI／core 實作、本機自動化驗證、使用文件與 Desktop live 驗證已完成。
+Live 檢查範圍與限制見 [Live verification](./LIVE_VERIFICATION.md)。
 
 Feature branch：`codex/history-to`，由 `fork-main` 的
 `1b32b83` 建立。
@@ -118,3 +119,4 @@ tv history --from 1767225600 --to 1782863999 --include-bars
 - [System design](./SYSTEM_DESIGN.md)：元件責任、資料流程、日期語意與相容性。
 - [Low level design](./LLD.md)：函式介面、驗證邊界、分頁演算法、輸出與測試設計。
 - [Delivery evidence](./DELIVERY_EVIDENCE.md)：兩項 task 的實作及本機檢查結果。
+- [Live verification](./LIVE_VERIFICATION.md)：Desktop 的 11 項實測結果與圖表還原證據。

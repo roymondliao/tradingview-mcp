@@ -78,4 +78,4 @@ git diff --check
 
 驗證結果：67 tests 通過、0 failures，含 27 個 history 測試；lint 為 0 errors、
 3 個既有 warnings；diff whitespace 檢查通過。詳細案例見 [驗證紀錄](./DELIVERY_EVIDENCE.md)。
-未執行 Desktop live 驗證。
+另完成 [Desktop live 驗證](./LIVE_VERIFICATION.md)，11 項檢查通過，已確認圖表還原。
