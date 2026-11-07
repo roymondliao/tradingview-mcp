@@ -1,7 +1,7 @@
 ---
 id: TASK-005
 title: Desktop Acceptance and Documentation
-status: todo
+status: done
 depends_on: [TASK-004]
 ---
 
@@ -24,3 +24,7 @@ L01～09 有真實結果及還原比對；相關 local test 結果與覆蓋限�
 缺少 Desktop 或未執行的項目維持未完成，不用推論或 mock 結果補成通過。
 只保留驗證方法與文字結果，清除本 task 產生的一次性診斷資料／scripts。
 所有條件滿足後才更新 tasks 與 request 為 done；本 task 不包含 push、merge 或發布。
+
+## Completion record
+
+2026-11-07 完成。交付內容及檢查結果見 [修正後驗收](./VERIFICATION.md#修正後驗收)。

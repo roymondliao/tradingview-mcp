@@ -1,6 +1,6 @@
 # History Early Stop System Design
 
-Status：`design-ready`。問題已重現；本文件描述待實作方案，不代表已修正。
+Status：`implemented`。狀態機、runtime adapter、整合與 Desktop 驗收已完成。
 依據 [驗證結果](./VERIFICATION.md)，以 TradingView Desktop 現有訊號建立 client
 狀態機，讓 history 的完整性回報反映已確認的結果。
 
@@ -100,8 +100,8 @@ observer 的計數與錯誤狀態；Node 每 250 ms 讀取一致 snapshot，以�
 
 ## Deadlines and recovery
 
-設計起始值：poll interval 250 ms、每次等待 10 s、整體資料操作 120 s。
-這些是待驗收的工程政策，不是依 100～250 ms 的實測推導出的服務保證。
+已實作政策：poll interval 250 ms、每次等待 10 s、整體資料操作 120 s。
+這些是工程政策，不是依 100～250 ms 的實測推導出的服務保證。
 使用 monotonic clock；新資料或雜訊事件不會無限延長同一次等待期限。
 
 逾時只表示 client 停止等待，不代表 Desktop 請求被取消。這次修正不自動重送載入請求；

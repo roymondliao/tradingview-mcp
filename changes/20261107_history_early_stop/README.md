@@ -1,7 +1,7 @@
 ---
 id: FIX-20261107-HISTORY-EARLY-STOP
 title: History Early Stop
-status: design-ready
+status: done
 created: 2026-11-07
 scope:
   - history-loading-completion
@@ -12,7 +12,8 @@ scope:
 # History Early Stop
 
 Fix branch：`fix/tv-history-early-stop`；base：`fork-main` 的 `1d933e1`。
-狀態：問題已重現，Desktop 載入／耗盡訊號已驗證，設計與 tasks 已整理，**尚未實作修正**。
+狀態：**TASK-001～005 已完成**，client 狀態機、runtime adapter、CLI／MCP 整合、
+單元測試及 Desktop 驗收均完成。設計文件已先提交為 `80185df`；修正納入版本 `1.7.1`。
 
 ## Fix request
 
@@ -31,6 +32,7 @@ Fix branch：`fix/tv-history-early-stop`；base：`fork-main` 的 `1d933e1`。
 | [Low level design](./LLD.md) | Runtime 介面、observer、轉換順序、deadline、錯誤及清理細節。 |
 | [Verification](./VERIFICATION.md) | 已執行的 TAIEX／6902／離線驗證結果與重做手法。 |
 | [Test plan](./TEST_PLAN.md) | 待實作測試矩陣、live 驗收步驟與完成門檻。 |
+| [Release notes](./RELEASE_NOTES.md) | 1.7.1 修正與相容性說明。 |
 | [Original issue](./ISSUE-tv-history-early-stop.md) | 原始問題摘要與發現背景；當前決策以設計文件為準。 |
 
 只保留文字結果、必要的摘要數字及操作方法；本 request 的診斷 scripts、原始 JSON
@@ -51,10 +53,10 @@ Fix branch：`fix/tv-history-early-stop`；base：`fork-main` 的 `1d933e1`。
 | Task | 狀態 | 依賴 | 交付 |
 | --- | --- | --- | --- |
 | [TASK-001 Reproduction](./TASK-001-reproduce.md) | done | 無 | 問題與 Desktop 訊號驗證。 |
-| [TASK-002 Runtime adapter](./TASK-002-runtime-adapter.md) | todo | TASK-001、設計 | 能力檢查、來源綁定、事件 observer 與有界清理。 |
-| [TASK-003 State machine](./TASK-003-state-machine.md) | todo | TASK-002 | 分頁狀態機、deadline、完整性與錯誤。 |
-| [TASK-004 Integration](./TASK-004-integration.md) | todo | TASK-003 | Core lifecycle、CLI／MCP 契約及回歸測試。 |
-| [TASK-005 Live acceptance](./TASK-005-live-acceptance.md) | todo | TASK-004 | TAIEX／6902 實測、結果文件及使用說明。 |
+| [TASK-002 Runtime adapter](./TASK-002-runtime-adapter.md) | done | TASK-001、設計 | 能力檢查、來源綁定、事件 observer 與有界清理。 |
+| [TASK-003 State machine](./TASK-003-state-machine.md) | done | TASK-002 | 分頁狀態機、deadline、完整性與錯誤。 |
+| [TASK-004 Integration](./TASK-004-integration.md) | done | TASK-003 | Core lifecycle、CLI／MCP 契約及回歸測試。 |
+| [TASK-005 Live acceptance](./TASK-005-live-acceptance.md) | done | TASK-004 | TAIEX／6902 實測、結果文件及使用說明。 |
 
 每項 implementation task 同時交付自己的單元測試；TASK-005 負責整合與真實 Desktop 驗收，
-不把測試集中留到所有功能寫完之後。本輪僅設計與文件整理，沒有提交或發布變更。
+不把測試集中留到所有功能寫完之後。修正驗收結果見 VERIFICATION.md；未 push、merge 或發布。

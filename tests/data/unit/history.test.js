@@ -8,18 +8,37 @@ import { runHistoryCommand, writeHistoryOutput } from '../../../src/cli/commands
 
 const bar = (time) => ({ time, open: time, high: time + 2, low: time - 1, close: time + 1, volume: time * 10 });
 
-function historyDeps(states, { original = { symbol: 'NASDAQ:AAPL', timeframe: 'D' }, pollAttempts = 2 } = {}) {
-  let index = 0;
+function historyDeps(states, { original = { symbol: 'NASDAQ:AAPL', timeframe: 'D' } } = {}) {
+  let index = 0, clock = 0, completed = 0;
+  let current = { ...original };
   const setChartCalls = [];
   return {
     setChartCalls,
     deps: {
-      pollAttempts,
-      sleep: async () => {},
-      getChartState: async () => original,
-      setChart: async (change) => { setChartCalls.push(change); },
-      readSnapshot: async () => states[index],
-      requestMore: async () => { if (index < states.length - 1) index += 1; },
+      now: () => clock,
+      policy: { loadTimeoutMs: 500, historyTimeoutMs: 5000 },
+      sleep: async ms => { clock += ms; },
+      getChartState: async () => ({ ...current }),
+      setChart: async change => {
+        setChartCalls.push(change);
+        if (change.symbol) current.symbol = change.symbol;
+        if (change.timeframe) current.timeframe = change.timeframe;
+      },
+      openObserver: async () => ({ token: 'test' }),
+      closeObserver: async () => {},
+      readSnapshot: async () => {
+        const state = states[index];
+        if (!state || state.first_time === undefined) return null;
+        return { ...state, identity: { symbol: current.symbol, resolution: current.timeframe, sourceMatches: true },
+          symbol: current.symbol, resolution: current.timeframe,
+          events: { loading: 0, completed, dataLoaded: 0, error: 0 } };
+      },
+      requestMore: async () => {
+        const baselineEvents = { loading: 0, completed, dataLoaded: 0, error: 0 };
+        completed++;
+        if (index < states.length - 1) index++;
+        return { issued: true, baselineEvents };
+      },
     },
   };
 }
@@ -73,8 +92,8 @@ describe('history date range validation', () => {
 describe('getHistory() — batched TradingView history', () => {
   it('loads to the first available bar, deduplicates, and sorts OHLCV', async () => {
     const { deps } = historyDeps([
-      { symbol: 'NASDAQ:AAPL', resolution: 'D', first_time: 300, more: true, bars: [bar(300), bar(400)] },
-      { symbol: 'NASDAQ:AAPL', resolution: 'D', first_time: 100, more: false, bars: [bar(100), bar(200), bar(300)] },
+      { symbol: 'NASDAQ:AAPL', resolution: 'D', first_time: 300, more: true, loading: false, end_of_data: false, end_of_data_type: null, bars: [bar(300), bar(400)] },
+      { symbol: 'NASDAQ:AAPL', resolution: 'D', first_time: 100, more: false, loading: false, end_of_data: true, end_of_data_type: 'end', bars: [bar(100), bar(200), bar(300)] },
     ]);
 
     const result = await getHistory({ include_bars: true, _deps: deps });
@@ -97,8 +116,8 @@ describe('getHistory() — batched TradingView history', () => {
 
   it('stops once the requested start time is covered and filters older bars', async () => {
     const { deps } = historyDeps([
-      { symbol: 'NASDAQ:AAPL', resolution: 'D', first_time: 500, more: true, bars: [bar(500), bar(600)] },
-      { symbol: 'NASDAQ:AAPL', resolution: 'D', first_time: 200, more: true, bars: [bar(200), bar(300), bar(400)] },
+      { symbol: 'NASDAQ:AAPL', resolution: 'D', first_time: 500, more: true, loading: false, end_of_data: false, end_of_data_type: null, bars: [bar(500), bar(600)] },
+      { symbol: 'NASDAQ:AAPL', resolution: 'D', first_time: 200, more: true, loading: false, end_of_data: false, end_of_data_type: null, bars: [bar(200), bar(300), bar(400)] },
     ]);
 
     const result = await getHistory({ from: 250, include_bars: true, _deps: deps });
@@ -112,8 +131,8 @@ describe('getHistory() — batched TradingView history', () => {
 
   it('reports an incomplete result when the request safety limit is reached', async () => {
     const { deps } = historyDeps([
-      { symbol: 'NASDAQ:AAPL', resolution: 'D', first_time: 500, more: true, bars: [bar(500), bar(600)] },
-      { symbol: 'NASDAQ:AAPL', resolution: 'D', first_time: 300, more: true, bars: [bar(300), bar(400)] },
+      { symbol: 'NASDAQ:AAPL', resolution: 'D', first_time: 500, more: true, loading: false, end_of_data: false, end_of_data_type: null, bars: [bar(500), bar(600)] },
+      { symbol: 'NASDAQ:AAPL', resolution: 'D', first_time: 300, more: true, loading: false, end_of_data: false, end_of_data_type: null, bars: [bar(300), bar(400)] },
     ]);
 
     const result = await getHistory({ max_requests: 1, _deps: deps });
@@ -126,9 +145,9 @@ describe('getHistory() — batched TradingView history', () => {
 
   it('pages past newer batches without counting them toward the returned bar limit', async () => {
     const { deps } = historyDeps([
-      { first_time: 700, more: true, bars: [bar(700), bar(800)] },
-      { first_time: 500, more: true, bars: [bar(500), bar(600)] },
-      { first_time: 200, more: true, bars: [bar(400), bar(300), bar(200), bar(300)] },
+      { first_time: 700, more: true, loading: false, end_of_data: false, end_of_data_type: null, bars: [bar(700), bar(800)] },
+      { first_time: 500, more: true, loading: false, end_of_data: false, end_of_data_type: null, bars: [bar(500), bar(600)] },
+      { first_time: 200, more: true, loading: false, end_of_data: false, end_of_data_type: null, bars: [bar(400), bar(300), bar(200), bar(300)] },
     ]);
     const result = await getHistory({ from: 250, to: 400, max_bars: 2, include_bars: true, _deps: deps });
     assert.deepEqual(result.bars.map(item => item.time), [300, 400]);
@@ -145,7 +164,7 @@ describe('getHistory() — batched TradingView history', () => {
   it('includes both endpoints and keeps the latest matching bars when over the limit', async () => {
     for (const maxBars of [2, 3]) {
       const { deps } = historyDeps([
-        { first_time: 100, more: false, bars: [100, 200, 300, 400, 500].map(bar) },
+        { first_time: 100, more: false, loading: false, end_of_data: true, end_of_data_type: 'end', bars: [100, 200, 300, 400, 500].map(bar) },
       ]);
       const result = await getHistory({ from: 200, to: 400, max_bars: maxBars, include_bars: true, _deps: deps });
       assert.deepEqual(result.bars.map(item => item.time), maxBars === 2 ? [300, 400] : [200, 300, 400]);
@@ -156,7 +175,7 @@ describe('getHistory() — batched TradingView history', () => {
   });
 
   it('accepts an equal range at Unix zero', async () => {
-    const { deps } = historyDeps([{ first_time: 0, more: false, bars: [bar(0), bar(1)] }]);
+    const { deps } = historyDeps([{ first_time: 0, more: false, loading: false, end_of_data: true, end_of_data_type: 'end', bars: [bar(0), bar(1)] }]);
     const result = await getHistory({ from: 0, to: 0, include_bars: true, _deps: deps });
     assert.deepEqual(result.bars.map(item => item.time), [0]);
     assert.equal(result.requested_to, 0);
@@ -164,7 +183,7 @@ describe('getHistory() — batched TradingView history', () => {
   });
 
   it('keeps the actual last bar when the requested end has no trading data', async () => {
-    const { deps } = historyDeps([{ first_time: 100, more: false, bars: [bar(100), bar(200)] }]);
+    const { deps } = historyDeps([{ first_time: 100, more: false, loading: false, end_of_data: true, end_of_data_type: 'end', bars: [bar(100), bar(200)] }]);
     const result = await getHistory({ from: 100, to: 250, _deps: deps });
     assert.equal(result.period.to, 200);
     assert.equal(result.requested_to, 250);
@@ -178,7 +197,7 @@ describe('getHistory() — batched TradingView history', () => {
       [{ from: 200, to: 250 }, /No historical bars matched the requested date range/],
       [{ from: 600 }, /No historical bars matched the requested start time/],
     ]) {
-      const { deps, setChartCalls } = historyDeps([{ first_time: 300, more: false, bars: [bar(300), bar(400)] }]);
+      const { deps, setChartCalls } = historyDeps([{ first_time: 300, more: false, loading: false, end_of_data: true, end_of_data_type: 'end', bars: [bar(300), bar(400)] }]);
       await assert.rejects(getHistory({ ...options, symbol: 'NYSE:IBM', _deps: deps }), message);
       assert.deepEqual(setChartCalls, [
         { symbol: 'NYSE:IBM', timeframe: null },
@@ -190,7 +209,7 @@ describe('getHistory() — batched TradingView history', () => {
   it('treats a date-only upper bound as UTC midnight rather than the whole day', async () => {
     const times = ['2026-06-29T12:00:00Z', '2026-06-30T00:00:00Z', '2026-06-30T12:00:00Z']
       .map(value => Date.parse(value) / 1000);
-    const { deps } = historyDeps([{ first_time: times[0], more: false, bars: times.map(bar) }]);
+    const { deps } = historyDeps([{ first_time: times[0], more: false, loading: false, end_of_data: true, end_of_data_type: 'end', bars: times.map(bar) }]);
     const result = await getHistory({ from: '2026-06-29', to: '2026-06-30', include_bars: true, _deps: deps });
     assert.deepEqual(result.bars.map(item => item.time), times.slice(0, 2));
     assert.equal(result.period.to_iso, '2026-06-30T00:00:00.000Z');
@@ -198,8 +217,8 @@ describe('getHistory() — batched TradingView history', () => {
 
   it('reports source exhaustion even when available history does not reach from', async () => {
     const { deps } = historyDeps([
-      { first_time: 500, more: true, bars: [bar(500), bar(600)] },
-      { first_time: 300, more: false, bars: [bar(300), bar(400)] },
+      { first_time: 500, more: true, loading: false, end_of_data: false, end_of_data_type: null, bars: [bar(500), bar(600)] },
+      { first_time: 300, more: false, loading: false, end_of_data: true, end_of_data_type: 'end', bars: [bar(300), bar(400)] },
     ]);
     const result = await getHistory({ from: 100, to: 400, include_bars: true, _deps: deps });
     assert.deepEqual(result.bars.map(item => item.time), [300, 400]);
@@ -212,13 +231,13 @@ describe('getHistory() — batched TradingView history', () => {
   it('enforces the request limit both before and after finding matching bars', async () => {
     for (const nextTime of [300, 500]) {
       const { deps } = historyDeps([
-        { first_time: 700, more: true, bars: [bar(700), bar(800)] },
-        { first_time: nextTime, more: true, bars: [bar(nextTime), bar(nextTime + 100)] },
-        { first_time: 100, more: false, bars: [bar(100), bar(200)] },
+        { first_time: 700, more: true, loading: false, end_of_data: false, end_of_data_type: null, bars: [bar(700), bar(800)] },
+        { first_time: nextTime, more: true, loading: false, end_of_data: false, end_of_data_type: null, bars: [bar(nextTime), bar(nextTime + 100)] },
+        { first_time: 100, more: false, loading: false, end_of_data: true, end_of_data_type: 'end', bars: [bar(100), bar(200)] },
       ]);
       let requests = 0;
       const pending = getHistory({ from: 100, to: 400, max_requests: 1, include_bars: true, _deps: {
-        ...deps, requestMore: async count => { requests += 1; await deps.requestMore(count); },
+        ...deps, requestMore: async count => { requests += 1; return deps.requestMore(count); },
       } });
       if (nextTime === 300) {
         const result = await pending;
@@ -227,14 +246,14 @@ describe('getHistory() — batched TradingView history', () => {
         assert.equal(result.requests_made, 1);
         assert.deepEqual(result.bars.map(item => item.time), [300, 400]);
       } else {
-        await assert.rejects(pending, /No historical bars matched the requested date range/);
+        await assert.rejects(pending, { code: 'HISTORY_LIMIT_REACHED' });
       }
       assert.equal(requests, 1);
     }
   });
 
   it('stops at the exact matching bar limit when from has not been reached', async () => {
-    const { deps } = historyDeps([{ first_time: 300, more: true, bars: [300, 400, 500, 600].map(bar) }]);
+    const { deps } = historyDeps([{ first_time: 300, more: true, loading: false, end_of_data: false, end_of_data_type: null, bars: [300, 400, 500, 600].map(bar) }]);
     const result = await getHistory({ from: 100, to: 400, max_bars: 2, include_bars: true, _deps: {
       ...deps, requestMore: async () => assert.fail('Bar limit must stop before another request'),
     } });
@@ -245,9 +264,9 @@ describe('getHistory() — batched TradingView history', () => {
   });
 
   it('returns only matching partial bars when a later snapshot is unreadable', async () => {
-    for (const unreadable of [null, { more: true, bars: [] }]) {
+    for (const unreadable of [null, { more: true, loading: false, end_of_data: false, end_of_data_type: null, bars: [] }]) {
       const { deps, setChartCalls } = historyDeps([
-        { first_time: 300, more: true, bars: [bar(300), bar(400), bar(500)] },
+        { first_time: 300, more: true, loading: false, end_of_data: false, end_of_data_type: null, bars: [bar(300), bar(400), bar(500)] },
         unreadable,
       ]);
       const result = await getHistory({ symbol: 'NYSE:IBM', from: 100, to: 400, include_bars: true, _deps: deps });
@@ -263,12 +282,12 @@ describe('getHistory() — batched TradingView history', () => {
     for (const hasMatches of [true, false]) {
       const initialTime = hasMatches ? 300 : 500;
       const { deps } = historyDeps([
-        { first_time: initialTime, more: true, bars: [bar(initialTime), bar(600)] },
-        { first_time: initialTime, more: true, bars: [] },
+        { first_time: initialTime, more: true, loading: false, end_of_data: false, end_of_data_type: null, bars: [bar(initialTime), bar(600)] },
+        { first_time: initialTime, more: true, loading: false, end_of_data: false, end_of_data_type: null, bars: [] },
       ]);
       let requests = 0;
       const pending = getHistory({ from: 100, to: 400, max_requests: 3, include_bars: true, _deps: {
-        ...deps, requestMore: async count => { requests += 1; await deps.requestMore(count); },
+        ...deps, requestMore: async count => { requests += 1; return deps.requestMore(count); },
       } });
       if (hasMatches) {
         const result = await pending;
@@ -276,17 +295,17 @@ describe('getHistory() — batched TradingView history', () => {
         assert.equal(result.complete, false);
         assert.deepEqual(result.bars.map(item => item.time), [300]);
       } else {
-        await assert.rejects(pending, /No historical bars matched the requested date range/);
+        await assert.rejects(pending, { code: 'HISTORY_LOAD_INCOMPLETE' });
       }
       assert.equal(requests, 1);
     }
   });
 
   it('rejects an unreadable initial source and restores the chart for a bounded request', async () => {
-    for (const initial of [null, { first_time: null, more: false, bars: [] }]) {
+    for (const initial of [null, { first_time: null, more: false, loading: false, end_of_data: true, end_of_data_type: 'end', bars: [] }]) {
       const { deps, setChartCalls } = historyDeps([initial]);
       await assert.rejects(getHistory({ symbol: 'NYSE:IBM', from: 100, to: 400, _deps: deps }),
-        /Could not read historical bars/);
+        { code: initial ? 'HISTORY_RANGE_EMPTY' : 'HISTORY_LOAD_INCOMPLETE' });
       assert.equal(setChartCalls.at(-1).symbol, 'NASDAQ:AAPL');
     }
   });
@@ -295,7 +314,7 @@ describe('getHistory() — batched TradingView history', () => {
     for (const failureStage of ['initial_read', 'request', 'poll_read']) {
       const failure = new Error(`Runtime failed during ${failureStage}`);
       const { deps, setChartCalls } = historyDeps([
-        { first_time: 300, more: true, bars: [bar(300), bar(400), bar(500)] },
+        { first_time: 300, more: true, loading: false, end_of_data: false, end_of_data_type: null, bars: [bar(300), bar(400), bar(500)] },
       ]);
       let reads = 0;
       let writes = 0;
@@ -325,7 +344,7 @@ describe('getHistory() — batched TradingView history', () => {
   it('leaves the requested chart in place with no-restore on success and failure', async () => {
     for (const fails of [false, true]) {
       const { deps, setChartCalls } = historyDeps([
-        { first_time: 100, more: false, bars: [bar(100), bar(200), bar(500)] },
+        { first_time: 100, more: false, loading: false, end_of_data: true, end_of_data_type: 'end', bars: [bar(100), bar(200), bar(500)] },
       ]);
       const failure = new Error('Snapshot failed');
       const pending = runHistoryCommand({
@@ -344,7 +363,7 @@ describe('getHistory() — batched TradingView history', () => {
 
   it('does not claim completeness when the bar safety limit truncates data', async () => {
     const { deps } = historyDeps([
-      { symbol: 'NASDAQ:AAPL', resolution: 'D', first_time: 100, more: false, bars: [bar(100), bar(200)] },
+      { symbol: 'NASDAQ:AAPL', resolution: 'D', first_time: 100, more: false, loading: false, end_of_data: true, end_of_data_type: 'end', bars: [bar(100), bar(200)] },
     ]);
 
     const result = await getHistory({ max_bars: 1, include_bars: true, _deps: deps });
@@ -355,21 +374,12 @@ describe('getHistory() — batched TradingView history', () => {
     assert.deepEqual(result.bars.map(item => item.time), [200]);
   });
 
-  it('stops when a backward data request makes no progress', async () => {
-    let reads = 0;
-    const initial = { symbol: 'NASDAQ:AAPL', resolution: 'D', first_time: 500, more: true, bars: [bar(500)] };
-    const stalled = { symbol: 'NASDAQ:AAPL', resolution: 'D', first_time: 500, more: true, bars: [] };
-    const deps = {
-      pollAttempts: 2,
-      sleep: async () => {},
-      getChartState: async () => ({ symbol: 'NASDAQ:AAPL', timeframe: 'D' }),
-      setChart: async () => {},
-      readSnapshot: async () => reads++ === 0 ? initial : stalled,
-      requestMore: async () => {},
-    };
-
+  it('stops when a completed backward request makes no progress', async () => {
+    const { deps } = historyDeps([
+      { first_time: 500, more: true, loading: false, end_of_data: false, end_of_data_type: null, bars: [bar(500)] },
+      { first_time: 500, more: true, loading: false, end_of_data: false, end_of_data_type: null, bars: [] },
+    ]);
     const result = await getHistory({ _deps: deps });
-
     assert.equal(result.complete, false);
     assert.equal(result.stop_reason, 'no_progress');
     assert.equal(result.requests_made, 1);
@@ -377,7 +387,7 @@ describe('getHistory() — batched TradingView history', () => {
 
   it('temporarily switches symbol/timeframe and restores the original chart', async () => {
     const { deps, setChartCalls } = historyDeps([
-      { symbol: 'NYSE:IBM', resolution: 'W', first_time: 100, more: false, bars: [bar(100)] },
+      { symbol: 'NYSE:IBM', resolution: 'W', first_time: 100, more: false, loading: false, end_of_data: true, end_of_data_type: 'end', bars: [bar(100)] },
     ]);
 
     const result = await getHistory({ symbol: 'NYSE:IBM', timeframe: 'W', _deps: deps });
@@ -403,7 +413,7 @@ describe('history CLI file output', () => {
     t.after(() => rmSync(directory, { recursive: true, force: true }));
     const output = join(directory, 'history.json');
     const { deps, setChartCalls } = historyDeps([
-      { first_time: 100, more: false, bars: [100, 200, 300, 400, 500].map(bar) },
+      { first_time: 100, more: false, loading: false, end_of_data: true, end_of_data_type: 'end', bars: [100, 200, 300, 400, 500].map(bar) },
     ]);
     const options = { symbol: 'NYSE:IBM', from: '200', to: '400', 'include-bars': true, output };
     const dependencies = {
@@ -437,7 +447,7 @@ describe('history CLI file output', () => {
       'bars-per-request': '100', 'max-requests': '3', 'max-bars': '2',
       'include-bars': true, output: 'history.json', force: true,
     };
-    const { deps } = historyDeps([{ first_time: 100, more: false, bars: [100, 200, 300, 400, 500].map(bar) }]);
+    const { deps } = historyDeps([{ first_time: 100, more: false, loading: false, end_of_data: true, end_of_data_type: 'end', bars: [100, 200, 300, 400, 500].map(bar) }]);
     const result = await runHistoryCommand(options, {
       normalizeRange: range => {
         events.push('validate');
@@ -458,7 +468,7 @@ describe('history CLI file output', () => {
         });
         return getHistory({ ...opts, _deps: {
           ...deps,
-          setChart: async change => { events.push(change.symbol === 'NASDAQ:AAPL' ? 'restore' : 'switch'); },
+          setChart: async change => { events.push(change.symbol === 'NASDAQ:AAPL' ? 'restore' : 'switch'); await deps.setChart(change); },
         } });
       },
       writeOutput: (data, output, settings) => {

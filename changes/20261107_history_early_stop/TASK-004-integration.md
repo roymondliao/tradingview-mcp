@@ -1,7 +1,7 @@
 ---
 id: TASK-004
 title: History Core CLI and MCP Integration
-status: todo
+status: done
 depends_on: [TASK-003]
 ---
 
@@ -26,3 +26,7 @@ cleanup 失敗仍嘗試 restore，任何情況都釋放 process lock。
 通過相關 data／cli／errors tests、lint 與一次全套 local tests。
 
 交付正式實作、測試與使用說明草稿；未通過 live 驗收前不得把 request 標為 done。
+
+## Completion record
+
+2026-11-07 完成。交付內容及檢查結果見 [修正後驗收](./VERIFICATION.md#修正後驗收)。

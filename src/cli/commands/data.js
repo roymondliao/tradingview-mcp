@@ -75,7 +75,7 @@ register('ohlcv', {
 
 register('history', {
   desktop_dependency: 'required',
-  description: 'Fetch all OHLCV history available from the TradingView chart',
+  description: 'Fetch available OHLCV history; check complete and stop_reason for partial or timed-out results',
   options: {
     ...PANE_CONTEXT_OPTIONS,
     symbol: { type: 'string', description: 'Symbol to load (default: current chart)' },

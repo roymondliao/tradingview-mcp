@@ -1,7 +1,7 @@
 ---
 id: TASK-002
 title: Desktop History Runtime Adapter
-status: todo
+status: done
 depends_on: [TASK-001]
 ---
 
@@ -26,3 +26,7 @@ TEST_PLAN U02、U03、U10、U11、U17、U19 與 U18／U21 的 adapter 部分通�
 沒有長時間 awaitPromise 綁住 CDP，也沒有直接接觸 TradingView server。
 
 交付 runtime module、單元測試與必要介面註解，供 TASK-003 接入。
+
+## Completion record
+
+2026-11-07 完成。交付內容及檢查結果見 [修正後驗收](./VERIFICATION.md#修正後驗收)。

@@ -1,6 +1,7 @@
 # History Early Stop Verification
 
-驗證日期：2026-11-07。**已確認缺陷與可用的 Desktop 狀態訊號；尚未驗證修正後行為。**
+驗證日期：2026-11-07。**缺陷已修正，單元／整合測試與 Desktop 驗收通過。**
+下列原始重現記錄保留修正前的結果，修正後結果見文末。
 本文件保留結果與方法，不依賴已刪除的診斷 scripts 或原始輸出。
 
 ## Environment
@@ -114,3 +115,68 @@ getVisibleBarsRange() 回傳時間戳，不能直接傳給需要 bar index 的 z
 已驗證 Desktop 3.5.0 的 TAIEX 與 6902 日線，未涵蓋斷線、未知 endOfDataType、
 權限限制、跨 process 請求、其他週期／版本及來源錯誤 payload。
 實作後驗收依 [TEST_PLAN.md](./TEST_PLAN.md)；不能只重跑目前已載滿的圖表。
+
+## 修正後驗收
+
+日期：2026-11-07。分支 fix/tv-history-early-stop；設計 commit 80185df，驗收對象為其後的實作工作樹。
+Node v26.12.1；Desktop 3.5.0；stg／HQJPvW0n／pane 0，單一 pane。
+本次開始時使用者圖表已是 BATS:SOXX／1D，因此還原目標以當次讀回狀態為準。
+
+### Implementation delivered
+
+- history-runtime.js：短 CDP 呼叫、必要能力檢查、原子發送、來源綁定、事件訂閱與 lease。
+- history-loader.js：以 snapshot／pending／stopReason 表達狀態機；載入、進展、耗盡、上限及 deadline。
+- history-errors.js：確認空區間、未完成、timeout、unsupported、來源變更與清理錯誤的分類。
+- data.js：保留 chart data lock、輸出契約與 no-restore；加入有界清理及避免覆蓋外部圖表變更。
+- CLI help／README 說明完整性；MCP history 保留結構化錯誤。
+
+### Local validation results
+
+| 檢查 | 結果 |
+| --- | --- |
+| data module | 66/66 通過，含原有 27 cases 與新增 39 cases。 |
+| npm test（全套 local unit/integration） | 880/880 通過，133 suites，無 fail／skip。 |
+| npm run lint | Exit 0，沒有 error；3 個既存 unused-variable warnings。 |
+| git diff --check | 通過。 |
+
+新增測試使用 VM 模擬 Desktop 物件、可控制 clock／事件／資料到達，涵蓋暫時 more=false、
+同步完成、Promise rejection、未知訊號、lease 到期、資料讀取競態、來源變更與清理失敗。
+不使用真正 sleep 測時間界線。正式 tests 保留在 tests/data/unit 與 support；不保存一次性診斷腳本。
+
+測試過程抓到並修正兩個邊界：maxRequests 到達但最後請求尚未確認時仍須等待；
+loop 與 adapter preflight 之間逾時時仍要保留部分結果。全套結果為這些調整後的重新驗證。
+同 process 序列化以兩次 history 呼叫測試；quote 沿用未變更的相同 lock，未另做 live 併發操作。
+
+### Desktop acceptance results
+
+| ID | 實際操作與結果 |
+| --- | --- |
+| L01 | 新鮮 300 根 TAIEX，實際 CLI 單次抓 2014-12：3 次請求、23 根、from_reached、complete=true。 |
+| L02 | 新鮮 TAIEX，只傳 from=2014-12-01：3 次請求、2,899 根，最早 2014-12-01，from_reached。 |
+| L03 | 新鮮 300 根 6902，from=2023-07-01：1 次請求後 752 根，最早 2023-07-13 01:00 UTC，no_more_data、complete=true。 |
+| L04 | 6902 上市前區間：HISTORY_RANGE_EMPTY、retryable=false。 |
+| L05 | 上市當日／跨上市日區間分別 1／2 根，no_more_data、complete=true。 |
+| L06 | 已載滿 6902，不傳 from：752 根、requests_made=0、no_more_data。 |
+| L07 | 新鮮 TAIEX，maxRequests=1：等待載入後回 1,300 根、max_requests、complete=false；返回時 loading=false。 |
+| L08 | 以真實 runtime wrapper 只記 metadata：6902 完成後 loading/completed/dataLoaded counters 均為 1，error=0，end=true，與 snapshot 相符。 |
+| L09 | 預設還原成功、empty-range 後還原、no-restore 保留目標均符合契約；每個案例完成後 registry observer 數量為 0。 |
+
+L01 使用實際 CLI；其他案例直接呼叫 production getHistory，共用同一 core 與 Desktop adapter。
+未在 live 人為製造網路故障或未知 end type，這些由單元測試驗證。
+
+### Repeating the acceptance
+
+1. 讀取目標 pane 的完整狀態與時間軸 spacing／offset，保存在測試執行中的記憶體。
+2. 將視野縮至約 60 根，切離再切回測試商品；等待 loading=false，確認初始為約 300 根。
+3. 對 TAIEX 執行原始 bounded CLI 命令；這次不要使用手動多次 history 的 workaround。
+4. 對各 from-only、6902 邊界與 maxRequests 案例呼叫 production getHistory，斷言上述 metadata。
+5. 事件驗證只包裝 runtime.readSnapshot 記錄計數，不替換資料來源或狀態值。
+6. 每個案例結束讀取 observer registry 數量；先前訂閱必須全部釋放。
+7. 外層 finally 還原原商品／週期，必要時載入原視野的歷史，再還原 spacing／offset，
+   比對 symbol、timeframe、chart type、study IDs／names、visible range。
+
+本次還原後為 BATS:SOXX／1D，可見範圍 2023-11-13～2026-11-20，與開始完全一致；
+observer 數量為 0。恢復原視野時 loaded bars 由 752 增為 1,300，這是載入批次產生的 cache，
+不宣稱將 Desktop 已載入資料量也還原；指標 inputs 未另外比對。
+
+一次性 live 驗收腳本與測試輸出已清除，只保存本節結果及操作方法。

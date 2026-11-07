@@ -1,7 +1,7 @@
 # History Early Stop Test Plan
 
-Status：`planned`。本文件是修正後驗收計畫；已執行結果只記在 [VERIFICATION.md](./VERIFICATION.md)。
-所有 TASK-002～005 尚未執行，不以過去 27/27 baseline 取代本次回歸測試。
+Status：`verified`。本文件保留驗收規格；已執行結果記在 [VERIFICATION.md](./VERIFICATION.md)。
+TASK-002～005 已完成；data 模組 66/66、全套 local tests 880/880 通過，L01～09 已執行。
 
 ## Unit and adapter coverage
 

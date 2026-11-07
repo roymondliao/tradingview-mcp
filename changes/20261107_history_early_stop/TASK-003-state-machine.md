@@ -1,7 +1,7 @@
 ---
 id: TASK-003
 title: History State Machine and Deadlines
-status: todo
+status: done
 depends_on: [TASK-002]
 ---
 
@@ -28,3 +28,7 @@ isCompleted=true/loading=true 及沒有事件但資料完成的情境。
 所有實際截斷皆不能 complete=true。
 
 交付 loader、error factory、單元測試；公開 getHistory lifecycle 接入由 TASK-004 完成。
+
+## Completion record
+
+2026-11-07 完成。交付內容及檢查結果見 [修正後驗收](./VERIFICATION.md#修正後驗收)。

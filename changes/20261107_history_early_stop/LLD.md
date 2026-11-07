@@ -1,6 +1,6 @@
 # History Early Stop Low Level Design
 
-Status：`design-ready`，待實作。與 [System design](./SYSTEM_DESIGN.md) 一起作為驗收依據。
+Status：`implemented`。與 [System design](./SYSTEM_DESIGN.md) 一起作為驗收依據。
 下列型別為設計介面；實際仍使用 repository 的 JavaScript modules。
 
 ## Runtime interface
@@ -62,14 +62,16 @@ isLoading、endOfData、endOfDataType；回傳型別無效也屬 unsupported。
 history local resolution comparison 將 D/W/M 等單位縮寫正規化為 1D/1W/1M；
 不改寫任意 resolution，也不擴大修改全專案 wait helpers。
 
-setChart 必須檢查 waitForChartReady 的結果，不得忽略 false；檢查期限受整體 deadline 約束。
-不以 readiness helper 的 UI 穩定判斷代替 mainSeries.isLoading 的資料狀態。
+setChart 使用有期限的 symbol／resolution API readback，不再呼叫原本會忽略 false 的
+waitForChartReady UI helper；檢查期限受整體 deadline 約束。readback 只確認身分，
+實際資料 readiness 仍由 loader 的 mainSeries.isLoading 判斷。
 初始 bars 為空且 loading=true 時先等待；穩定耗盡且 bars 為空仍可確認真正空區間。
 
 ## State variables and predicates
 
 ```text
-state: INSPECT | REQUEST | WAIT | DONE | PARTIAL | FAILED
+logical states: INSPECT | REQUEST | WAIT | DONE | PARTIAL | FAILED
+implementation: snapshot + pending + stopReason (no separate mutable enum)
 barsByTime, snapshot, requestsMade, stopReason
 operationDeadline, waitDeadline
 pending: null | { previousFirst, baselineEvents, observedLoading, issued }
@@ -105,7 +107,8 @@ INSPECT／WAIT 每次先取得不含 bars 的輕量 snapshot，再依需要讀�
 4. 有效區間筆數大於 maxBars → PARTIAL/max_bars（即使 covered 也不能宣稱完整）。
 5. covered → DONE/from_reached；否則 exhausted → DONE/no_more_data。
 6. end_of_data=true 但 type 非 end → PARTIAL/unsupported_end_state，不再要求更多資料。
-7. requestsMade 已達 maxRequests → PARTIAL/max_requests；有效筆數等於 maxBars → PARTIAL/max_bars。
+7. requestsMade 已達 maxRequests，且沒有未確認的 pending request → PARTIAL/max_requests；有效筆數等於 maxBars → PARTIAL/max_bars。
+   pending 是否已確認由 settled 加 progress／completionObserved 判斷；不能只因數量已達上限而提前返回。
 8. 有 pending 且 progress/initialDataArrived → 清除 pending，回 INSPECT。
 9. 有 pending，completionObserved 且無進展／未耗盡 → PARTIAL/no_progress。
 10. 有 pending 但完成仍不明 → WAIT，即使 more=true 也不重複發送。
@@ -187,3 +190,13 @@ client 非正常終止依賴 observer lease 清除 listener；無法保證 proce
 runtime adapter 另測訂閱先於請求、同步完成、原子重檢、Promise rejection、lease 清理及短 CDP deadline。
 不從測試 import production 私有字串來生成期望值；以行為斷言 requests、資料範圍、complete、
 error code、清理次數與沒有重疊請求。完整矩陣見 [Test plan](./TEST_PLAN.md)。
+
+## Implementation notes
+
+- Adapter 以可序列化、self-contained page operation 實作；正式 adapter 與 VM 測試執行同一函式。
+- 結構化 source errors 不記錄未驗證的事件 payload；Promise rejection 以 error counter 呈現。
+- Deadline 在迴圈檢查與 adapter preflight 間到期時，loader 保留 partial bars 並回 timeout；
+  真正 CDP 錯誤仍保留原分類。
+- 單次等待的預算不因 send 被原子重檢拒絕而延長。maxRequests 必須等最後一次已送出請求
+  settled 後才生效；這避免另一種「請求已送出但尚未載入就返回」的情形。
+- history 公開呼叫仍透過既有 process lock；quote 入口及鎖未修改。

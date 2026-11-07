@@ -3,6 +3,10 @@
  */
 import { evaluate, evaluateAsync, KNOWN_PATHS, safeString } from '../connection.js';
 import { waitForChartReady } from '../wait.js';
+import { createHistoryRuntime, normalizeHistoryResolution } from './history-runtime.js';
+import { loadHistory } from './history-loader.js';
+import { historyError } from './history-errors.js';
+import { symbolIdentitiesMatch } from './pane.js';
 import {
   getStrategyEquity,
   getStrategyReport,
@@ -69,68 +73,6 @@ export function normalizeHistoryRange({ from, to } = {}) {
     throw new Error('from must be less than or equal to to');
   }
   return { fromTime, toTime };
-}
-
-function historyRuntime(deps) {
-  const evaluateFn = deps?.evaluate || evaluate;
-  const evaluateAsyncFn = deps?.evaluateAsync || evaluateAsync;
-  const waitForReady = deps?.waitForChartReady || waitForChartReady;
-  return {
-    sleep: deps?.sleep || ((ms) => new Promise(resolve => setTimeout(resolve, ms))),
-    pollAttempts: deps?.pollAttempts || 20,
-    getChartState: deps?.getChartState || (() => evaluateFn(`(function() {
-      var chart = ${CHART_API};
-      return { symbol: chart.symbol(), timeframe: chart.resolution() };
-    })()`)),
-    setChart: deps?.setChart || (async ({ symbol, timeframe }) => {
-      if (symbol) {
-        await evaluateAsyncFn(`(function() {
-          var chart = ${CHART_API};
-          return new Promise(function(resolve) {
-            chart.setSymbol(${safeString(symbol)}, {});
-            setTimeout(resolve, 500);
-          });
-        })()`);
-        await waitForReady(symbol);
-      }
-      if (timeframe) {
-        await evaluateFn(`(function() {
-          ${CHART_API}.setResolution(${safeString(timeframe)}, {});
-        })()`);
-        await waitForReady(null, timeframe);
-      }
-    }),
-    readSnapshot: deps?.readSnapshot || ((beforeTime = null) => evaluateFn(`(function() {
-      var chart = ${CHART_API};
-      var series = chart._chartWidget.model().mainSeries();
-      var bars = series.bars();
-      if (!bars || typeof bars.firstIndex !== 'function') return null;
-      var firstIndex = bars.firstIndex();
-      var lastIndex = bars.lastIndex();
-      var first = bars.valueAt(firstIndex);
-      var last = bars.valueAt(lastIndex);
-      var result = [];
-      var before = ${beforeTime == null ? 'null' : Number(beforeTime)};
-      for (var i = firstIndex; i <= lastIndex; i++) {
-        var v = bars.valueAt(i);
-        if (v && (before == null || v[0] < before)) {
-          result.push({time: v[0], open: v[1], high: v[2], low: v[3], close: v[4], volume: v[5] || 0});
-        }
-      }
-      var more = true;
-      try { more = series.requestMoreDataAvailable(); } catch (e) {}
-      return {
-        symbol: chart.symbol(), resolution: chart.resolution(),
-        first_time: first && first[0], last_time: last && last[0],
-        total_loaded: bars.size(), more: more, bars: result
-      };
-    })()`)),
-    requestMore: deps?.requestMore || ((barsPerRequest) => evaluateAsyncFn(`(function() {
-      var series = ${CHART_API}._chartWidget.model().mainSeries();
-      var pending = series.requestMoreData(${barsPerRequest});
-      return pending && typeof pending.then === 'function' ? pending : true;
-    })()`)),
-  };
 }
 
 function buildGraphicsJS(collectionName, mapKey, filter) {
@@ -259,103 +201,27 @@ async function _getHistoryInternal({
   const maxRequests = requireIntegerInRange(max_requests, DEFAULT_HISTORY_MAX_REQUESTS, 1, MAX_HISTORY_REQUESTS, 'max_requests');
   const maxBars = requireIntegerInRange(max_bars, DEFAULT_HISTORY_MAX_BARS, 1, MAX_HISTORY_BARS, 'max_bars');
   const { fromTime, toTime } = normalizeHistoryRange({ from, to });
-  const runtime = historyRuntime(_deps);
-  const original = await runtime.getChartState();
+  const runtime = _deps?.runtime || createHistoryRuntime(_deps);
+  const deadline = runtime.now() + runtime.policy.historyTimeoutMs;
+  const original = await runtime.getChartState(deadline);
   const requestedSymbol = symbol ? String(symbol).trim() : null;
   const requestedTimeframe = timeframe ? String(timeframe).trim() : null;
-  const needsSymbolChange = requestedSymbol && requestedSymbol !== original?.symbol;
-  const needsTimeframeChange = requestedTimeframe && requestedTimeframe !== String(original?.timeframe || '');
+  const needsSymbolChange = requestedSymbol && !symbolIdentitiesMatch(requestedSymbol, original?.symbol);
+  const needsTimeframeChange = requestedTimeframe && normalizeHistoryResolution(requestedTimeframe) !== normalizeHistoryResolution(original?.timeframe);
   const shouldRestore = Boolean(restore_chart && (needsSymbolChange || needsTimeframeChange));
-  let chartMutationAttempted = false;
-
+  const expected = { symbol: requestedSymbol || original.symbol, timeframe: requestedTimeframe || original.timeframe };
+  let chartMutationAttempted = false, observer = null, primaryError = null;
   try {
     if (needsSymbolChange || needsTimeframeChange) {
       chartMutationAttempted = true;
-      await runtime.setChart({
-        symbol: needsSymbolChange ? requestedSymbol : null,
-        timeframe: needsTimeframeChange ? requestedTimeframe : null,
-      });
+      await runtime.setChart({ symbol: needsSymbolChange ? requestedSymbol : null,
+        timeframe: needsTimeframeChange ? requestedTimeframe : null }, deadline);
     }
-
-    const barsByTime = new Map();
-    let snapshot = await runtime.readSnapshot();
-    if (!snapshot || !Array.isArray(snapshot.bars) || snapshot.bars.length === 0) {
-      throw new Error('Could not read historical bars. The chart may still be loading.');
-    }
-
-    const inRange = time => (fromTime == null || time >= fromTime)
-      && (toTime == null || time <= toTime);
-    const addBars = (bars) => {
-      for (const bar of bars || []) {
-        if (bar?.time == null) continue;
-        const time = Number(bar.time);
-        if (inRange(time)) barsByTime.set(time, bar);
-      }
-    };
-    addBars(snapshot.bars);
-
-    let requestsMade = 0;
-    let stopReason = null;
-    while (!stopReason) {
-      const relevantCount = barsByTime.size;
-      if (relevantCount > maxBars) {
-        stopReason = 'max_bars';
-        break;
-      }
-      if (fromTime != null && snapshot.first_time <= fromTime) {
-        stopReason = 'from_reached';
-        break;
-      }
-      if (snapshot.more === false) {
-        stopReason = 'no_more_data';
-        break;
-      }
-      if (requestsMade >= maxRequests) {
-        stopReason = 'max_requests';
-        break;
-      }
-      if (relevantCount === maxBars) {
-        stopReason = 'max_bars';
-        break;
-      }
-
-      const previousFirst = snapshot.first_time;
-      await runtime.requestMore(barsPerRequest);
-      requestsMade += 1;
-
-      let next = null;
-      for (let attempt = 0; attempt < runtime.pollAttempts; attempt++) {
-        next = await runtime.readSnapshot(previousFirst);
-        const movedBack = next?.first_time != null && next.first_time < previousFirst;
-        if (movedBack || next?.more === false) break;
-        await runtime.sleep(250);
-      }
-
-      if (!next || next.first_time == null) {
-        stopReason = 'read_failed';
-        break;
-      }
-      addBars(next.bars);
-      if (next.first_time >= previousFirst && next.more !== false) {
-        snapshot = next;
-        stopReason = 'no_progress';
-        break;
-      }
-      snapshot = next;
-    }
-
-    let bars = [...barsByTime.values()]
-      .sort((a, b) => a.time - b.time)
-      .filter(bar => inRange(Number(bar.time)));
-    if (bars.length > maxBars) bars = bars.slice(-maxBars);
-    if (bars.length === 0) {
-      throw new Error(toTime == null
-        ? 'No historical bars matched the requested start time.'
-        : 'No historical bars matched the requested date range.');
-    }
-    bars = bars.map(bar => withUnixSecondsIso(bar, ['time']));
-
-    const complete = stopReason === 'from_reached' || stopReason === 'no_more_data';
+    observer = await runtime.openObserver(expected, deadline);
+    const loaded = await loadHistory({ runtime, token: observer.token, deadline, fromTime, toTime,
+      barsPerRequest, maxRequests, maxBars });
+    const { snapshot, requestsMade, stopReason, complete } = loaded;
+    const bars = loaded.bars.map(bar => withUnixSecondsIso(bar, ['time']));
     const result = {
       success: true,
       complete,
@@ -376,13 +242,41 @@ async function _getHistoryInternal({
     };
     if (include_bars) result.bars = bars;
     return result;
+  } catch (error) {
+    primaryError = error;
+    throw error;
   } finally {
-    if (shouldRestore && chartMutationAttempted) {
-      await runtime.setChart({
-        symbol: needsSymbolChange ? original.symbol : null,
-        timeframe: needsTimeframeChange ? original.timeframe : null,
-      });
+    const cleanupDeadline = runtime.now() + runtime.policy.cleanupTimeoutMs;
+    let cleanupError = null;
+    if (observer) {
+      try { await runtime.closeObserver(observer.token, cleanupDeadline); }
+      catch (error) {
+        cleanupError = historyError('HISTORY_CLEANUP_FAILED', `History observer cleanup failed: ${error.message}`, {
+          cause: primaryError || error, stage: 'cleanup',
+        });
+      }
     }
+    if (shouldRestore && chartMutationAttempted) {
+      try {
+        const current = await runtime.getChartState(cleanupDeadline);
+        // Allow partial setup (only one of symbol/resolution changed), but never overwrite an external choice.
+        const symbolOwned = symbolIdentitiesMatch(current.symbol, expected.symbol) || symbolIdentitiesMatch(current.symbol, original.symbol);
+        const resolutionOwned = [expected.timeframe, original.timeframe].some(tf => normalizeHistoryResolution(tf) === normalizeHistoryResolution(current.timeframe));
+        if (primaryError?.code === 'HISTORY_CONTEXT_CHANGED' || !symbolOwned || !resolutionOwned) {
+          throw historyError('HISTORY_CONTEXT_CHANGED', 'Chart changed externally; original chart was not restored.', {
+            kind: 'conflict', cause: cleanupError || primaryError || undefined,
+          });
+        }
+        await runtime.setChart({ symbol: needsSymbolChange ? original.symbol : null,
+          timeframe: needsTimeframeChange ? original.timeframe : null }, cleanupDeadline);
+      } catch (error) {
+        cleanupError = error.code === 'HISTORY_CONTEXT_CHANGED' ? error
+          : historyError('HISTORY_RESTORE_FAILED', `History chart restoration failed: ${error.message}`, {
+            cause: cleanupError || primaryError || error, stage: 'restore',
+          });
+      }
+    }
+    if (cleanupError) throw cleanupError;
   }
 }
 

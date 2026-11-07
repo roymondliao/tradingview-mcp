@@ -2,7 +2,7 @@
 
 來源：使用者提供的 2026-11-07 問題文件。此處保留問題摘要與發現背景；
 原始診斷輸出及外部 repository 路徑不作為本 request 的文件依賴。
-狀態：已重現，尚未修正；後續實測見 [VERIFICATION.md](./VERIFICATION.md)。
+狀態：已重現並修正，驗收通過；後續實測見 [VERIFICATION.md](./VERIFICATION.md)。
 
 ## Reported behavior
 

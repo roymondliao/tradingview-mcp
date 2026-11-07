@@ -198,6 +198,26 @@ tv stream quote | jq '.close'      # monitor price changes
 ```
 
 `history --to` requires `--from` and includes bars whose timestamps satisfy `from <= time <= to`.
+
+History waits for TradingView Desktop loading to settle before collecting each batch.
+`complete: true` means the requested start was reached (`from_reached`) or Desktop explicitly
+reported the available-history boundary (`no_more_data`). Temporary inability to request more
+data does not establish that boundary. Account and data-source restrictions still apply.
+
+Inspect `complete` even when `success` is true. Partial results retain their collected bars and
+use `max_bars`, `max_requests`, `no_progress`, `read_failed`, `load_timeout`, `history_timeout`,
+or `unsupported_end_state` as `stop_reason`. CLI partial results still exit successfully and can
+be written with `--output`. The internal wait budget is 10 seconds per load and 120 seconds for
+the overall operation after acquiring the chart lock, plus up to 15 seconds for cleanup/restoration.
+There are no automatic retries; a timeout does not cancel Desktop's outstanding network request.
+
+An empty confirmed range reports `HISTORY_RANGE_EMPTY` with `retryable: false`. If the requested
+range has not been loaded, timeout/incomplete errors instead retain their specific code and
+retryability. CLI and MCP history responses preserve these structured diagnostics. Unsupported
+Desktop status APIs fail explicitly instead of reporting complete history. Event subscriptions
+are cleaned up even with `--no-restore`; external chart changes cause a context conflict rather
+than mixing symbols or overwriting the user's new selection.
+
 Without `--to`, `--from` continues through the chart's latest available data; without either date,
 history loads all available data within the safety limits. Dates use the existing parser: ISO dates/times
 and recognized Unix seconds or milliseconds. A date-only value such as `--to 2026-06-30` means
