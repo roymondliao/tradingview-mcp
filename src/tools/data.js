@@ -4,6 +4,11 @@ import * as core from '../core/data.js';
 import * as strategyCore from '../core/strategy.js';
 import { paneContextSchema, withPaneContext } from './pane-context.js';
 
+export async function runHistoryTool(args, { withContext = withPaneContext, getHistory = core.getHistory } = {}) {
+  try { return jsonResult(await withContext(args, () => getHistory(args))); }
+  catch (err) { return coreErrorResult(err); }
+}
+
 export function registerDataTools(server) {
   server.tool('data_get_ohlcv', 'Get OHLCV bar data from the chart. Use summary=true for compact stats instead of all bars (saves context).', {
     ...paneContextSchema,
@@ -24,10 +29,7 @@ export function registerDataTools(server) {
     max_bars: z.coerce.number().optional().describe('Safety limit for returned bars (default 50000, max 200000).'),
     include_bars: z.coerce.boolean().optional().describe('Include the complete OHLCV bars array (default false).'),
     restore_chart: z.coerce.boolean().optional().describe('Restore the original chart symbol/timeframe after loading (default true).'),
-  }, async (args) => {
-    try { return jsonResult(await withPaneContext(args, () => core.getHistory(args))); }
-    catch (err) { return jsonResult({ success: false, error: err.message }, true); }
-  });
+  }, args => runHistoryTool(args));
 
   server.tool('data_get_indicator', 'Get indicator/study info and input values', {
     entity_id: z.string().describe('Study entity ID (from chart_get_state)'),
