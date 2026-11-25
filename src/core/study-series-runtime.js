@@ -68,6 +68,11 @@ export function readStudySeriesPage(expected, entityId) {
     const data = source.data();
     const columns = [...timeColumns('time'), column('source_index', 'number', 'logical_index')];
     const used = new Set(columns.map(c => c.key));
+    const componentTitles = {
+      ohlc_open: 'Open', ohlc_high: 'High', ohlc_low: 'Low', ohlc_close: 'Close',
+      colorer: 'Color index', ohlc_colorer: 'Body color index',
+      wick_colorer: 'Wick color index', border_colorer: 'Border color index',
+    };
     const plots = meta.plots.map((p, i) => {
       let key = p.id;
       if (!key || used.has(key) || ['__proto__', 'constructor', 'prototype'].includes(key)) {
@@ -77,7 +82,10 @@ export function readStudySeriesPage(expected, entityId) {
       }
       used.add(key);
       const role = /colorer/.test(p.type) ? 'color_index' : p.type || 'unknown';
-      columns.push({ ...column(key, 'number', role, meta.styles?.[p.id]?.title || key),
+      const targetTitle = meta.ohlcPlots?.[p.target]?.title || meta.styles?.[p.target]?.title || p.target;
+      const component = Object.hasOwn(componentTitles, p.type) ? componentTitles[p.type] : p.type;
+      const title = meta.styles?.[p.id]?.title || [targetTitle, component].filter(Boolean).join(' ') || 'Untitled plot';
+      columns.push({ ...column(key, 'number', role, title),
         source_id: p.id ?? null, source_slot: i + 1 });
       return key;
     });

@@ -21,7 +21,7 @@
 
 ## 資料與時間契約
 
-JSON 根物件包含 `context`、`study`（含 entity ID 與可讀 inputs）、`captured_at_iso`、`scope: "loaded"`、`status`、`datasets` 及 `issues`。每個 dataset 有 `key`、`columns`、`rows`、`row_count`，能解析資料時間時另附實際範圍。CSV 使用同一份 columns 的穩定 key 當欄名。
+JSON 根物件包含 `context`、`study`（含 entity ID 與可讀 inputs）、`captured_at_iso`、`scope: "loaded"`、`status`、`datasets` 及 `issues`。每個 dataset 有 `key`、`columns`、`rows`、`row_count`，能解析資料時間時另附實際範圍。CSV 的 plot 表頭使用「顯示名稱 [穩定 key]」，缺少名稱時以目標及欄位角色標示。其餘欄位使用 key。
 
 | 資料集 | 一列的意義 | datetime 與數值語意 |
 | --- | --- | --- |

@@ -201,7 +201,8 @@ tv stream quote | jq '.close'      # monitor price changes
 
 `study series` exports the selected instance's loaded outputs. JSON includes the study inputs,
 column titles, original plot IDs, drawing anchors, and any issues. For CSV, choose one dataset
-and use the JSON summary on stdout to map columns to plot titles. To include older bars,
+and read plot headers as `title [plot ID]`, for example `EMA of VFI [plot_2]`.
+Untitled candle components and color indices use their target and role. To include older bars,
 first run `tv history --from <start> --layout-id <layout> --pane-index <index>` on the same chart.
 Then pass `--from` and optionally `--to` to `tv study series` to filter the loaded data.
 Use an explicit end-of-day timestamp with a time zone to include the entire final day.

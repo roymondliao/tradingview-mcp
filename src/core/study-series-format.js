@@ -5,7 +5,7 @@ import { CoreOperationError } from './errors.js';
 
 function* encodeCsv({ columns, rows }) {
   const keys = columns.map(c => c.key);
-  yield csvLine(keys);
+  yield csvLine(columns.map(c => c.source_slot == null ? c.key : `${c.title} [${c.key}]`));
   for (const row of rows) yield csvLine(keys.map(key => row[key]));
 }
 

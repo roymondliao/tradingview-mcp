@@ -30,6 +30,21 @@ test('atomic CSV and JSON preserve values, nulls, escaping and no-overwrite', as
   assert.deepEqual((await readdir(dir)).sort(),['labels.csv','result.json']);
 });
 
+test('CSV plot headers include escaped titles and unambiguous keys while rows use raw keys', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'study-headers-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const output = join(dir, 'study.csv');
+  const columns = [
+    { key: 'time' },
+    { key: 'plot_0', source_slot: 1, title: 'Fast, "EMA"' },
+    { key: 'plot_1', source_slot: 2, title: 'Fast, "EMA"' },
+  ];
+  const rows = [{ time: 123, plot_0: 0, plot_1: null }];
+  await writeStudySeriesArtifact({ datasets: [{ key: 'plots', columns, rows }] }, { format: 'csv', output });
+  assert.equal(await readFile(output, 'utf8'),
+    'time,"Fast, ""EMA"" [plot_0]","Fast, ""EMA"" [plot_1]"\n123,0,\n');
+});
+
 test('CLI validates range, dataset and file format before pane resolution', () => {
   for (const [args,expected] of [
     [['--format','csv'], /require --output/],

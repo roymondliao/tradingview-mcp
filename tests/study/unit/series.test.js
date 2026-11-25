@@ -6,10 +6,11 @@ import { getStudySeries, selectDatasets } from '../../../src/core/study-series.j
 const context = { target_id: 'target', pane_index: 0, symbol: 'EX:S', resolution: '1D' };
 const captured = 1795503600;
 
-function installChart(t, { plots = [], rows = [], graphics = {}, definitions = {}, items = [] } = {}) {
+function installChart(t, { plots = [], rows = [], graphics = {}, definitions = {}, items = [],
+  styles = Object.fromEntries(plots.map(p => [p.id, { title: 'Plot' }])), ohlcPlots = {} } = {}) {
   const source = {
     id: () => 'id', metaInfo: () => ({ description: 'Study', plots, graphics: definitions,
-      styles: Object.fromEntries(plots.map(p => [p.id, { title: 'Plot' }])) }),
+      styles, ohlcPlots }),
     data: () => ({ each: fn => rows.forEach(([i, raw]) => fn(i, raw)) }),
     _graphics: { _indexes: [150, 151, 300], _primitivesCollection: graphics },
     dataWindowView: () => ({ items: () => items }),
@@ -47,6 +48,20 @@ test('plots preserve ID, original slot, zero, null and same-time order within in
   assert.equal(table.period.from, 12);
   assert.equal(table.columns.filter(c => c.title === 'Plot').length, 4);
   assert.equal(table.columns.find(c => c.key === 'plot_1').role, 'color_index');
+});
+
+test('untitled candle components and palette indices identify their target series', async t => {
+  installChart(t, {
+    plots: [
+      { id: 'plot_0', type: 'line' }, { id: 'plot_1', type: 'colorer', target: 'plot_0' },
+      { id: 'plot_2', type: 'ohlc_close', target: 'candle' },
+      { id: 'plot_3', type: 'wick_colorer', target: 'candle' },
+    ],
+    styles: { plot_0: { title: 'OI' } }, ohlcPlots: { candle: { title: 'OI candles' } },
+  });
+  const result = await capture();
+  assert.deepEqual(result.datasets[0].columns.filter(c => c.source_slot).map(c => c.title),
+    ['OI', 'OI Color index', 'OI candles Close', 'OI candles Wick color index']);
 });
 
 test('graphics-only profile preserves identical boxes, raw anchors, range and future labels', async t => {

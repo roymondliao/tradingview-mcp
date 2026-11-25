@@ -53,14 +53,14 @@ Issue    { code, dataset?, field?, object_id?, message, count? }
 
 ### Plot 與 datetime index
 
-1. 讀取 `source.metaInfo().plots` 的原始排列與 `styles[plot.id]?.title`。先記錄每個 slot 的 ID、title、type、role，再投影值。plot_0 等 ID 作欄名；同名 title 可並存。缺失、重複或與保留欄位衝突的 ID 採固定 slot 衍生 key 並檢查唯一性，保留原 ID 和 issue。顏色或 OHLC slot 依 metadata 標記角色；未知型別保留可表示的原值並註記。
+1. 讀取 `source.metaInfo().plots` 的原始排列與 `styles[plot.id]?.title`。先記錄每個 slot 的 ID、title、type、role，再投影值。JSON 使用 plot_0 等 key；CSV 將 title 與 key 一起列在表頭；同名 title 可並存。缺失、重複或與保留欄位衝突的 ID 採固定 slot 衍生 key 並檢查唯一性，保留原 ID 和 issue。顏色或 OHLC slot 依 metadata 標記角色；未知型別保留可表示的原值並註記。
 2. 以 `source.data().each((logicalIndex, row) => …)` 迭代存在的列。本次 Desktop 的 `row[0]` 為 Unix 秒，metadata 中第 i 個 plot 對應 `row[i+1]`。按原始位置取值，即使中間有 colorer 或空 slot。合法空值投影為 null，零保留。缺 slot 或不符已知結構時附 issue。無 plot 定義的圖形實例繼續進入 graphics 探測。
 3. 輸出 `time`、`time_iso`、`source_index` 及各 plot 欄，ISO 使用 `unixSecondsToIso`。依 time 升序，同時間維持來源順序並保留 source_index。該 index 僅供快照內追蹤。時間無法解析的來源列保留 index 與值，time 設 null、置於有時間列之後並附 issue。無交易或來源未產生 row 的日子保留缺口。
 
 例如 VFI 的一列可寫成以下 CSV 投影（略去 source_index）；完整匯出另有 source_index 欄。同一指標的 `plot_0`、`plot_1` 都叫 Plot，第二個欄位的空字串在 CSV 代表缺值。
 
 ```csv
-time,time_iso,plot_0,plot_1,plot_2,plot_3
+time,time_iso,Plot [plot_0],Plot [plot_1],EMA of VFI [plot_2],VFI [plot_3]
 1795590000,2026-11-25T07:00:00.000Z,0,,-9.131243986108498,-9.933802030173386
 ```
 
