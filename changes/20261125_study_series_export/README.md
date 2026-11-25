@@ -52,3 +52,5 @@ tv study series fwGfHN --saved-layout-id 206389997 --pane-index 0 \
 | 多格或同名實例 | 依 Layout、Pane 與 entity ID 唯一定位，驗證結果中的商品、週期與指標身分，涵蓋找不到實例的錯誤路徑。 |
 
 元件分工與輸出契約見 [System design](./SYSTEM_DESIGN.md)。模組介面、資料擷取演算法、時間索引實測與驗收方式見 [Low-level design](./LLD.md)。
+
+匯出前的資料集與格式預覽見 [TASK-001 · Study series dry-run](./TASK-001-study-series-dry-run.md)。

@@ -209,6 +209,12 @@ Use an explicit end-of-day timestamp with a time zone to include the entire fina
 Plots are selected by bar time. Graphics are a snapshot at `chart_bar_time`; use a chart
 in Replay at the desired bar for a past snapshot. Data Window text uses capture time.
 
+Use `tv study series <entity-id> --dry-run` to see the available datasets, what each
+row represents, CSV headers, counts, time ranges and issues. The recommendation
+describes the current selection. For example, a complete Volume Profile snapshot
+fits JSON, while `--dataset boxes --format csv --dry-run` previews its boxes as a
+single table. Dry runs print JSON to stdout and accept CSV previews without an output path.
+
 `history --to` requires `--from` and includes bars whose timestamps satisfy `from <= time <= to`.
 
 History waits for TradingView Desktop loading to settle before collecting each batch.
