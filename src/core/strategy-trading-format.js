@@ -1,4 +1,5 @@
 /** Streaming encoders for canonical Strategy Trading Data. */
+import { csvLine } from './csv.js';
 import { finished } from 'node:stream/promises';
 import { extname } from 'node:path';
 import { CoreOperationError } from './errors.js';
@@ -72,16 +73,6 @@ async function writeChunk(writable, value) {
       else resolveWrite();
     });
   });
-}
-
-function csvCell(value) {
-  if (value == null) return '';
-  const text = typeof value === 'object' ? JSON.stringify(value) : String(value);
-  return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
-}
-
-function csvLine(values) {
-  return `${values.map(csvCell).join(',')}\n`;
 }
 
 function tradeRow(metadata, trade, leg, legType, includeMetrics) {

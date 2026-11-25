@@ -175,6 +175,8 @@ tv history --symbol NASDAQ:AAPL -t D --bars-per-request 1000 --max-requests 20 -
 tv history --symbol NASDAQ:AAPL -t D --include-bars --output history.json --force  # explicitly overwrite an existing file
 tv tab list                        # resolve Tab, runtime/storage Layout IDs, and Pane IDs
 tv study list --layout-id LC43xk9j --pane-index 0  # select by Runtime/URL Layout ID
+tv study series <entity-id> --layout-id LC43xk9j --pane-index 0 --output study.json
+tv study series <entity-id> --layout-id LC43xk9j --pane-index 0 --dataset plots --format csv --output plots.csv
 tv strategy active --saved-layout-id 196567163 --pane-index 0  # select by account storage ID
 tv strategy trading-report <entity-id> --symbol TWSE:2344 --layout-id LC43xk9j --pane-index 0
 tv strategy trading-data <entity-id> --symbol TWSE:2344 --offset 0 --limit 500
@@ -196,6 +198,15 @@ tv pane layout 2x2                 # 4-chart grid
 tv pane symbol 1 ES1!              # set pane symbol
 tv stream quote | jq '.close'      # monitor price changes
 ```
+
+`study series` exports the selected instance's loaded outputs. JSON includes the study inputs,
+column titles, original plot IDs, drawing anchors, and any issues. For CSV, choose one dataset
+and use the JSON summary on stdout to map columns to plot titles. To include older bars,
+first run `tv history --from <start> --layout-id <layout> --pane-index <index>` on the same chart.
+Then pass `--from` and optionally `--to` to `tv study series` to filter the loaded data.
+Use an explicit end-of-day timestamp with a time zone to include the entire final day.
+Plots are selected by bar time. Graphics are a snapshot at `chart_bar_time`; use a chart
+in Replay at the desired bar for a past snapshot. Data Window text uses capture time.
 
 `history --to` requires `--from` and includes bars whose timestamps satisfy `from <= time <= to`.
 
@@ -265,6 +276,7 @@ tv draw shape/list/get/remove/clear
 tv alert list/create/delete
 tv watchlist get/add
 tv indicator add/remove/toggle/set/get
+tv study search/list/get/series/add/inputs/toggle/remove
 tv strategy active/trading-report/trading-data/trading-export/select/report/orders/trades/equity
 tv layout list/switch
 tv pane list/layout/focus/symbol

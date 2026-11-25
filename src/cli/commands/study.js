@@ -1,11 +1,50 @@
+import { extname } from 'node:path';
+import { normalizeHistoryRange } from '../../core/data.js';
+import { selectDatasets } from '../../core/study-series.js';
+import { writeStudySeriesArtifact } from '../../core/study-series-format.js';
 import { register } from '../router.js';
 import * as core from '../../core/studies.js';
 import { PANE_CONTEXT_OPTIONS, withPaneContext } from '../pane-context.js';
+
+const seriesOptions = {
+  ...PANE_CONTEXT_OPTIONS,
+  dataset: { type: 'string', description: 'Select an output such as plots, boxes, lines, or labels' },
+  format: { type: 'string', description: 'json (default) or csv (one dataset and --output)' },
+  output: { type: 'string', short: 'o', description: 'Write to a file and print a JSON summary' },
+  force: { type: 'boolean', description: 'Replace an existing output file' },
+  from: { type: 'string', description: 'Filter loaded rows from an inclusive ISO date/time or Unix timestamp' },
+  to: { type: 'string', description: 'Inclusive cutoff (requires --from); use an explicit time for end of day' },
+};
+
+async function runSeries(opts, positionals) {
+  for (const [key, value] of Object.entries(opts)) {
+    if (!Object.hasOwn(seriesOptions, key)) throw new Error('Unknown option: --' + key);
+    if (seriesOptions[key].type === 'string' && (typeof value !== 'string' || !value.trim() || value.startsWith('--'))) {
+      throw new Error('Missing value for --' + key);
+    }
+  }
+  if (positionals.length !== 1 || !positionals[0].trim()) throw new Error('Usage: tv study series <entity_id> [options]');
+  const { dataset, output, force, format = 'json' } = opts;
+  if (!['json','csv'].includes(format)) throw new Error('--format must be json or csv');
+  if ((format === 'csv' || force) && !output) throw new Error('CSV and --force require --output');
+  const ext = extname(output || '').toLowerCase();
+  if (['.json','.csv'].includes(ext) && ext !== '.' + format) throw new Error('--format conflicts with output extension');
+  const { fromTime, toTime } = normalizeHistoryRange(opts);
+  const range = fromTime == null ? null : { from: fromTime, to: toTime };
+  const snapshot = await withPaneContext(opts, context => core.getStudySeries({ entity_id: positionals[0], context, range }));
+  const result = selectDatasets(snapshot, { dataset, format });
+  return output ? writeStudySeriesArtifact(result, { format, output, force }) : result;
+}
 
 register('study', {
   desktop_dependency: 'required',
   description: 'Study tools — search and inspect indicators/strategies on the active pane',
   subcommands: new Map([
+    ['series', {
+      usage: '<entity_id>',
+      description: 'Export loaded study plots and graphics by entity ID (JSON or CSV)',
+      options: seriesOptions, handler: runSeries,
+    }],
     ['search', {
       description: 'Search TradingView study catalog without adding to the pane',
       options: {

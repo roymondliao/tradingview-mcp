@@ -1,7 +1,7 @@
 ---
 id: FEATURE-20261125-STUDY-SERIES-EXPORT
 title: Pane 指標資料匯出
-status: proposed
+status: implemented
 created: 2026-11-25
 scope:
   - study-cli
@@ -19,7 +19,7 @@ scope:
 
 ## 預期用法
 
-第一行是現有指令。其餘為提案，以這次在 `stg` 觀察到的 entity ID 示範。重做時應先查詢目前實例。
+以下用 `stg` 觀察到的 entity ID 示範。重做時應先查詢目前實例。
 
 ```sh
 tv study list --saved-layout-id 206389997 --pane-index 0
@@ -40,6 +40,8 @@ tv study series fwGfHN --saved-layout-id 206389997 --pane-index 0 \
 ## 範圍與驗收
 
 第一版讀取指定實例**目前已載入**的輸出。檔案須讓讀者辨識資料來源、時間意義、已取得的資料集及缺漏。需要更早的逐根歷史或過去某一刻的圖形快照，屬於另一種資料取得需求。
+
+實作支援 `--from`、`--to`（含端點）。先用 `tv history` 在相同 Pane 載入較早的 bars，再用 `study series` 依指標 row 的時間篩選。圖形以該次快照的 `chart_bar_time` 判定是否在區間內；需要指定歷史截止日的圖形時，先用 Replay 對準該 bar。圖形錨點可落在不同日期，超出已載入時間軸者保留原座標及 issue。
 
 | 必驗案例 | 可觀察的驗收結果 |
 | --- | --- |
