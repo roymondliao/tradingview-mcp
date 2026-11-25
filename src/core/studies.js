@@ -848,3 +848,5 @@ export async function addActivePaneStudy({ script_id, study_id, query, source, t
     ...(inputResult && { inputs: inputResult }),
   };
 }
+
+export { getStudySeries } from './study-series.js';

@@ -10,6 +10,7 @@
 - 統一 Strategy 與 Indicator 共用的 Pane 操作。
 - 區分 Account Level 的 Saved Pine Script 與 Active Pane Level 的 Study Instance。
 - 使用明確的 ID，避免混用 `script_id` 與 `entity_id`。
+- 讓呼叫端先預覽指定指標的資料集、欄位及時間範圍，再選擇 JSON 或 CSV 匯出。
 - 將 Strategy 專屬的回測功能與通用 Study 管理功能分開。
 
 ## Resource model
@@ -47,7 +48,7 @@ Study Instance
 
 - `entity_id`
   - 識別特定 Pane 上的 Study Instance。
-  - 用於讀取 Inputs、修改 Inputs、切換可見性、移除 Instance，以及選擇 Strategy。
+  - 用於讀取或修改 Inputs、預覽及匯出指標資料、切換可見性、移除 Instance，以及選擇 Strategy。
 
 - `strategy_id`
   - 對外表示 Strategy Instance 時使用的語意化欄位名稱。
@@ -209,6 +210,7 @@ npm run tv -- study add --script-id <script_id>
 npm run tv -- study add --study-id <study_id>
 npm run tv -- study add --query "Supertrend Strategy"
 npm run tv -- study get <entity_id>
+npm run tv -- study series <entity_id> --dry-run
 npm run tv -- study inputs get <entity_id>
 npm run tv -- study inputs set <entity_id> --inputs '<json>'
 npm run tv -- study toggle <entity_id> --visible
@@ -248,6 +250,42 @@ npm run tv -- study remove <entity_id>
   - `source`
   - `script_id`（若可取得）
   - `report_ready`（Strategy only）
+
+### Series · 指標資料預覽與匯出
+
+`study series <entity_id>` 讀取指定 Pane 上已載入的指標輸出，適用於已加入圖表的內建、帳號與社群指標。先用 `study list` 取得該 Pane 的實例 ID，再用 `--dry-run` 查看哪些資料可匯出。以下 ID 取自 Saved Layout `stg` 的 `TXF1!` 日線範例。
+
+```bash
+npm run tv -- study list --saved-layout-id 206389997 --pane-index 0
+
+# Volume Profile：預覽整個指標，再預檢單獨匯出 boxes 的 CSV
+npm run tv -- study series fwGfHN --saved-layout-id 206389997 --pane-index 0 --dry-run
+npm run tv -- study series fwGfHN --saved-layout-id 206389997 --pane-index 0 \
+  --dataset boxes --format csv --dry-run
+
+# Volume Profile：將完整圖形快照寫入 JSON
+npm run tv -- study series fwGfHN --saved-layout-id 206389997 --pane-index 0 \
+  --output txf-volume-profile.json
+
+# Volume Flow Indicator：將指定期間內已載入的逐根數值寫入 CSV
+npm run tv -- study series hhW5zL --saved-layout-id 206389997 --pane-index 0 \
+  --dataset plots --from 2012-12-01T00:00:00+08:00 --to 2026-11-24T23:59:59+08:00 \
+  --format csv --output txf-vfi.csv
+```
+
+**如何讀預覽。** `--dry-run` 將 JSON 摘要印到 stdout。先看 `recommended_format` 與 `reason`：選取一張表時建議 CSV，多張表時建議 JSON；實際匯出格式由 `--format` 決定，預設為 JSON。再看 `datasets[]` 的 `row_represents`、`row_count`、`period` 與 `columns[].csv_header`，即可知道每列的意義、實際筆數、時間範圍及欄名。`status` 為 `partial` 時，從 `issues` 查看缺漏。預覽即使帶了 `--output` 和 `--force` 也只會印出摘要。
+
+| 資料集與範例 | 一列代表什麼 | 日期篩選依據（`basis`） |
+| --- | --- | --- |
+| `plots` · Open Interest、VFI | 一根 K 棒上的各個 plot 值 | `bar_time`，依指標資料列的 `time`。 |
+| `boxes`、`lines`、`labels` · Volume Profile | 指標在快照當下繪製的一個框、線或標籤 | `chart_snapshot`，依整份快照的 `chart_bar_time`。圖形錨點另記其繪製位置。 |
+| `display_values` · Data Window | 一項格式化顯示值 | `capture_time`，依 `captured_at_iso`。 |
+
+**格式與寫檔。** JSON 可同時保存多張表、指標 inputs、欄位定義與 issues。CSV 每次匯出一張表；有多張候選表時用 `--dataset` 選取。Plot 表頭使用「顯示名稱 [欄位 ID]」，例如 `Open Interest [plot_0]`、`EMA of VFI [plot_2]`、`VFI [plot_3]`，同名 plot 也能用 ID 區分。正式匯出 CSV 需提供 `--output`，CSV 預覽可省略路徑。正式寫檔後 stdout 回傳摘要，覆寫既有檔案需加 `--force`。
+
+**時間範圍。** `--from`、`--to` 包含端點；使用 `--to` 須搭配 `--from`。需要較早的逐根資料時，先在相同 Layout 與 Pane 執行 `tv history --from ...` 載入歷史，再預覽或匯出。要取得某個交易日的 Volume Profile，先用 Replay 對準該日，再從預覽的 `chart_bar_time_iso` 核對截止日。一次匯出取得該時點的分布快照。
+
+實測案例與驗收紀錄見 [Pane 指標資料匯出](../changes/20261125_study_series_export/README.md)及 [Dry-run task](../changes/20261125_study_series_export/TASK-001-study-series-dry-run.md)。
 
 ### Inputs
 
