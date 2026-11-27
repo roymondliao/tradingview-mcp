@@ -2,7 +2,7 @@ import { withLaunchObservation } from './compatibility/launch.js';
 /**
  * Core health/discovery/launch logic.
  */
-import { getClient, getTargetInfo, evaluate, CDP_HOST, CDP_PORT } from '../connection.js';
+import { getClient, getTargetInfo, evaluate, evaluateAsync, inspectReplayApiPage, KNOWN_PATHS, CDP_HOST, CDP_PORT } from '../connection.js';
 import { existsSync, cpSync, rmSync, readdirSync } from 'fs';
 import { execSync, spawn } from 'child_process';
 import { dirname, basename, join } from 'path';
@@ -84,8 +84,8 @@ export async function healthCheck() {
 }
 
 export async function discover() {
-  const paths = await evaluate(`
-    (function() {
+  const paths = await evaluateAsync(`
+    (async function() {
       var results = {};
       try {
         var chart = window.TradingViewApi._activeChartWidgetWV.value();
@@ -112,8 +112,9 @@ export async function discover() {
         results.bottomWidgetBar = { available: !!bwb, path: 'window.TradingView.bottomWidgetBar', methodCount: bwbMethods.length, methods: bwbMethods.slice(0, 20) };
       } catch(e) { results.bottomWidgetBar = { available: false, error: e.message }; }
       try {
-        var replay = window.TradingViewApi._replayApi;
-        results.replayApi = { available: !!replay, path: 'window.TradingViewApi._replayApi' };
+        var replay = await (${inspectReplayApiPage.toString()})();
+        results.replayApi = { available: replay.found, path: '${KNOWN_PATHS.replayApi}' };
+        if (!replay.found) results.replayApi.error = replay.reason_code;
       } catch(e) { results.replayApi = { available: false, error: e.message }; }
       try {
         var alerts = window.TradingViewApi._alertService;
@@ -130,8 +131,8 @@ export async function discover() {
 }
 
 export async function uiState() {
-  const state = await evaluate(`
-    (function() {
+  const state = await evaluateAsync(`
+    (async function() {
       var ui = {};
       var bottom = document.querySelector('[class*="layout__area--bottom"]');
       ui.bottom_panel = { open: !!(bottom && bottom.offsetHeight > 50), height: bottom ? bottom.offsetHeight : 0 };
@@ -189,9 +190,10 @@ export async function uiState() {
         ui.chart = { symbol: chart.symbol(), resolution: chart.resolution(), chartType: chart.chartType(), study_count: chart.getAllStudies().length };
       } catch(e) { ui.chart = { error: e.message }; }
       try {
-        var replay = window.TradingViewApi._replayApi;
-        function unwrap(v) { return (v && typeof v === 'object' && typeof v.value === 'function') ? v.value() : v; }
-        ui.replay = { available: unwrap(replay.isReplayAvailable()), started: unwrap(replay.isReplayStarted()) };
+        var replay = await (${inspectReplayApiPage.toString()})([], true);
+        if (!replay.found) ui.replay = { error: replay.reason_code };
+        else if (replay.available === null || replay.started === null) ui.replay = { error: 'RETURN_SHAPE_CHANGED' };
+        else ui.replay = { available: replay.available, started: replay.started };
       } catch(e) { ui.replay = { error: e.message }; }
       return ui;
     })()

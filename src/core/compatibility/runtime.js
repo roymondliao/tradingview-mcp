@@ -92,11 +92,6 @@ export async function pageFacts(kind, args={}) {
     const canvas=elements[0]||globalThis.document.querySelector('canvas');const bounds=canvas?.getBoundingClientRect();
     return {found:!!canvas,width:bounds?.width||0,height:bounds?.height||0};
   }
-  if(kind==='replay') {
-    const rp=api._replayApi;if(!rp)return {found:false};
-    const names=['selectDate','doStep','goToRealtime','stopReplay','isReplayStarted','isReplayAvailable'];
-    return {found:true,methods:Object.fromEntries(names.map(n=>[n,typeof rp[n]==='function'])),available:unwrap(rp.isReplayAvailable()),started:unwrap(rp.isReplayStarted())};
-  }
   return null;
 }
 export function validateBars(b) {
@@ -200,6 +195,16 @@ for(const [name,method] of [['lines','getPineLines'],['labels','getPineLabels'],
 });
 register('DRAWING-001.read.inventory',async({driver:d})=>{const x=await d.drawing.listDrawings();return decide(Array.isArray(x.shapes)&&x.shapes.every(s=>s.id!=null),{count:x.shapes?.length??null});});
 register('DRAWING-001.read.properties',async({driver:d,fixture:f})=>{if(!f?.drawing?.entity_id)return blocked('DRAWING_FIXTURE_MISSING');const x=await d.drawing.getProperties({entity_id:f.drawing.entity_id});return decide(Array.isArray(x.points)&&x.points.every(p=>Number.isFinite(p.time)&&Number.isFinite(p.price)),{points:x.points?.length??null});});
-register('REPLAY-001.read.capability',async({driver:d})=>{const x=await d.read(pageFacts,['replay']);return decide(x.found&&Object.values(x.methods||{}).every(Boolean),x);});
-register('REPLAY-001.read.state',async({driver:d})=>{const x=await d.read(pageFacts,['replay']);return typeof x.available==='boolean'&&typeof x.started==='boolean'?pass({available:x.available,started:x.started}):failed('RETURN_SHAPE_CHANGED');});
+const replayMethods = ['selectDate', 'doStep', 'goToRealtime', 'stopReplay', 'isReplayStarted', 'isReplayAvailable'];
+register('REPLAY-001.read.capability', async ({ driver }) => {
+  const result = await driver.read(connection.inspectReplayApiPage, [replayMethods]);
+  if (!result.found) return failed(result.reason_code, { found: false });
+  return decide(replayMethods.every(name => result.methods[name]), result);
+});
+register('REPLAY-001.read.state', async ({ driver }) => {
+  const result = await driver.read(connection.inspectReplayApiPage, [[], true]);
+  if (!result.found) return failed(result.reason_code, { found: false });
+  const { available, started } = result;
+  return decide(typeof available === 'boolean' && typeof started === 'boolean', { available, started });
+});
 export const handlers=read;

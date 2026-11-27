@@ -53,7 +53,7 @@ const providers = {
   'UI-001':'Desktop DOM locators / CDP Page / Input',
   'GRAPHICS-001':'Study._graphics._primitivesCollection',
   'DRAWING-001':'chart.createShape / getShapeById / removeEntity',
-  'REPLAY-001':'TradingViewApi._replayApi',
+  'REPLAY-001':'TradingViewApi.replayApi() / TradingViewApi._replayApi',
 };
 const assertion = (id,name)=>({id:`${id}.read.${name}`,stage:'read-only',kind:name.includes('capability')?'capability':'data',provider:providers[id],expected:expectations[name]});
 export const CHECKS = Object.freeze(definitions.map(([id,component,depends_on,reads]) => Object.freeze({

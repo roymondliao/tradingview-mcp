@@ -514,8 +514,49 @@ export async function getBottomBar() {
   return verifyAndReturn(KNOWN_PATHS.bottomWidgetBar, 'Bottom Widget Bar');
 }
 
+/** Run in the chart page and return only serializable Replay capability or state. */
+export async function inspectReplayApiPage(methodNames = [], readState = false) {
+  const api = globalThis.TradingViewApi;
+  let replay = api?._replayApi;
+  if (!replay) {
+    if (typeof api?.replayApi !== 'function') {
+      return { found: false, reason_code: 'PROVIDER_UNAVAILABLE' };
+    }
+    try {
+      // Call on TradingViewApi so the accessor can initialize its own cache.
+      await api.replayApi();
+      replay = api._replayApi;
+    } catch {
+      return { found: false, reason_code: 'PROVIDER_INITIALIZATION_FAILED' };
+    }
+    if (!replay) return { found: false, reason_code: 'PROVIDER_INITIALIZATION_FAILED' };
+  }
+
+  const methods = Object.fromEntries(methodNames.map(name => [name, typeof replay[name] === 'function']));
+  if (!readState) return { found: true, methods };
+
+  const readBoolean = (name) => {
+    if (typeof replay[name] !== 'function') return null;
+    const result = replay[name]();
+    const value = typeof result?.value === 'function' ? result.value() : result;
+    return typeof value === 'boolean' ? value : null;
+  };
+  return { found: true, methods, available: readBoolean('isReplayAvailable'), started: readBoolean('isReplayStarted') };
+}
+
 export async function getReplayApi() {
-  return verifyAndReturn(KNOWN_PATHS.replayApi, 'Replay API');
+  const result = await callPageFunction(inspectReplayApiPage);
+  if (result.found) return KNOWN_PATHS.replayApi;
+  const initializationFailed = result.reason_code === 'PROVIDER_INITIALIZATION_FAILED';
+  throw new CoreOperationError(initializationFailed
+    ? 'Replay API initialization failed in TradingView Desktop'
+    : `Replay API not available at ${KNOWN_PATHS.replayApi}`, {
+    code: initializationFailed ? 'REPLAY_API_INITIALIZATION_FAILED' : 'REPLAY_API_UNAVAILABLE',
+    kind: 'internal',
+    phase: 'runtime_evaluate',
+    stage: 'replay_api',
+    retryable: initializationFailed,
+  });
 }
 
 export async function getMainSeriesBars() {
