@@ -22,6 +22,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import CDP from 'chrome-remote-interface';
+import { inspectReplayApiPage, KNOWN_PATHS } from '../../../src/connection.js';
 import { list as listTabs } from '../../../src/core/tab.js';
 import { getWatchlist, listWatchlists } from '../../../src/core/watchlist.js';
 import { start as startReplay, stop as stopReplay } from '../../../src/core/replay.js';
@@ -75,7 +76,7 @@ const CLOSE_BOTTOM = (name) => `(function(){var b=${BOTTOM_BAR};if(!b)return;` +
   `if(typeof b.hideWidget==='function')b.hideWidget(${JSON.stringify(name)});` +
   `else if(typeof b.close==='function')b.close();` +
   `else if(typeof b.hide==='function')b.hide();})()`;
-const REPLAY_API = 'window.TradingViewApi._replayApi';
+const REPLAY_API = KNOWN_PATHS.replayApi;
 
 /** Unwrap TradingView WatchedValue objects */
 function wv(path) {
@@ -310,10 +311,10 @@ describe('TradingView MCP — Full E2E (70 tools)', () => {
     it('tv_discover — report available API paths', async () => {
       const chartApi = await apiExists(CHART_API);
       const bwb = await apiExists(BOTTOM_BAR);
-      const replay = await apiExists(REPLAY_API);
+      const replay = await evaluate(`(${inspectReplayApiPage.toString()})()`);
       assert.ok(chartApi, 'Chart API available');
       assert.ok(bwb, 'bottomWidgetBar available');
-      assert.ok(replay, 'replayApi available');
+      assert.ok(replay.found, 'replayApi available');
     });
 
     it('tv_ui_state — panels, buttons, chart state', async () => {
@@ -1399,6 +1400,11 @@ val = array.get(a, 5)`;
 
   (RUN_REPLAY_E2E ? describe : describe.skip)('Replay Mode (opt-in)', () => {
     let ownedReplayExecutions = false;
+
+    before(async () => {
+      const replay = await evaluate(`(${inspectReplayApiPage.toString()})()`);
+      assert.ok(replay.found, 'replayApi available');
+    });
 
     async function stopReplayAndWait() {
       return stopReplay({

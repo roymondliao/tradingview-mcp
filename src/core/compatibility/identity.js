@@ -1,8 +1,8 @@
 /** Pure identity rules: safe to load from the local-only CLI advisory. */
 import { CoreOperationError } from '../errors.js';
 export const SCHEMA_VERSION = 1;
-export const CHECKER_REVISION = 2;
-export const ADAPTER_REVISION = 1;
+export const CHECKER_REVISION = 3;
+export const ADAPTER_REVISION = 2;
 export const COMPATIBILITY_SCOPE = 'read_only_desktop_contracts';
 export const REGISTRY_REVISION = 2;
 export const IDENTITY_FIELDS = Object.freeze([
